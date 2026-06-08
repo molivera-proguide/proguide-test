@@ -51,7 +51,8 @@ jobs:
         working-directory: ui
         run: |
           mkdir -p ../dist
-          package_file="$(npm pack --pack-destination ../dist)"
+          npm pack --pack-destination ../dist
+          package_file="$(basename "$(ls -1 ../dist/*.tgz | head -n 1)")"
           package_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
           echo "package_file=${package_file}" >> "$GITHUB_OUTPUT"
           echo "package_path=dist/${package_file}" >> "$GITHUB_OUTPUT"
