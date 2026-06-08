@@ -9,27 +9,23 @@ Use this section if you only want to install and run ProGuide against an applica
 ### Prerequisites
 
 - Node.js 20 or newer.
-- Python 3.12 or compatible.
-- Python dependencies for execution:
+- Python 3.12 or compatible available on the machine.
 
-```bash
-python -m pip install pytest playwright
-python -m playwright install chromium
-```
+ProGuide creates and maintains its own Python runtime under the user profile. QA users do not install `pytest`, `playwright`, or browsers manually.
 
 ### Install From GitHub Release
 
 For public or internally accessible GitHub Releases:
 
 ```bash
-npm install -g https://github.com/empresa/proguide-test/releases/download/v0.1.0/proguide-test-0.1.0.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.1/proguide-test-0.1.1.tgz
 ```
 
 For private repositories:
 
 ```bash
-gh release download v0.1.0 --repo empresa/proguide-test --pattern "proguide-test-*.tgz" --dir .
-npm install -g ./proguide-test-0.1.0.tgz
+gh release download v0.1.1 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
+npm install -g ./proguide-test-0.1.1.tgz
 ```
 
 ### Configure Your QA Workspace
@@ -66,7 +62,9 @@ cd C:\QA\frontend-app
 proguide doctor --json
 ```
 
-`proguide doctor --json` should return actionable checks for Node, Python, pytest, Playwright, browsers, API key, viewer port, and run storage.
+The first `doctor`, `run`, or MCP execution can take a few minutes because ProGuide creates its managed Python runtime, installs `pytest`/`playwright`, and installs Chromium. After that, QA only needs the API key.
+
+`proguide doctor --json` should return actionable checks for Node, the managed Python runtime, API key, viewer port, and run storage.
 
 ### Use CLI Directly
 
@@ -197,7 +195,7 @@ Available MCP tools:
 | `get_generated_code` | Reads generated Python code for a case. |
 | `list_runs` | Lists local runs. |
 
-The result viewer defaults to `http://127.0.0.1:8787/runs`. Use `PROGUIDE_VIEWER_PORT` if the port is occupied.
+The result viewer defaults to `http://127.0.0.1:8787/runs`. If that port is occupied, ProGuide automatically tries the following ports. Use `PROGUIDE_VIEWER_PORT` only when you need to force a specific port.
 
 ## Developer Guide
 
@@ -249,7 +247,8 @@ node --check ui/viewer.js
 node --check ui/server.js
 node --check ui/proguide-service.js
 npm --prefix ui run proguide -- doctor --json
-npm pack --dry-run --prefix ui
+cd ui
+npm pack --dry-run
 ```
 
 ### Develop The Node CLI/MCP
@@ -287,7 +286,7 @@ cd ui
 npm pack
 ```
 
-`npm pack` runs `ui/scripts/sync-python-runtime.js` before packaging. That copies the Python runtime from `proguide/` into `ui/python/` so QA users do not need the source repository.
+`npm pack` runs `ui/scripts/sync-python-runtime.js` before packaging. That copies the Python support package from `proguide/` into `ui/python/` so QA users do not need the source repository.
 
 ### Publish With GitHub Actions
 
@@ -306,11 +305,11 @@ The release workflow is:
 Create a release by pushing a version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-The workflow runs tests, creates `proguide-test-0.1.0.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
+The workflow runs tests, creates `proguide-test-0.1.1.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
 
 ### Data Contract
 

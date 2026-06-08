@@ -1,6 +1,6 @@
 {
   "name": "@proguide/test",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "cli.js",
     "mcp-server.js",
+    "python-runtime.js",
     "proguide-service.js",
     "server.js",
     "viewer.js",

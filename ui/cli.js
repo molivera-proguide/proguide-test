@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
@@ -12,10 +11,12 @@ import {
   loadRunBundle,
   prepareMarkdownRun
 } from './proguide-service.js';
+import { ensurePythonRuntime, playwrightBrowserProbe, pythonCommand } from './python-runtime.js';
 import { ensureViewer, fetchViewerHealth, rootIdentity, viewerBaseUrl, viewerLinks } from './viewer.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
+const DEFAULT_VIEWER_PORT_ATTEMPTS = Number(process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS || 20);
 const DEFAULT_CONFIG = {
   runner: {
     browser: 'chromium',
@@ -154,12 +155,13 @@ async function commandRun(parsed) {
   }
 
   const viewer = await attachViewer(root, prepared.run.id, parsed.options);
+  const runtime = await ensurePythonRuntime(root);
   await executePreparedRun({
     root,
     runId: prepared.run.id,
     baseUrl,
     credentials: credentialsFromOptions(parsed.options),
-    python: pythonCommand(root)
+    python: runtime.python
   });
   const bundle = await loadRunBundle(root, prepared.run.id);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
@@ -171,12 +173,13 @@ async function commandExecute(parsed) {
   const root = resolveRoot(parsed.options);
   const runId = requiredHandle(parsed.positionals[0], 'run_id');
   const viewer = await attachViewer(root, runId, parsed.options);
+  const runtime = await ensurePythonRuntime(root);
   await executePreparedRun({
     root,
     runId,
     baseUrl: option(parsed.options, 'base-url') || '',
     credentials: credentialsFromOptions(parsed.options),
-    python: pythonCommand(root)
+    python: runtime.python
   });
   const bundle = await loadRunBundle(root, runId);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
@@ -253,27 +256,43 @@ async function commandDoctor(parsed) {
     version: process.version,
     message: 'Node disponible.'
   });
-  const python = pythonCommand(root);
-  checks.push(checkCommand('python', python, ['--version'], 'Configura PROGUIDE_PYTHON o instala Python.'));
-  checks.push(checkCommand('pytest', python, ['-m', 'pytest', '--version'], 'Instala pytest: python -m pip install pytest.'));
+  let python = process.env.PROGUIDE_PYTHON || 'python';
+  try {
+    const runtime = await ensurePythonRuntime(root);
+    python = runtime.python;
+    checks.push({
+      name: 'python_runtime',
+      ok: true,
+      path: runtime.python,
+      source: runtime.source,
+      managed: runtime.managed,
+      runtime_dir: runtime.runtime_dir,
+      actions: runtime.actions,
+      message: runtime.message
+    });
+  } catch (error) {
+    python = pythonCommand(root);
+    checks.push({
+      name: 'python_runtime',
+      ok: false,
+      path: python,
+      message: error.message || String(error),
+      suggestion: 'Instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
+    });
+  }
+  checks.push(checkCommand('python', python, ['--version'], 'Instala Python 3.12+; ProGuide lo usa para crear su runtime administrado.'));
+  checks.push(checkCommand('pytest', python, ['-m', 'pytest', '--version'], 'ProGuide instala pytest automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'));
   checks.push(checkCommand(
     'playwright_python',
     python,
     ['-c', 'import playwright; print("installed")'],
-    'Instala Playwright Python: python -m pip install playwright.'
+    'ProGuide instala Playwright automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'
   ));
   checks.push(checkCommand(
     'playwright_browsers',
     python,
-    ['-c', [
-      'from pathlib import Path',
-      'from playwright.sync_api import sync_playwright',
-      'with sync_playwright() as p:',
-      '    executable = Path(p.chromium.executable_path)',
-      '    print(executable)',
-      '    raise SystemExit(0 if executable.exists() else 1)'
-    ].join('\n')],
-    'Instala browsers: python -m playwright install chromium.'
+    ['-c', playwrightBrowserProbe()],
+    'ProGuide instala Chromium automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'
   ));
   checks.push(await checkRunsWritable(root));
   checks.push(await checkViewerPort(root));
@@ -344,7 +363,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.0' }, parsed.options, '0.1.0');
+    emit({ version: '0.1.1' }, parsed.options, '0.1.1');
   }
 }
 
@@ -511,29 +530,54 @@ async function checkRunsWritable(root) {
 
 async function checkViewerPort(root) {
   const host = DEFAULT_VIEWER_HOST;
-  const port = Number.isFinite(DEFAULT_VIEWER_PORT) && DEFAULT_VIEWER_PORT > 0 ? DEFAULT_VIEWER_PORT : 8787;
-  const baseUrl = viewerBaseUrl(host, port);
-  const health = await fetchViewerHealth(baseUrl);
-  if (health?.service === 'proguide-test-viewer') {
-    const sameRoot = rootIdentity(health.root) === rootIdentity(root);
+  const firstPort = Number.isFinite(DEFAULT_VIEWER_PORT) && DEFAULT_VIEWER_PORT > 0 ? DEFAULT_VIEWER_PORT : 8787;
+  const attempts = Number.isFinite(DEFAULT_VIEWER_PORT_ATTEMPTS) && DEFAULT_VIEWER_PORT_ATTEMPTS > 0
+    ? DEFAULT_VIEWER_PORT_ATTEMPTS
+    : 20;
+  const skipped = [];
+
+  for (let offset = 0; offset < attempts; offset += 1) {
+    const port = firstPort + offset;
+    const baseUrl = viewerBaseUrl(host, port);
+    const health = await fetchViewerHealth(baseUrl);
+    if (health?.service === 'proguide-test-viewer') {
+      const sameRoot = rootIdentity(health.root) === rootIdentity(root);
+      if (sameRoot) {
+        return {
+          name: 'viewer_port',
+          ok: true,
+          port,
+          message: `Visor reutilizable en ${baseUrl}.`
+        };
+      }
+      skipped.push({ port, reason: `otro root ProGuide: ${health.root}` });
+      continue;
+    }
+
+    if (await tcpOpen(host, port)) {
+      skipped.push({ port, reason: 'ocupado' });
+      continue;
+    }
+
     return {
       name: 'viewer_port',
-      ok: sameRoot,
+      ok: true,
       port,
-      message: sameRoot
-        ? `Visor reutilizable en ${baseUrl}.`
-        : `El puerto ${port} ya esta usado por otro root ProGuide: ${health.root}`,
-      suggestion: sameRoot ? '' : 'Define PROGUIDE_VIEWER_PORT o cierra el otro visor.'
+      message: port === firstPort
+        ? `Puerto ${port} disponible.`
+        : `Puerto ${port} disponible; se omitieron puertos ocupados desde ${firstPort}.`,
+      skipped_ports: skipped
     };
   }
 
-  const occupied = await tcpOpen(host, port);
   return {
     name: 'viewer_port',
-    ok: !occupied,
-    port,
-    message: occupied ? `El puerto ${port} esta ocupado.` : `Puerto ${port} disponible.`,
-    suggestion: occupied ? 'Define PROGUIDE_VIEWER_PORT con otro puerto.' : ''
+    ok: false,
+    port: firstPort,
+    attempts,
+    skipped_ports: skipped,
+    message: `No hay puertos libres para el visor entre ${firstPort} y ${firstPort + attempts - 1}.`,
+    suggestion: 'Define PROGUIDE_VIEWER_PORT con otro puerto o cierra un visor existente.'
   };
 }
 
@@ -560,7 +604,7 @@ function checkLlm(config) {
       model: config.llm?.model || '',
       env_var: apiKey.name,
       message: apiKey.value ? `${apiKey.name} configurada.` : 'Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY.',
-      suggestion: 'Configura ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY, o cambia llm.provider.'
+      suggestion: 'Configura API_KEY o ANTHROPIC_API_KEY.'
     };
   }
   if (provider === 'disabled') {
@@ -775,14 +819,6 @@ function resolveRoot(options) {
   );
 }
 
-function pythonCommand(root) {
-  if (process.env.PROGUIDE_PYTHON) return process.env.PROGUIDE_PYTHON;
-  const candidates = process.platform === 'win32'
-    ? [path.join(root, '.venv', 'Scripts', 'python.exe')]
-    : [path.join(root, '.venv', 'bin', 'python')];
-  return candidates.find((candidate) => existsSync(candidate)) || 'python';
-}
-
 function requireBaseUrl(options) {
   const value = option(options, 'base-url');
   if (!value) throw cliError('--base-url es obligatorio.', EXIT.invalidInput);
@@ -860,12 +896,14 @@ function agentSetupPayload() {
     qa_required_configuration: {
       required: ['API_KEY'],
       optional: ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY'],
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6'
+      managed_by_proguide: ['llm.provider', 'llm.model', 'python_runtime', 'viewer_port']
     },
     root_resolution_order: [
       'tool argument root',
       'CLI --root',
+      'PROGUIDE_CLI_ROOT',
+      'PROGUIDE_MCP_ROOT',
+      'PROGUIDE_UI_ROOT',
       'CLAUDE_PROJECT_DIR',
       'CURSOR_WORKSPACE_FOLDER',
       'WORKSPACE_FOLDER',
@@ -956,7 +994,7 @@ function classifyError(error) {
   if (message.includes('openai') || message.includes('anthropic') || message.includes('llm') || message.includes('codigo')) {
     return EXIT.generation;
   }
-  if (message.includes('pytest') || message.includes('playwright') || message.includes('browser')) {
+  if (message.includes('pytest') || message.includes('playwright') || message.includes('browser') || message.includes('runtime')) {
     return EXIT.execution;
   }
   return EXIT.config;

@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -10,6 +9,7 @@ import {
   loadRunBundle,
   prepareMarkdownRun
 } from './proguide-service.js';
+import { ensurePythonRuntime } from './python-runtime.js';
 import { ensureViewer, viewerLinks } from './viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -190,7 +190,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.0' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.1' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -234,12 +234,13 @@ async function callTool(name, args) {
       useAgent: false
     });
     const viewer = await attachViewer(root, prepared.run.id);
+    const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
       root,
       runId: prepared.run.id,
       baseUrl: args.base_url || prepared.run.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: pythonCommand(root)
+      python: runtime.python
     });
     const bundle = await loadRunBundle(root, prepared.run.id);
     return toolResult(`Run ${prepared.run.id} ejecutado.`, {
@@ -275,12 +276,13 @@ async function callTool(name, args) {
     const root = resolveRoot(args.root);
     const runId = cleanHandle(args.run_id, 'run_id');
     const viewer = await attachViewer(root, runId);
+    const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
       root,
       runId,
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: pythonCommand(root)
+      python: runtime.python
     });
     const bundle = await loadRunBundle(root, runId);
     return toolResult(`Run ${runId} ejecutado.`, {
@@ -395,14 +397,6 @@ function isPathInside(root, target) {
 function resolveRoot(value) {
   const root = path.resolve(value ? String(value) : DEFAULT_ROOT);
   return root;
-}
-
-function pythonCommand(root) {
-  if (process.env.PROGUIDE_PYTHON) return process.env.PROGUIDE_PYTHON;
-  const candidates = process.platform === 'win32'
-    ? [path.join(root, '.venv', 'Scripts', 'python.exe')]
-    : [path.join(root, '.venv', 'bin', 'python')];
-  return candidates.find((candidate) => existsSync(candidate)) || 'python';
 }
 
 function metadataFromArgs(args) {
