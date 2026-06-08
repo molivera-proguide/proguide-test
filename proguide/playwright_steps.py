@@ -38,6 +38,9 @@ def assert_expected(page: Any, expected: str, base_url: str, recorder: StepRecor
 
 def _run_step(page: Any, step: str, user: dict[str, Any], base_url: str, route: str) -> None:
     normalized = step.lower()
+    if _run_explicit_step(page, step):
+        return
+
     if "go to" in normalized or "open" in normalized or "navigate" in normalized or "visitar" in normalized:
         explicit_route = _extract_route_from_step(step)
         page.goto(url_join(base_url, explicit_route or route))
@@ -60,14 +63,14 @@ def _run_step(page: Any, step: str, user: dict[str, Any], base_url: str, route: 
     if "email" in normalized or "correo" in normalized or "username" in normalized or "usuario" in normalized:
         value = user.get("email") or user.get("username") or "test@example.com"
         if "invalid" in normalized:
-            value = "invalid@example.com"
+            value = user.get("email") or user.get("username") or "invalid-email"
         _fill_email(page, value)
         return
 
     if "password" in normalized or "clave" in normalized or "contrasena" in normalized or "contrase" in normalized:
         value = user.get("password") or "password123"
         if "invalid" in normalized:
-            value = "invalid-password"
+            value = user.get("password") or "123"
         _fill_password(page, value)
         return
 
@@ -89,6 +92,9 @@ def _assert_expected(page: Any, expected: str, base_url: str, user: dict[str, An
     from playwright.sync_api import expect
 
     normalized = expected.lower()
+    if _run_explicit_expectation(page, expected):
+        return
+
     not_shows_match = re.search(
         r"(?:page\s+does\s+not\s+show|does\s+not\s+show|not\s+visible|pagina\s+no\s+muestra|no\s+se\s+muestra)\s+(.+)",
         expected,
@@ -155,6 +161,67 @@ def _assert_expected(page: Any, expected: str, base_url: str, user: dict[str, An
         return
 
     expect(page.locator("body")).to_be_visible(timeout=10000)
+
+
+def _run_explicit_step(page: Any, step: str) -> bool:
+    fill_match = re.match(r"^\s*fill\s+\[([^\]]+)\]\s+(?:with\s+)?(.+?)\s*$", step, re.I)
+    if fill_match:
+        selector = _selector_from_bracket(fill_match.group(1))
+        value = _strip_quotes(fill_match.group(2).strip())
+        page.locator(selector).first.fill(value, timeout=5000)
+        return True
+
+    click_match = re.match(r"^\s*click\s+\[([^\]]+)\]\s*$", step, re.I)
+    if click_match:
+        page.locator(_selector_from_bracket(click_match.group(1))).first.click(timeout=5000)
+        page.wait_for_load_state("domcontentloaded")
+        return True
+
+    return _run_explicit_expectation(page, step)
+
+
+def _run_explicit_expectation(page: Any, text: str) -> bool:
+    from playwright.sync_api import expect
+
+    text_match = re.match(r"^\s*expect\s+text\s+[\"'](.+?)[\"']\s*$", text, re.I)
+    if text_match:
+        expect(page.get_by_text(re.compile(re.escape(text_match.group(1).strip()), re.I)).first).to_be_visible(timeout=10000)
+        return True
+
+    visible_match = re.match(r"^\s*expect\s+\[([^\]]+)\]\s+(?:to\s+be\s+)?visible\s*$", text, re.I)
+    if visible_match:
+        expect(page.locator(_selector_from_bracket(visible_match.group(1))).first).to_be_visible(timeout=10000)
+        return True
+
+    return False
+
+
+def _selector_from_bracket(value: str) -> str:
+    selector = value.strip()
+    if selector.startswith(("#", ".", "[", ":", "*")) or re.search(r"\s|>|\+|~", selector):
+        return selector
+    if re.match(r"^[a-z][a-z0-9_-]*\[[^\]]+\]$", selector, re.I):
+        return selector
+    if selector.lower() in {"a", "button", "form", "input", "select", "textarea", "div", "span", "label", "main", "section"}:
+        return selector
+
+    attr_match = re.match(r"^([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(.+)$", selector)
+    if attr_match:
+        attr = attr_match.group(1)
+        raw_value = _strip_quotes(attr_match.group(2).strip())
+        return f'[{attr}="{_css_attr_value(raw_value)}"]'
+
+    return f'[data-testid="{_css_attr_value(selector)}"]'
+
+
+def _strip_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
+
+
+def _css_attr_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def _fill_email(page: Any, value: str) -> None:

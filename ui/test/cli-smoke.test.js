@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { prepareCasesRun } from '../proguide-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -22,6 +23,28 @@ Pasos:
 
 Resultado esperado:
 - Se muestra el dashboard
+`;
+
+const SECTIONED_MARKDOWN = `# E2E
+
+## 0. Entorno
+- Base URL: http://localhost:3000
+
+## 1. Autenticacion
+
+### TC-001 Login valido
+Pasos:
+1. Ir a /login
+2. Ingresar usuario valido
+Esperado:
+- La pagina muestra Dashboard
+---
+
+### TC-002 Logout
+Pasos:
+- Abrir /home
+- Hacer clic en Salir
+**Esperado:** La URL contiene /login
 `;
 
 test('create/get-run/get-code/list-runs expose stable JSON', () => {
@@ -75,6 +98,82 @@ test('source paths outside root are rejected', () => {
   }
 });
 
+test('markdown parser ignores sections and keeps TC cases', () => {
+  const root = makeTempRoot();
+  try {
+    const created = runCli(['create', '--stdin', '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer'], {
+      input: SECTIONED_MARKDOWN
+    });
+
+    assert.equal(created.status, 0, created.stderr);
+    const payload = parseJson(created.stdout);
+    assert.equal(payload.cases.length, 2);
+    assert.deepEqual(payload.cases.map((item) => item.title), ['Login valido', 'Logout']);
+    assert.deepEqual(payload.cases[0].expected_results, ['La pagina muestra Dashboard']);
+    assert.deepEqual(payload.cases[1].expected_results, ['La URL contiene /login']);
+    assert.equal(payload.cases[0].executable_steps[1].normalized_action, 'enter valid email');
+    assert.equal(payload.cases.flatMap((item) => item.original_steps).some((step) => step.includes('Esperado')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('create dry-run previews normalization without creating a run', () => {
+  const root = makeTempRoot();
+  try {
+    const preview = runCli(['create', '--stdin', '--dry-run', '--json', '--root', root, '--no-viewer'], {
+      input: SAMPLE_MARKDOWN
+    });
+
+    assert.equal(preview.status, 0, preview.stderr);
+    const payload = parseJson(preview.stdout);
+    assert.equal(payload.status, 'dry_run');
+    assert.equal(payload.summary.total, 1);
+    assert.equal(payload.summary.ready, 1);
+    assert.equal(payload.cases.length, 1);
+    assert.equal(fs.readdirSync(path.join(root, 'proguide_tests', 'runs')).length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prepareCasesRun creates a run from structured cases with data', async () => {
+  const root = makeTempRoot();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: 'http://localhost:3000',
+      cases: [{
+        title: 'Login estructurado',
+        priority: 'alta',
+        route: '/login',
+        data: { user: { email: 'qa@example.com', password: 'secreto' } },
+        data_used: ['Password: secreto'],
+        steps: ['fill [data-testid=email] with qa@example.com', 'click [data-testid=submit]'],
+        expected: ['expect text "Dashboard"']
+      }]
+    });
+
+    assert.equal(prepared.run.status, 'ready');
+    assert.equal(prepared.cases[0].data.user.email, 'qa@example.com');
+    assert.equal(Object.hasOwn(prepared.cases[0].data.user, 'password'), false);
+    const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.equal(plan.cases[0].data.user.email, 'qa@example.com');
+    assert.equal(Object.hasOwn(plan.cases[0].data.user, 'password'), false);
+    assert.deepEqual(plan.cases[0].steps, [
+      'fill [data-testid=email] with qa@example.com',
+      'click [data-testid=submit]'
+    ]);
+    const runDir = path.join(root, 'proguide_tests', 'runs', prepared.run.id);
+    assert.equal(fs.readFileSync(path.join(runDir, 'source_cases.json'), 'utf8').includes('secreto'), false);
+    assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto'), false);
+    assert.equal(fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto'), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('config get/set reads and writes proguide_tests/config.yaml', () => {
   const root = makeTempRoot();
   try {
@@ -114,8 +213,10 @@ test('agent-setup exposes Claude Code, Cursor, and generic MCP snippets', () => 
   assert.equal(result.status, 0, result.stderr);
   const payload = parseJson(result.stdout);
   assert.equal(payload.command, 'proguide mcp');
-  assert.match(payload.clients.claude_code.install_command, /claude mcp add/);
+  assert.equal(payload.clients.claude_code.install_command, 'claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp');
+  assert.match(payload.clients.claude_code.npx_command, /npx @proguide\/test@latest mcp/);
   assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].command, 'proguide');
+  assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].env.API_KEY, 'your_api_key');
   assert.deepEqual(payload.clients.generic.args, ['mcp']);
 });
 
@@ -125,7 +226,12 @@ test('mcp exposes prompts with agent instructions', () => {
   });
   assert.equal(listed.status, 0, listed.stderr);
   const listPayload = parseJson(lastJsonLine(listed.stdout));
-  assert.deepEqual(listPayload.result.prompts.map((prompt) => prompt.name), ['run_markdown_cases', 'create_run_from_markdown']);
+  assert.deepEqual(listPayload.result.prompts.map((prompt) => prompt.name), [
+    'run_cases',
+    'create_run',
+    'run_markdown_cases',
+    'create_run_from_markdown'
+  ]);
 
   const fetched = runCli(['mcp'], {
     input: '{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"run_markdown_cases","arguments":{"base_url":"http://localhost:3000","markdown":"## Caso 1"}}}\n'
@@ -133,6 +239,24 @@ test('mcp exposes prompts with agent instructions', () => {
   assert.equal(fetched.status, 0, fetched.stderr);
   const promptPayload = parseJson(lastJsonLine(fetched.stdout));
   assert.match(promptPayload.result.messages[0].content.text, /run_markdown_cases/);
+});
+
+test('mcp exposes the full tool surface', () => {
+  const listed = runCli(['mcp'], {
+    input: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'
+  });
+  assert.equal(listed.status, 0, listed.stderr);
+  const payload = parseJson(lastJsonLine(listed.stdout));
+  assert.deepEqual(payload.result.tools.map((tool) => tool.name), [
+    'run_cases',
+    'create_run',
+    'run_markdown_cases',
+    'create_run_from_markdown',
+    'execute_run',
+    'get_run',
+    'get_generated_code',
+    'list_runs'
+  ]);
 });
 
 function runCli(args, options = {}) {

@@ -9,7 +9,8 @@ import {
   listRunRecords,
   loadGeneratedCaseCode,
   loadRunBundle,
-  prepareMarkdownRun
+  prepareMarkdownRun,
+  previewMarkdownRun
 } from './proguide-service.js';
 import { ensurePythonRuntime, playwrightBrowserProbe, pythonCommand } from './python-runtime.js';
 import { ensureViewer, fetchViewerHealth, rootIdentity, viewerBaseUrl, viewerLinks } from './viewer.js';
@@ -112,6 +113,35 @@ async function dispatch(parsed) {
 async function commandCreate(parsed) {
   const root = resolveRoot(parsed.options);
   const source = await resolveMarkdownSource(root, parsed);
+  if (parsed.options['dry-run']) {
+    let preview;
+    try {
+      preview = await previewMarkdownRun({
+        root,
+        sourceMd: source.path,
+        metadata: metadataFromOptions(parsed.options),
+        useAgent: false
+      });
+    } finally {
+      await cleanupTemporarySource(source);
+    }
+    const ready = preview.cases.filter((item) => item.automation_state === 'listo' && !item.excluded).length;
+    const payload = {
+      status: 'dry_run',
+      summary: {
+        total: preview.cases.length,
+        ready,
+        needs_review: preview.cases.filter((item) => item.automation_state === 'necesita_revision').length,
+        not_automatable: preview.cases.filter((item) => item.automation_state === 'no_automatizable_aun').length,
+        warnings: preview.warnings.length
+      },
+      cases: preview.cases,
+      warnings: preview.warnings
+    };
+    emit(payload, parsed.options, `Dry-run: ${preview.cases.length} caso(s), ${ready} listo(s), ${preview.warnings.length} advertencia(s).`);
+    return EXIT.ok;
+  }
+
   let prepared;
   try {
     prepared = await prepareMarkdownRun({
@@ -246,6 +276,7 @@ async function commandViewer(parsed) {
 
 async function commandDoctor(parsed) {
   const root = resolveRoot(parsed.options);
+  const fix = Boolean(parsed.options.fix);
   await loadDotEnv(root);
   const config = await readConfig(root);
   const checks = [];
@@ -258,7 +289,7 @@ async function commandDoctor(parsed) {
   });
   let python = process.env.PROGUIDE_PYTHON || 'python';
   try {
-    const runtime = await ensurePythonRuntime(root);
+    const runtime = await ensurePythonRuntime(root, { fix });
     python = runtime.python;
     checks.push({
       name: 'python_runtime',
@@ -277,11 +308,19 @@ async function commandDoctor(parsed) {
       ok: false,
       path: python,
       message: error.message || String(error),
-      suggestion: 'Instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
+      suggestion: fix
+        ? 'No se pudo reparar automaticamente. Instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
+        : 'Ejecuta proguide doctor --fix, instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
     });
   }
   checks.push(checkCommand('python', python, ['--version'], 'Instala Python 3.12+; ProGuide lo usa para crear su runtime administrado.'));
   checks.push(checkCommand('pytest', python, ['-m', 'pytest', '--version'], 'ProGuide instala pytest automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'));
+  checks.push(checkCommand(
+    'pydantic',
+    python,
+    ['-c', 'import pydantic; print(pydantic.__version__)'],
+    'Ejecuta proguide doctor --fix o instala pydantic en el runtime Python usado por ProGuide.'
+  ));
   checks.push(checkCommand(
     'playwright_python',
     python,
@@ -363,7 +402,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.1' }, parsed.options, '0.1.1');
+    emit({ version: '0.1.2' }, parsed.options, '0.1.2');
   }
 }
 
@@ -371,7 +410,7 @@ function commandHelp() {
   console.log(`ProGuide Test
 
 Uso:
-  proguide create [casos.md] --base-url <url> [--json|--stdin]
+  proguide create [casos.md] --base-url <url> [--json|--stdin|--dry-run]
   proguide run [casos.md] --base-url <url> [--json|--stdin]
   proguide execute <run_id> [--base-url <url>] [--json]
   proguide get-run <run_id> [--json]
@@ -379,7 +418,7 @@ Uso:
   proguide list-runs [--limit 20] [--json]
   proguide viewer [--port 8787] [--json]
   proguide mcp
-  proguide doctor [--json]
+  proguide doctor [--json] [--fix]
   proguide config get|set ...
   proguide agent-setup [--client claude-code|cursor|generic] [--json]
 
@@ -468,22 +507,24 @@ function summaryCounts(run, summary, cases = []) {
     if (result.status === 'passed') acc.passed += 1;
     else if (result.status === 'failed') acc.failed += 1;
     else if (result.status === 'blocked') acc.blocked += 1;
+    else if (result.status === 'setup_failed') acc.setup_failed += 1;
     else acc.inconclusive += 1;
     return acc;
-  }, { passed: 0, failed: 0, blocked: 0, inconclusive: 0 });
+  }, { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 });
   return {
     total: Number(run?.total_cases || cases.length || results.length || 0),
     passed: Number(run?.passed ?? counted.passed),
     failed: Number(run?.failed ?? counted.failed),
     blocked: Number(run?.blocked ?? counted.blocked),
-    inconclusive: Number(run?.inconclusive ?? counted.inconclusive)
+    inconclusive: Number(run?.inconclusive ?? counted.inconclusive),
+    setup_failed: Number(run?.setup_failed ?? counted.setup_failed)
   };
 }
 
 function exitCodeForRun(run) {
   if (run.status === 'passed') return EXIT.ok;
   if (['failed', 'blocked', 'inconclusive', 'finished'].includes(run.status)) return EXIT.testsFailed;
-  if (run.status === 'error') return EXIT.execution;
+  if (['error', 'setup_failed'].includes(run.status)) return EXIT.execution;
   return EXIT.ok;
 }
 
@@ -726,20 +767,29 @@ function formatYamlScalar(value) {
 }
 
 async function loadDotEnv(root) {
-  const envPath = path.join(root, '.env');
-  let text = '';
-  try {
-    text = await fs.readFile(envPath, 'utf8');
-  } catch {
-    return;
+  for (const envPath of envFileCandidates(root)) {
+    let text = '';
+    try {
+      text = await fs.readFile(envPath, 'utf8');
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match || process.env[match[1]]) continue;
+      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
+    }
   }
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match || process.env[match[1]]) continue;
-    process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
-  }
+}
+
+function envFileCandidates(root) {
+  return [
+    process.env.PROGUIDE_ENV_FILE,
+    path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
+    path.join(root, '.env')
+  ].filter(Boolean).map((item) => path.resolve(String(item)));
 }
 
 function readDotted(config, key) {
@@ -794,7 +844,7 @@ function parseLongOption(token, argv, index) {
       index
     };
   }
-  if (['json', 'stdin', 'no-viewer', 'help', 'version'].includes(raw)) {
+  if (['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run'].includes(raw)) {
     return { key: raw, value: true, index };
   }
   const next = argv[index + 1];
@@ -894,8 +944,8 @@ function agentSetupPayload() {
     transport: 'stdio',
     command: 'proguide mcp',
     qa_required_configuration: {
-      required: ['API_KEY'],
-      optional: ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY'],
+      required: ['API_KEY passed with claude mcp add --env API_KEY=...'],
+      optional: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'PROGUIDE_ENV_FILE'],
       managed_by_proguide: ['llm.provider', 'llm.model', 'python_runtime', 'viewer_port']
     },
     root_resolution_order: [
@@ -913,11 +963,11 @@ function agentSetupPayload() {
     ],
     clients: {
       claude_code: {
-        install_command: 'claude mcp add --transport stdio --env API_KEY=your_api_key proguide-test -- proguide mcp',
-        no_env_command: 'claude mcp add --transport stdio proguide-test -- proguide mcp',
+        install_command: 'claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp',
+        npx_command: 'claude mcp add proguide-test --env API_KEY=your_api_key -- npx @proguide/test@latest mcp',
         notes: [
           'Run the command from the QA workspace/app under test.',
-          'Use no_env_command when API_KEY is already in the workspace .env.',
+          'Pass API_KEY with --env so the secret belongs to the MCP server configuration, not to the app repo.',
           'Claude Code sets CLAUDE_PROJECT_DIR for MCP servers; ProGuide uses it automatically.'
         ]
       },
@@ -934,7 +984,7 @@ function agentSetupPayload() {
         },
         notes: [
           'Place this file in the QA workspace/app under test.',
-          'Use no_env_config when API_KEY is already in the workspace .env.',
+          'Prefer a connector/client secret mechanism over product-repo .env files when available.',
           'Cursor normally runs stdio MCP servers from the workspace; ProGuide also accepts an optional root tool argument.'
         ]
       },

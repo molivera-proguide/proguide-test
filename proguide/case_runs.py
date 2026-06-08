@@ -171,6 +171,7 @@ def execute_prepared_run(
     run.passed = summary.passed
     run.failed = summary.failed
     run.inconclusive = summary.inconclusive
+    run.setup_failed = summary.setup_failed
     run.blocked = sum(1 for case in cases if case.automation_state != AutomationState.ready and not case.excluded)
     run.status = _status_from_summary(summary, run.blocked)
 
@@ -300,12 +301,16 @@ def _new_run_dir(runs_dir: Path) -> Path:
 
 
 def _status_from_summary(summary: RunSummary, blocked: int) -> RunStatus:
+    if summary.setup_failed:
+        return RunStatus.setup_failed
     if summary.failed:
         return RunStatus.failed
     if summary.inconclusive:
         return RunStatus.inconclusive
     if blocked and not summary.results:
         return RunStatus.blocked
+    if blocked and summary.passed:
+        return RunStatus.finished
     if summary.passed and not summary.failed and not summary.inconclusive:
         return RunStatus.passed
     return RunStatus.finished

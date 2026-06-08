@@ -7,6 +7,7 @@ import {
   listRunRecords,
   loadGeneratedCaseCode,
   loadRunBundle,
+  prepareCasesRun,
   prepareMarkdownRun
 } from './proguide-service.js';
 import { ensurePythonRuntime } from './python-runtime.js';
@@ -24,16 +25,39 @@ const DEFAULT_ROOT = path.resolve(
   process.cwd()
 );
 const PROTOCOL_VERSION = '2025-06-18';
+const casesInputSchema = {
+  type: 'array',
+  description: 'Casos normalizados o semiestructurados. Si se pasa, no hace falta markdown/source_path.',
+  items: {
+    type: 'object',
+    additionalProperties: true,
+    properties: {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      priority: { type: 'string' },
+      route: { type: 'string' },
+      preconditions: { type: 'array', items: { type: 'string' } },
+      data_used: { type: 'array', items: { type: 'string' } },
+      data: { type: 'object', additionalProperties: true },
+      original_steps: { type: 'array', items: { type: 'string' } },
+      executable_steps: { type: 'array', items: { type: 'object', additionalProperties: true } },
+      expected_results: { type: 'array', items: { type: 'string' } },
+      automation_state: { type: 'string' }
+    }
+  }
+};
 
 const tools = [
   {
-    name: 'run_markdown_cases',
-    description: 'Importa casos QA desde Markdown, genera codigo Python Playwright con el agente configurado y ejecuta pytest/Playwright.',
+    name: 'run_cases',
+    description: 'Crea y ejecuta un run ProGuide desde casos estructurados o Markdown. Alias recomendado para QA.',
     inputSchema: {
       type: 'object',
       properties: {
+        cases: casesInputSchema,
         source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
-        markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path.' },
+        markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path/cases.' },
         base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
         root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
         title: { type: 'string' },
@@ -45,11 +69,49 @@ const tools = [
         username: { type: 'string' },
         password: { type: 'string' }
       },
-      required: ['base_url'],
-      anyOf: [
-        { required: ['source_path'] },
-        { required: ['markdown'] }
-      ]
+      required: ['base_url']
+    }
+  },
+  {
+    name: 'create_run',
+    description: 'Crea un run local desde casos estructurados o Markdown sin ejecutar. Devuelve run_id para ejecutar despues.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        cases: casesInputSchema,
+        source_path: { type: 'string' },
+        markdown: { type: 'string' },
+        base_url: { type: 'string' },
+        root: { type: 'string' },
+        title: { type: 'string' },
+        ticket: { type: 'string' },
+        module: { type: 'string' },
+        qa_owner: { type: 'string' },
+        dev_owner: { type: 'string' }
+      }
+    }
+  },
+  {
+    name: 'run_markdown_cases',
+    description: 'Importa casos QA desde Markdown, genera codigo Python Playwright con el agente configurado y ejecuta pytest/Playwright.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
+        markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path.' },
+        cases: casesInputSchema,
+        base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
+        root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
+        title: { type: 'string' },
+        ticket: { type: 'string' },
+        module: { type: 'string' },
+        qa_owner: { type: 'string' },
+        dev_owner: { type: 'string' },
+        email: { type: 'string' },
+        username: { type: 'string' },
+        password: { type: 'string' }
+      },
+      required: ['base_url']
     }
   },
   {
@@ -60,6 +122,7 @@ const tools = [
       properties: {
         source_path: { type: 'string' },
         markdown: { type: 'string' },
+        cases: casesInputSchema,
         base_url: { type: 'string' },
         root: { type: 'string' },
         title: { type: 'string' },
@@ -67,27 +130,25 @@ const tools = [
         module: { type: 'string' },
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' }
-      },
-      anyOf: [
-        { required: ['source_path'] },
-        { required: ['markdown'] }
-      ]
+      }
     }
   },
   {
     name: 'execute_run',
-    description: 'Genera codigo Python Playwright con el agente configurado y ejecuta un run existente.',
+    description: 'Genera codigo Python Playwright y ejecuta un run existente. Si no se pasa run_id, puede crear uno desde cases o Markdown.',
     inputSchema: {
       type: 'object',
       properties: {
         run_id: { type: 'string' },
+        cases: casesInputSchema,
+        source_path: { type: 'string' },
+        markdown: { type: 'string' },
         base_url: { type: 'string' },
         root: { type: 'string' },
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' }
-      },
-      required: ['run_id']
+      }
     }
   },
   {
@@ -129,6 +190,22 @@ const tools = [
 ];
 
 const prompts = [
+  {
+    name: 'run_cases',
+    description: 'Create and execute a ProGuide run from QA cases against a base URL, then return run_url.',
+    arguments: [
+      { name: 'base_url', description: 'Base URL of the app under test.', required: true },
+      { name: 'markdown', description: 'QA test cases in Markdown.', required: false }
+    ]
+  },
+  {
+    name: 'create_run',
+    description: 'Create a ProGuide run from QA cases without executing browser tests.',
+    arguments: [
+      { name: 'base_url', description: 'Base URL of the app under test.', required: false },
+      { name: 'markdown', description: 'QA test cases in Markdown.', required: false }
+    ]
+  },
   {
     name: 'run_markdown_cases',
     description: 'Create and execute a ProGuide run from QA Markdown cases against a base URL, then return run_url.',
@@ -190,7 +267,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.1' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.2' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -223,16 +300,9 @@ async function handleMessage(message) {
 }
 
 async function callTool(name, args) {
-  if (name === 'run_markdown_cases') {
+  if (name === 'run_markdown_cases' || name === 'run_cases') {
     const root = resolveRoot(args.root);
-    const sourceMd = await resolveMarkdownSource(root, args);
-    const prepared = await prepareMarkdownRun({
-      root,
-      sourceMd,
-      baseUrl: args.base_url || '',
-      metadata: metadataFromArgs(args),
-      useAgent: false
-    });
+    const prepared = await prepareRunFromArgs(root, args);
     const viewer = await attachViewer(root, prepared.run.id);
     const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
@@ -253,16 +323,9 @@ async function callTool(name, args) {
     });
   }
 
-  if (name === 'create_run_from_markdown') {
+  if (name === 'create_run_from_markdown' || name === 'create_run') {
     const root = resolveRoot(args.root);
-    const sourceMd = await resolveMarkdownSource(root, args);
-    const prepared = await prepareMarkdownRun({
-      root,
-      sourceMd,
-      baseUrl: args.base_url || '',
-      metadata: metadataFromArgs(args),
-      useAgent: false
-    });
+    const prepared = await prepareRunFromArgs(root, args);
     const viewer = await attachViewer(root, prepared.run.id);
     return toolResult(`Run ${prepared.run.id} creado desde Markdown.`, {
       run_id: prepared.run.id,
@@ -274,7 +337,11 @@ async function callTool(name, args) {
 
   if (name === 'execute_run') {
     const root = resolveRoot(args.root);
-    const runId = cleanHandle(args.run_id, 'run_id');
+    let runId = args.run_id ? cleanHandle(args.run_id, 'run_id') : '';
+    if (!runId) {
+      const prepared = await prepareRunFromArgs(root, args);
+      runId = prepared.run.id;
+    }
     const viewer = await attachViewer(root, runId);
     const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
@@ -328,7 +395,8 @@ async function callTool(name, args) {
 }
 
 function getPrompt(name, args) {
-  if (name === 'run_markdown_cases') {
+  if (name === 'run_markdown_cases' || name === 'run_cases') {
+    const toolName = name === 'run_markdown_cases' ? 'run_markdown_cases' : 'run_cases';
     return {
       description: 'Create and execute a ProGuide run from Markdown QA cases.',
       messages: [{
@@ -337,7 +405,7 @@ function getPrompt(name, args) {
           type: 'text',
           text: [
             'Use the ProGuide MCP tools to run QA Markdown cases.',
-            'Call run_markdown_cases with markdown and base_url.',
+            `Call ${toolName} with cases or markdown and base_url.`,
             'Return run_id, run_url, viewer_url, status, and a concise result summary.',
             'Do not ask the user to set provider or model; ProGuide defaults to Anthropic Sonnet.',
             `base_url: ${args.base_url || '<base_url>'}`,
@@ -348,7 +416,8 @@ function getPrompt(name, args) {
       }]
     };
   }
-  if (name === 'create_run_from_markdown') {
+  if (name === 'create_run_from_markdown' || name === 'create_run') {
+    const toolName = name === 'create_run_from_markdown' ? 'create_run_from_markdown' : 'create_run';
     return {
       description: 'Create a ProGuide run from Markdown QA cases without execution.',
       messages: [{
@@ -357,7 +426,7 @@ function getPrompt(name, args) {
           type: 'text',
           text: [
             'Use the ProGuide MCP tools to create a QA run without executing it.',
-            'Call create_run_from_markdown with markdown and optional base_url.',
+            `Call ${toolName} with cases or markdown and optional base_url.`,
             'Then call get_run and return run_id, run_url if available, status, and parsed cases.',
             `base_url: ${args.base_url || '<optional_base_url>'}`,
             'markdown:',
@@ -368,6 +437,25 @@ function getPrompt(name, args) {
     };
   }
   throw new Error(`Unknown prompt: ${name}`);
+}
+
+async function prepareRunFromArgs(root, args) {
+  if (Array.isArray(args.cases) && args.cases.length) {
+    return prepareCasesRun({
+      root,
+      cases: args.cases,
+      baseUrl: args.base_url || '',
+      metadata: metadataFromArgs(args)
+    });
+  }
+  const sourceMd = await resolveMarkdownSource(root, args);
+  return prepareMarkdownRun({
+    root,
+    sourceMd,
+    baseUrl: args.base_url || '',
+    metadata: metadataFromArgs(args),
+    useAgent: false
+  });
 }
 
 async function resolveMarkdownSource(root, args) {

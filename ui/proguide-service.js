@@ -8,6 +8,7 @@ const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
 const RUN_JSON = 'run.json';
 const SOURCE_MD = 'source.md';
+const SOURCE_CASES_JSON = 'source_cases.json';
 const NORMALIZED_CASES_JSON = 'normalized_cases.json';
 const TEST_PLAN_JSON = 'test_plan.json';
 const EVENTS_JSONL = 'events.jsonl';
@@ -38,8 +39,11 @@ const FIELD_ALIASES = {
   steps: 'original_steps',
   'resultado esperado': 'expected_results',
   'resultados esperados': 'expected_results',
+  esperado: 'expected_results',
+  esperados: 'expected_results',
   expected: 'expected_results',
   'expected result': 'expected_results',
+  'expected results': 'expected_results',
   tags: 'tags',
   etiquetas: 'tags',
   qa: 'qa_owner',
@@ -60,6 +64,7 @@ const GENERIC_EXPECTED_RE = /\b(correcto|correctamente|funciona|ok|exitoso|exito
 const NOT_AUTOMATABLE_RE = /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono|fuera del navegador|manual|base de datos|db|api externa|correo fisico|impresion)\b/i;
 const REVIEW_STEP_RE = /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
 const BULLET_CHARS = '\u2022\u25e6\u2043\u2219\u00b7\u2014\u2013\ufffd';
+const NAVIGATION_RE = /\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b/i;
 
 const MARKDOWN_AGENT_PROMPT = `You are a senior QA analyst converting Markdown test cases into structured cases.
 Return only valid JSON. No markdown.
@@ -102,10 +107,11 @@ export async function listRunRecords(root) {
     const records = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
+      const entryDir = path.join(runsDir, entry.name);
       try {
-        records.push(await loadRunRecord(path.join(runsDir, entry.name)));
-      } catch {
-        // Ignore partial or corrupted run folders in history.
+        records.push(await loadRunRecord(entryDir));
+      } catch (error) {
+        records.push(await legacyRunRecord(entryDir, entry.name, error));
       }
     }
     return records.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
@@ -116,7 +122,15 @@ export async function listRunRecords(root) {
 
 export async function loadRunBundle(root, runId) {
   const runDir = runPath(root, runId);
-  const run = await loadRunRecord(runDir);
+  if (!(await exists(runDir))) {
+    throw new Error(`Run no encontrado: ${runId}. Root efectivo: ${root}.`);
+  }
+  let run;
+  try {
+    run = await loadRunRecord(runDir);
+  } catch (error) {
+    run = await legacyRunRecord(runDir, runId, error);
+  }
   const cases = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
   const summary = await loadSummary(runDir);
   const events = await loadEvents(runDir);
@@ -165,6 +179,7 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
     failed: 0,
     blocked: 0,
     inconclusive: 0,
+    setup_failed: 0,
     pdf_path: null,
     html_path: null,
     data_dir: runDir
@@ -219,6 +234,89 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   return { run, cases };
 }
 
+export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
+  await ensureLayout(root);
+  await loadDotEnv(root);
+  if (!Array.isArray(cases) || !cases.length) {
+    throw new Error('cases debe contener al menos un caso.');
+  }
+
+  const runDir = await newRunDir(root);
+  const run = {
+    id: path.basename(runDir),
+    created_at: nowIso(),
+    started_at: null,
+    finished_at: null,
+    status: 'interpreting',
+    mode: 'url',
+    base_url: String(baseUrl || '').replace(/\/+$/, ''),
+    source_filename: SOURCE_CASES_JSON,
+    app_name: metadata.app_name || metadata.title || null,
+    ticket: metadata.ticket || null,
+    module: metadata.module || null,
+    title: metadata.title || null,
+    qa_owner: metadata.qa_owner || null,
+    dev_owner: metadata.dev_owner || null,
+    total_cases: 0,
+    passed: 0,
+    failed: 0,
+    blocked: 0,
+    inconclusive: 0,
+    setup_failed: 0,
+    pdf_path: null,
+    html_path: null,
+    data_dir: runDir
+  };
+
+  await fs.mkdir(runDir, { recursive: true });
+  await saveRun(runDir, run);
+  await appendEvent(runDir, { run_id: run.id, type: 'run_created', status: run.status, message: 'Run creado.' });
+  await writeJson(path.join(runDir, SOURCE_CASES_JSON), maskSecretsDeep(cases));
+  await appendEvent(runDir, { run_id: run.id, type: 'file_received', message: 'Casos estructurados recibidos.' });
+
+  const normalizedCases = cases.map((item, index) => normalizeCaseForStorage(item, index + 1));
+  for (const testCase of normalizedCases) {
+    if (run.qa_owner && !testCase.qa_owner) testCase.qa_owner = run.qa_owner;
+    if (run.dev_owner && !testCase.dev_owner) testCase.dev_owner = run.dev_owner;
+    if (run.ticket && !testCase.ticket) testCase.ticket = run.ticket;
+  }
+  await saveCasesFile(runDir, normalizedCases);
+  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(normalizedCases, {
+    sourceMd: SOURCE_CASES_JSON,
+    appName: run.app_name || 'ProGuide Markdown Cases'
+  }));
+
+  run.status = 'ready';
+  run.total_cases = normalizedCases.length;
+  await saveRun(runDir, run);
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'cases_interpreted',
+    status: run.status,
+    message: `${normalizedCases.length} caso(s) estructurado(s).`,
+    payload: { ready: normalizedCases.filter((item) => item.automation_state === 'listo').length }
+  });
+  return { run, cases: normalizedCases };
+}
+
+export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAgent = false }) {
+  await ensureLayout(root);
+  await loadDotEnv(root);
+  const markdown = await readMarkdownText(sourceMd);
+  const cases = useAgent
+    ? await interpretMarkdownWithAgent(markdown, { root, sourceName: path.basename(sourceMd) })
+    : parseMarkdownCases(markdown, { sourceName: path.basename(sourceMd) });
+  for (const testCase of cases) {
+    if (metadata.qa_owner && !testCase.qa_owner) testCase.qa_owner = metadata.qa_owner;
+    if (metadata.dev_owner && !testCase.dev_owner) testCase.dev_owner = metadata.dev_owner;
+    if (metadata.ticket && !testCase.ticket) testCase.ticket = metadata.ticket;
+  }
+  return {
+    cases,
+    warnings: normalizationWarnings(cases)
+  };
+}
+
 export async function saveCasesForRun({ root, runId, casesPayload }) {
   const runDir = runPath(root, runId);
   const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
@@ -229,6 +327,9 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
     sourceMd: SOURCE_MD,
     appName: run.app_name || 'ProGuide Markdown Cases'
   }));
+  run.status = 'ready';
+  run.total_cases = cases.length;
+  await saveRun(runDir, run);
   await appendEvent(runDir, {
     run_id: runId,
     type: 'cases_saved',
@@ -322,6 +423,7 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
   run.passed = counts.passed;
   run.failed = counts.failed;
   run.inconclusive = counts.inconclusive;
+  run.setup_failed = counts.setup_failed;
   run.blocked = cases.filter((item) => item.automation_state !== 'listo' && !item.excluded).length;
   run.status = statusFromSummary(counts, run.blocked);
 
@@ -369,12 +471,14 @@ async function runPytest({ python, testsDir, runDir, plan, baseUrl, config, proj
   const completed = await runProcess(command, { cwd: projectRoot, env, logPath: pytestLogPath });
   let results = await parsePytestResults({ plan, junitPath, runDir });
   if (completed.code !== 0 && !(await exists(junitPath))) {
+    const logText = await fs.readFile(pytestLogPath, 'utf8').catch(() => '');
+    const setupMessage = setupFailureMessage(completed.code, logText, relativePath(pytestLogPath, projectRoot));
     results = plan.cases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
-      status: 'inconclusive',
+      status: 'setup_failed',
       duration_seconds: 0,
-      message: `pytest exited with code ${completed.code}. See ${relativePath(pytestLogPath, projectRoot)}.`,
+      message: setupMessage,
       steps: testCase.steps,
       expected: testCase.expected,
       videos: [],
@@ -478,7 +582,41 @@ async function parsePytestResults({ plan, junitPath, runDir }) {
 async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) {
   await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(path.join(outputDir, 'conftest.py'), 'pytest_plugins = ["proguide.pytest_plugin"]\n', 'utf8');
-  const payload = {
+
+  const batchSize = positiveInteger(config.llm.max_cases, 12);
+  const batches = chunkArray(plan.cases, batchSize);
+  const usedPaths = new Set();
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    const batchCases = batches[batchIndex];
+    const payload = buildCodeGenerationPayload({
+      planCases: batchCases,
+      sourceCases: cases,
+      batchIndex,
+      batchCount: batches.length
+    });
+    const data = await callJsonModel(config, {
+      root,
+      system: PLAYWRIGHT_CODE_AGENT_PROMPT,
+      payload,
+      purpose: `generar codigo Python Playwright (lote ${batchIndex + 1}/${batches.length})`
+    });
+    const files = normalizeGeneratedFiles(data);
+    if (!files.length) {
+      throw new Error(`El agente no devolvio archivos Python para ejecutar en el lote ${batchIndex + 1}.`);
+    }
+    for (const file of files) {
+      const relative = targetGeneratedPath(file.path, batchIndex, batches.length, usedPaths);
+      await fs.writeFile(path.join(outputDir, relative), String(file.content || ''), 'utf8');
+    }
+  }
+  await validateGeneratedCode(outputDir, plan);
+}
+
+function buildCodeGenerationPayload({ planCases, sourceCases, batchIndex, batchCount }) {
+  const outputPath = batchCount > 1
+    ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.py`
+    : 'test_markdown_cases.py';
+  return {
     project: {
       base_url_is_available_as_fixture: 'proguide_base_url',
       test_runner: 'pytest',
@@ -488,13 +626,17 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) 
     required_output: {
       files: [
         {
-          path: 'test_markdown_cases.py',
+          path: outputPath,
           content: 'complete python source'
         }
       ]
     },
-    test_cases: plan.cases.map((testCase) => {
-      const sourceCase = cases.find((item) => item.id === testCase.id) || {};
+    batch: {
+      index: batchIndex + 1,
+      total: batchCount
+    },
+    test_cases: planCases.map((testCase) => {
+      const sourceCase = sourceCases.find((item) => item.id === testCase.id) || {};
       return {
         id: testCase.id,
         function_name: `test_${safeId(testCase.id)}`,
@@ -507,25 +649,11 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) 
         original_steps: sourceCase.original_steps || [],
         expected_results: sourceCase.expected_results || [],
         preconditions: sourceCase.preconditions || [],
-        data_used: sourceCase.data_used || []
+        data_used: sourceCase.data_used || [],
+        data: sourceCase.data || testCase.data || {}
       };
     })
   };
-  const data = await callJsonModel(config, {
-    root,
-    system: PLAYWRIGHT_CODE_AGENT_PROMPT,
-    payload,
-    purpose: 'generar codigo Python Playwright'
-  });
-  const files = normalizeGeneratedFiles(data);
-  if (!files.length) {
-    throw new Error('El agente no devolvio archivos Python para ejecutar.');
-  }
-  for (const file of files) {
-    const relative = safeGeneratedPath(file.path);
-    await fs.writeFile(path.join(outputDir, relative), String(file.content || ''), 'utf8');
-  }
-  await validateGeneratedCode(outputDir, plan);
 }
 
 function extractCaseCode(moduleText, caseId) {
@@ -583,6 +711,26 @@ function safeGeneratedPath(value) {
   return normalized;
 }
 
+function targetGeneratedPath(value, batchIndex, batchCount, usedPaths) {
+  let relative = safeGeneratedPath(value);
+  if (batchCount > 1 && path.basename(relative) === 'test_markdown_cases.py') {
+    relative = path.posix.join(path.posix.dirname(relative), `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.py`);
+  }
+  if (!usedPaths.has(relative)) {
+    usedPaths.add(relative);
+    return relative;
+  }
+  const parsed = path.posix.parse(relative);
+  let suffix = 2;
+  let candidate = path.posix.join(parsed.dir, `${parsed.name}_${suffix}${parsed.ext}`);
+  while (usedPaths.has(candidate)) {
+    suffix += 1;
+    candidate = path.posix.join(parsed.dir, `${parsed.name}_${suffix}${parsed.ext}`);
+  }
+  usedPaths.add(candidate);
+  return candidate;
+}
+
 async function validateGeneratedCode(outputDir, plan) {
   const pythonFiles = [];
   await walk(outputDir, async (filePath) => {
@@ -608,7 +756,9 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
   const plannedCases = [];
   for (const testCase of cases) {
     if (testCase.excluded) continue;
+    if (testCase.automation_state !== 'listo') continue;
     const steps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
+    const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
     plannedCases.push({
       id: testCase.id,
       feature_id: 'markdown_cases',
@@ -620,6 +770,7 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
       steps: steps.length ? steps : ['go to /'],
       expected: (testCase.expected_results || []).length ? testCase.expected_results : ['page is visible'],
       data: {
+        ...caseData,
         preconditions: testCase.preconditions || [],
         data_used: maskSecretLines(testCase.data_used || []),
         qa_owner: testCase.qa_owner || null,
@@ -666,23 +817,54 @@ function splitCaseBlocks(markdown) {
   if (current) blocks.push(current);
   if (blocks.length) return blocks;
 
+  const fallbackBlocks = [];
   current = null;
   for (const line of markdown.split(/\r?\n/)) {
     const heading = line.match(/^(#{2,3})\s+(.+?)\s*$/);
-    if (heading) {
-      if (current) blocks.push(current);
+    if (heading && !isFieldLabel(norm(heading[2]))) {
+      if (current) fallbackBlocks.push(current);
       current = { heading: cleanHeading(heading[2]), lines: [] };
       continue;
     }
     if (current) current.lines.push(line);
   }
-  return blocks.length ? blocks : [{ heading: 'Caso 1', lines: markdown.split(/\r?\n/) }];
+  if (current) fallbackBlocks.push(current);
+  const contentBlocks = fallbackBlocks.filter(hasCaseContent);
+  return contentBlocks.length ? contentBlocks : [{ heading: 'Caso 1', lines: markdown.split(/\r?\n/) }];
 }
 
 function isCaseHeading(prefix, text) {
   const normalized = norm(text);
   if (/^(?:caso|case|test|tc)(?:\s|#|:|\.|-|_|\d|$)/.test(normalized)) return true;
-  return [2, 3].includes(prefix.length) && !isFieldLabel(normalized);
+  if (/\btc[\s._-]*\d+\b/.test(normalized)) return true;
+  return false;
+}
+
+function hasCaseContent(block) {
+  let currentField = null;
+  let hasSteps = false;
+  let hasExpected = false;
+  for (const rawLine of block.lines || []) {
+    const line = rawLine.trim();
+    if (!line || isSeparatorLine(line)) continue;
+    if (line.startsWith('#')) {
+      currentField = fieldFromHeading(line) || currentField;
+      if (currentField === 'original_steps') hasSteps = true;
+      if (currentField === 'expected_results') hasExpected = true;
+      continue;
+    }
+    const stripped = stripListMarker(stripMarkdownEmphasis(line));
+    const [label] = extractLabel(stripped);
+    if (label) {
+      currentField = label;
+      if (label === 'original_steps') hasSteps = true;
+      if (label === 'expected_results') hasExpected = true;
+      continue;
+    }
+    if (currentField === 'original_steps' || looksLikeStep(line)) hasSteps = true;
+    if (currentField === 'expected_results') hasExpected = true;
+  }
+  return hasSteps && hasExpected;
 }
 
 function parseBlock(block, number) {
@@ -692,6 +874,7 @@ function parseBlock(block, number) {
     priority: 'media',
     preconditions: [],
     data_used: [],
+    data: {},
     original_steps: [],
     expected_results: [],
     tags: [],
@@ -702,6 +885,7 @@ function parseBlock(block, number) {
   for (const rawLine of block.lines) {
     const line = rawLine.trim();
     if (!line) continue;
+    if (isSeparatorLine(line)) continue;
     if (line.startsWith('#')) {
       const label = fieldFromHeading(line);
       if (label) currentField = label;
@@ -727,6 +911,7 @@ function parseBlock(block, number) {
   fields.tags = splitTags(fields.tags);
   fields.preconditions = cleanList(fields.preconditions);
   fields.data_used = cleanList(fields.data_used);
+  fields.data = dataFromLines(fields.data_used);
   fields.original_steps = cleanList(fields.original_steps);
   fields.expected_results = cleanList(fields.expected_results);
 
@@ -741,6 +926,7 @@ function parseBlock(block, number) {
     tags: fields.tags,
     preconditions: fields.preconditions,
     data_used: maskSecretLines(fields.data_used),
+    data: fields.data,
     original_steps: fields.original_steps,
     executable_steps: buildSteps(fields.original_steps),
     expected_results: fields.expected_results,
@@ -783,14 +969,20 @@ function buildSteps(originalSteps) {
 
 function normalizeStep(step) {
   const normalized = norm(step);
+  const explicit = explicitStep(step);
+  if (explicit) return explicit;
   const route = extractRoute(step);
   const clickTarget = extractClickTarget(step);
   if (clickTarget) return `click button ${clickTarget}`;
   if (route) return `go to ${route}`;
+  if (/\b(email|e-mail|correo|usuario|user)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) {
+    return /\b(invalido|invalid|malformado|incorrecto)\b/.test(normalized) ? 'enter invalid email' : 'enter valid email';
+  }
+  if (/\b(password|pass|clave|contrasena)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) {
+    return /\b(invalido|invalid|corta|corto|incorrecto)\b/.test(normalized) ? 'enter invalid password' : 'enter valid password';
+  }
   if (/\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized)) return 'submit form';
-  if (/\b(ir|abrir|navegar|visitar|acceder|ingresar)\b/.test(normalized)) return 'go to /';
-  if (/\b(email|e-mail|correo|usuario|user)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) return 'enter valid email';
-  if (/\b(password|pass|clave|contrasena)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) return 'enter valid password';
+  if (NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
   return step;
 }
@@ -811,9 +1003,112 @@ function hasConcreteExpected(expected) {
 }
 
 function stepConfidence(step) {
+  if (explicitStep(step)) return 0.95;
   if (NOT_AUTOMATABLE_RE.test(step)) return 0.2;
   if (REVIEW_STEP_RE.test(step)) return 0.45;
   return normalizeStep(step) !== step ? 0.85 : 0.7;
+}
+
+function explicitStep(step) {
+  const text = String(step || '').trim();
+  if (/^(?:fill|click|expect)\s+\[[^\]]+\]/i.test(text)) return text;
+  if (/^expect\s+text\s+["'][^"']+["']/i.test(text)) return text;
+  return null;
+}
+
+function mergeCaseData(primary = {}, fallback = {}) {
+  const merged = { ...(isPlainObject(fallback) ? fallback : {}) };
+  if (!isPlainObject(primary)) return merged;
+  for (const [key, value] of Object.entries(primary)) {
+    if (value === undefined) continue;
+    if (isPlainObject(value) && isPlainObject(merged[key])) {
+      merged[key] = mergeCaseData(value, merged[key]);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function dataFromLines(lines) {
+  const data = {};
+  for (const line of cleanList(lines)) {
+    const match = String(line).match(/^([^:]{2,60}):\s*(.+)$/);
+    if (!match) continue;
+    const key = match[1].trim();
+    const value = match[2].trim();
+    const normalizedKey = norm(key);
+    if (!value || isSecretKey(normalizedKey)) continue;
+    if (/\b(email|e-mail|correo)\b/.test(normalizedKey) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+      data.user = { ...(data.user || {}), email: value };
+      continue;
+    }
+    if (/\b(usuario|user|username)\b/.test(normalizedKey)) {
+      data.user = { ...(data.user || {}), username: value };
+      continue;
+    }
+    const dataKey = normalizedKey.replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (dataKey) data[dataKey] = value;
+  }
+  return data;
+}
+
+function sanitizeCaseData(value) {
+  if (Array.isArray(value)) return value.map(sanitizeCaseData);
+  if (!isPlainObject(value)) return value;
+  const sanitized = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isSecretKey(key)) continue;
+    sanitized[key] = sanitizeCaseData(entry);
+  }
+  return sanitized;
+}
+
+function maskSecretsDeep(value, key = '') {
+  if (Array.isArray(value)) return value.map((entry) => maskSecretsDeep(entry));
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [
+      entryKey,
+      maskSecretsDeep(entryValue, entryKey)
+    ]));
+  }
+  if (isSecretKey(key)) return '******';
+  if (typeof value === 'string') return maskSecretLine(value);
+  return value;
+}
+
+function isSecretKey(key) {
+  return /\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b/i.test(norm(key));
+}
+
+function normalizationWarnings(cases) {
+  const warnings = [];
+  for (const testCase of cases) {
+    if (testCase.automation_state !== 'listo') {
+      warnings.push({
+        case_id: testCase.id,
+        type: 'automation_state',
+        message: testCase.state_reason || 'El caso requiere revision antes de ejecutar.'
+      });
+    }
+    for (const step of testCase.executable_steps || []) {
+      if (Number(step.confidence ?? 1) < 0.75 || step.needs_review) {
+        warnings.push({
+          case_id: testCase.id,
+          step: step.number,
+          type: 'step_confidence',
+          original_text: step.original_text,
+          normalized_action: step.normalized_action,
+          confidence: Number(step.confidence ?? 0)
+        });
+      }
+    }
+  }
+  return warnings;
 }
 
 async function interpretMarkdownWithAgent(markdown, { root, sourceName }) {
@@ -838,8 +1133,8 @@ async function interpretMarkdownWithAgent(markdown, { root, sourceName }) {
 
 function normalizeCaseForStorage(item, number, fallback = {}) {
   const title = String(item.title || fallback.title || `Caso ${number}`).trim();
-  const originalSteps = cleanList(item.original_steps || fallback.original_steps || []);
-  const expectedResults = cleanList(item.expected_results || fallback.expected_results || []);
+  const originalSteps = cleanList(item.original_steps || item.steps || fallback.original_steps || fallback.steps || []);
+  const expectedResults = cleanList(item.expected_results || item.expected || fallback.expected_results || fallback.expected || []);
   const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
@@ -866,6 +1161,7 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     tags: splitTags(item.tags || fallback.tags || []),
     preconditions: cleanList(item.preconditions || fallback.preconditions || []),
     data_used: maskSecretLines(cleanList(item.data_used || fallback.data_used || [])),
+    data: sanitizeCaseData(mergeCaseData(item.data || {}, fallback.data || {})),
     original_steps: originalSteps,
     executable_steps: executableSteps,
     expected_results: expectedResults,
@@ -932,12 +1228,15 @@ function coerceCasesPayload(data) {
 
 async function callJsonModel(config, { root, system, payload, purpose }) {
   await loadDotEnv(root);
-  if (config.llm.provider === 'disabled') {
-    throw new Error(`El agente LLM esta deshabilitado en proguide_tests/config.yaml; no se puede ${purpose}.`);
+  const provider = String(config.llm.provider || 'disabled').toLowerCase();
+  const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
+  const maxOutputTokens = positiveInteger(config.llm.max_output_tokens, 8000);
+  if (provider === 'disabled') {
+    throw new Error(`El agente LLM esta deshabilitado; no se puede ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
   }
-  if (config.llm.provider === 'openai') {
+  if (provider === 'openai') {
     const apiKey = providerApiKey('openai');
-    if (!apiKey.value) throw new Error(`Falta OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}.`);
+    if (!apiKey.value) throw new Error(`Falta OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -947,6 +1246,7 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
       body: JSON.stringify({
         model: config.llm.model,
         temperature: Number(config.llm.temperature ?? 0.2),
+        max_tokens: maxOutputTokens,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: system },
@@ -958,11 +1258,15 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
       throw new Error(`OpenAI fallo al ${purpose} (${response.status}): ${await response.text()}`);
     }
     const data = await response.json();
-    return extractJson(data.choices?.[0]?.message?.content || '');
+    const choice = data.choices?.[0] || {};
+    if (choice.finish_reason === 'length') {
+      throw new Error(`OpenAI trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`);
+    }
+    return extractJson(choice.message?.content || '', { purpose, provider, maxOutputTokens, configPath });
   }
-  if (config.llm.provider === 'anthropic') {
+  if (provider === 'anthropic') {
     const apiKey = providerApiKey('anthropic');
-    if (!apiKey.value) throw new Error(`Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}.`);
+    if (!apiKey.value) throw new Error(`Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -972,7 +1276,7 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
       },
       body: JSON.stringify({
         model: config.llm.model,
-        max_tokens: Number(config.llm.max_output_tokens || 8000),
+        max_tokens: maxOutputTokens,
         temperature: Number(config.llm.temperature ?? 0.2),
         system,
         messages: [
@@ -987,9 +1291,12 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
     const text = (data.content || [])
       .map((block) => block.type === 'text' ? block.text : '')
       .join('\n');
-    return extractJson(text);
+    if (data.stop_reason === 'max_tokens') {
+      throw new Error(`Anthropic trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`);
+    }
+    return extractJson(text, { purpose, provider, maxOutputTokens, configPath });
   }
-  throw new Error(`Proveedor LLM no soportado: ${config.llm.provider}`);
+  throw new Error(`Proveedor LLM no soportado: ${provider}. Root efectivo: ${root}. Config: ${configPath}.`);
 }
 
 function providerApiKey(provider) {
@@ -1000,14 +1307,23 @@ function providerApiKey(provider) {
   return { name: name || names[0], value: name ? process.env[name] : '' };
 }
 
-function extractJson(content) {
+function extractJson(content, context = {}) {
   try {
     return JSON.parse(content);
-  } catch {
+  } catch (error) {
     const start = content.indexOf('{');
     const end = content.lastIndexOf('}');
-    if (start >= 0 && end > start) return JSON.parse(content.slice(start, end + 1));
-    throw new Error('El agente no devolvio JSON valido.');
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(content.slice(start, end + 1));
+      } catch {
+        // Fall through to the contextual error below.
+      }
+    }
+    const details = context.purpose
+      ? ` al ${context.purpose}. Provider: ${context.provider}. max_tokens=${context.maxOutputTokens}. Config: ${context.configPath}.`
+      : '.';
+    throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`);
   }
 }
 
@@ -1094,16 +1410,25 @@ function parseYamlScalar(value) {
 }
 
 async function loadDotEnv(root) {
-  const envPath = path.join(root, '.env');
-  if (!(await exists(envPath))) return;
-  const text = await fs.readFile(envPath, 'utf8');
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) continue;
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match || process.env[match[1]]) continue;
-    process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
+  for (const envPath of envFileCandidates(root)) {
+    if (!(await exists(envPath))) continue;
+    const text = await fs.readFile(envPath, 'utf8');
+    for (const line of text.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match || process.env[match[1]]) continue;
+      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
+    }
   }
+}
+
+function envFileCandidates(root) {
+  return [
+    process.env.PROGUIDE_ENV_FILE,
+    path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
+    path.join(root, '.env')
+  ].filter(Boolean).map((item) => path.resolve(String(item)));
 }
 
 async function readMarkdownText(filePath) {
@@ -1172,6 +1497,10 @@ function stripMarkdownEmphasis(line) {
   return line.replace(/\*\*/g, '').replace(/__/g, '').trim();
 }
 
+function isSeparatorLine(line) {
+  return /^[-*_]{3,}$/.test(String(line || '').trim());
+}
+
 function titleFromHeading(heading, number) {
   const title = stripListMarker(String(heading).replace(/^\s*(?:caso|case|test|tc)(?:\s|#|:|\.|-|_)*\d*[\s:.\-_]*/i, '').trim());
   return title || `Caso ${number}`;
@@ -1227,9 +1556,17 @@ function joinText(existing, value) {
 }
 
 function extractRoute(step) {
-  let match = String(step).match(/(https?:\/\/\S+|\/[A-Za-z0-9_\-/?#=&.]+)/);
+  const text = String(step);
+  const normalized = norm(text);
+  const hasRouteContext = NAVIGATION_RE.test(normalized) ||
+    (/\bingresar\b/.test(normalized) && /(https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(text)) ||
+    /\b(ruta|route|url)\b/.test(normalized) ||
+    /^\s*(?:https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(text);
+  if (!hasRouteContext) return null;
+
+  let match = text.match(/(https?:\/\/\S+|\/[A-Za-z0-9_\-/?#=&.]+)/);
   if (match) return match[1].replace(/[.,;]+$/, '');
-  match = String(step).match(/\b(?:ruta|route)\s+([A-Za-z0-9_\-/?#=&.]+)/i);
+  match = text.match(/\b(?:ruta|route|url)\s+([A-Za-z0-9_\-/?#=&.]+)/i);
   if (!match) return null;
   const value = match[1].trim().replace(/[.,;]+$/, '');
   return value.startsWith('/') ? value : `/${value}`;
@@ -1308,6 +1645,42 @@ function makeRunId() {
 
 async function loadRunRecord(runDir) {
   return readJson(path.join(runDir, RUN_JSON));
+}
+
+async function legacyRunRecord(runDir, runId, error) {
+  let createdAt = '';
+  try {
+    createdAt = (await fs.stat(runDir)).mtime.toISOString();
+  } catch {
+    createdAt = nowIso();
+  }
+  return {
+    id: runId,
+    created_at: createdAt,
+    started_at: null,
+    finished_at: null,
+    status: 'unknown',
+    mode: 'url',
+    base_url: '',
+    source_filename: '',
+    app_name: null,
+    ticket: null,
+    module: null,
+    title: null,
+    qa_owner: null,
+    dev_owner: null,
+    total_cases: 0,
+    passed: 0,
+    failed: 0,
+    blocked: 0,
+    inconclusive: 0,
+    setup_failed: 0,
+    pdf_path: null,
+    html_path: null,
+    data_dir: runDir,
+    load_error: error?.message || String(error || 'run.json no disponible'),
+    recovery_hint: 'El directorio existe pero no tiene run.json valido. Re-crea el run o conserva el directorio solo como evidencia legacy.'
+  };
 }
 
 async function saveRun(runDir, run) {
@@ -1424,21 +1797,47 @@ function decodeXml(text) {
 }
 
 function countSummary(summary) {
-  const counts = { passed: 0, failed: 0, inconclusive: 0 };
+  const counts = { passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 };
   for (const result of summary.results || []) {
     if (result.status === 'passed') counts.passed += 1;
     else if (result.status === 'failed') counts.failed += 1;
+    else if (result.status === 'setup_failed') counts.setup_failed += 1;
     else counts.inconclusive += 1;
   }
   return counts;
 }
 
 function statusFromSummary(counts, blocked) {
+  if (counts.setup_failed) return 'setup_failed';
   if (counts.failed) return 'failed';
   if (counts.inconclusive) return 'inconclusive';
   if (blocked && !counts.passed) return 'blocked';
+  if (blocked && counts.passed) return 'finished';
   if (counts.passed && !counts.failed && !counts.inconclusive) return 'passed';
   return 'finished';
+}
+
+function setupFailureMessage(exitCode, logText, relativeLogPath) {
+  const firstUseful = String(logText || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /ModuleNotFoundError|ImportError|No module named|Error|Traceback|pytest: error/i.test(line));
+  const reason = firstUseful || `pytest exited with code ${exitCode}`;
+  return `setup_failed: ${reason}. See ${relativeLogPath}. Run proguide doctor --fix.`;
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  const chunkSize = Math.max(1, size);
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function relativePath(filePath, base) {

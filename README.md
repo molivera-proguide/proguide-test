@@ -18,14 +18,14 @@ ProGuide creates and maintains its own Python runtime under the user profile. QA
 For public or internally accessible GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.1/proguide-test-0.1.1.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.2/proguide-test-0.1.2.tgz
 ```
 
 For private repositories:
 
 ```bash
-gh release download v0.1.1 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
-npm install -g ./proguide-test-0.1.1.tgz
+gh release download v0.1.2 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
+npm install -g ./proguide-test-0.1.2.tgz
 ```
 
 ### Configure Your QA Workspace
@@ -36,30 +36,34 @@ Example:
 
 ```text
 C:\QA\frontend-app\
-  .env
   proguide_tests\
     config.yaml
     runs\
 ```
 
-Put the company Anthropic/Claude key in `C:\QA\frontend-app\.env`:
+Do not put company LLM API keys in arbitrary product repos. For Claude Code, pass the key only when registering the MCP server, using the same pattern as tools like TestSprite:
+
+```powershell
+cd C:\QA\frontend-app
+claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp
+```
+
+Provider-specific variables are supported for advanced setups:
 
 ```env
+OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
+PROGUIDE_LLM_API_KEY=sk-...
 ```
 
-ProGuide also accepts these aliases:
-
-```env
-API_KEY=sk-ant-...
-PROGUIDE_LLM_API_KEY=sk-ant-...
-```
+Workspace `.env` files are still read for backwards compatibility, but they are not the recommended place for ProGuide LLM secrets. Avoid putting `API_KEY` in product repos because it can collide with app configuration and be committed accidentally.
 
 The LLM provider/model is maintained by the ProGuide tool. QA users only provide the API key. The current default is Anthropic Claude Sonnet.
 
 ```powershell
 cd C:\QA\frontend-app
 proguide doctor --json
+proguide doctor --fix --json
 ```
 
 The first `doctor`, `run`, or MCP execution can take a few minutes because ProGuide creates its managed Python runtime, installs `pytest`/`playwright`, and installs Chromium. After that, QA only needs the API key.
@@ -85,6 +89,12 @@ Pasos:
 Resultado esperado:
 - Se muestra el dashboard
 '@ | proguide create --stdin --base-url http://localhost:3000 --json
+```
+
+Preview normalization without creating a run:
+
+```powershell
+proguide create casos.md --dry-run --json
 ```
 
 Execute cases against a running app:
@@ -120,18 +130,18 @@ The JSON response includes `run_url`. Open it to inspect status, generated Pytho
 
 ### Use With Claude Code
 
-Register ProGuide as a Claude Code MCP server from the QA workspace/app under test. This mirrors the TestSprite-style setup: the QA user only passes `API_KEY`.
+Register ProGuide as a Claude Code MCP server from the QA workspace/app under test. The supported onboarding path is to pass the key through `claude mcp add --env`, not through the app repo:
 
 ```powershell
 cd C:\QA\frontend-app
-claude mcp add --transport stdio --env API_KEY=your_api_key proguide-test -- proguide mcp
+claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp
 ```
 
-If the API key is already in `C:\QA\frontend-app\.env`, the command can omit it:
+If ProGuide is published and you do not want to install it globally, use the npx form:
 
 ```powershell
 cd C:\QA\frontend-app
-claude mcp add --transport stdio proguide-test -- proguide mcp
+claude mcp add proguide-test --env API_KEY=your_api_key -- npx @proguide/test@latest mcp
 ```
 
 Claude Code provides the project directory to MCP servers; ProGuide uses that automatically. `PROGUIDE_MCP_ROOT` is only an advanced override.
@@ -154,18 +164,7 @@ Create `.cursor/mcp.json` in the QA workspace/app under test:
 }
 ```
 
-If the API key is already in `.env`, omit the `env` block:
-
-```json
-{
-  "mcpServers": {
-    "proguide-test": {
-      "command": "proguide",
-      "args": ["mcp"]
-    }
-  }
-}
-```
+If your MCP client has a separate secret store, use that instead of a product-repo `.env`. Otherwise keep the key in the client MCP config's `env` block.
 
 ### Agent Setup Snippets
 
@@ -188,9 +187,11 @@ Available MCP tools:
 
 | Tool | Description |
 | --- | --- |
-| `run_markdown_cases` | Imports QA Markdown cases, generates Python Playwright code, executes pytest/Playwright, and returns run evidence. |
-| `create_run_from_markdown` | Imports QA Markdown cases and returns a `run_id` without executing. |
-| `execute_run` | Generates code and executes an existing run. |
+| `run_cases` | Creates and executes a run from structured cases or Markdown. Recommended tool name. |
+| `create_run` | Creates a run from structured cases or Markdown without executing. Recommended tool name. |
+| `run_markdown_cases` | Legacy alias for Markdown imports that executes the run. |
+| `create_run_from_markdown` | Legacy alias for Markdown imports without executing. |
+| `execute_run` | Generates code and executes an existing run. If no `run_id` is passed, it can create a run from `cases` or Markdown first. |
 | `get_run` | Reads run status, cases, events, and summary. |
 | `get_generated_code` | Reads generated Python code for a case. |
 | `list_runs` | Lists local runs. |
@@ -216,10 +217,10 @@ Install Node dependencies:
 npm --prefix ui install
 ```
 
-Configure local development keys in the repository `.env`:
+Configure local development keys through your user environment or `%USERPROFILE%\.proguide\.env`. A repository `.env` still works for disposable personal keys, but do not use it for shared company secrets.
 
 ```env
-OPENAI_API_KEY=sk-...
+PROGUIDE_LLM_API_KEY=sk-...
 ```
 
 OpenAI remains supported for local development. Company QA usage should prefer `llm.provider: anthropic`.
@@ -305,11 +306,11 @@ The release workflow is:
 Create a release by pushing a version tag:
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
-The workflow runs tests, creates `proguide-test-0.1.1.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
+The workflow runs tests, creates `proguide-test-0.1.2.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
 
 ### Data Contract
 

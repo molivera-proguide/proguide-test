@@ -57,3 +57,18 @@ def test_load_runtime_env_includes_current_working_directory(tmp_path: Path, mon
 
     assert loaded == ["OPENAI_API_KEY"]
     assert os.environ["OPENAI_API_KEY"] == "from-tool-dir"
+
+
+def test_load_runtime_env_prefers_explicit_proguide_env_file(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("PROGUIDE_LLM_API_KEY", raising=False)
+    project = tmp_path / "frontend"
+    project.mkdir()
+    explicit = tmp_path / "proguide.env"
+    explicit.write_text("PROGUIDE_LLM_API_KEY=from-explicit-file\n", encoding="utf-8")
+    (project / ".env").write_text("PROGUIDE_LLM_API_KEY=from-project\n", encoding="utf-8")
+    monkeypatch.setenv("PROGUIDE_ENV_FILE", str(explicit))
+
+    loaded = load_runtime_env(project)
+
+    assert loaded == ["PROGUIDE_LLM_API_KEY"]
+    assert os.environ["PROGUIDE_LLM_API_KEY"] == "from-explicit-file"

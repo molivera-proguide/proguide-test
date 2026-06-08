@@ -34,11 +34,18 @@ def load_env_file(env_path: Path) -> list[str]:
 
 
 def _env_candidates(project_root: Path) -> list[Path]:
-    candidates = [
-        project_root.resolve() / ".env",
-        Path.cwd().resolve() / ".env",
-        Path(__file__).resolve().parents[1] / ".env",
-    ]
+    candidates = []
+    explicit = os.environ.get("PROGUIDE_ENV_FILE")
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    candidates.extend(
+        [
+            Path.home() / ".proguide" / ".env",
+            project_root.resolve() / ".env",
+            Path.cwd().resolve() / ".env",
+            Path(__file__).resolve().parents[1] / ".env",
+        ]
+    )
     unique: list[Path] = []
     seen: set[Path] = set()
     for candidate in candidates:

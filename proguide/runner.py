@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -67,12 +68,13 @@ def run_pytest(
 
     results = _parse_results(plan, junit_path, run_dir, project_root)
     if completed.returncode != 0 and not junit_path.exists():
+        setup_message = _setup_failure_message(completed.returncode, pytest_log_path, project_root)
         results = [
             TestResult(
                 id=case.id,
                 title=case.title,
-                status=TestStatus.inconclusive,
-                message=f"pytest exited with code {completed.returncode}. See {as_relative(pytest_log_path, project_root)}.",
+                status=TestStatus.setup_failed,
+                message=setup_message,
                 steps=case.steps,
                 expected=case.expected,
             )
@@ -146,6 +148,23 @@ def _parse_results(plan: TestPlan, junit_path: Path, run_dir: Path, project_root
             )
         )
     return results
+
+
+def _setup_failure_message(exit_code: int, pytest_log_path: Path, project_root: Path) -> str:
+    try:
+        lines = pytest_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    first_useful = next(
+        (
+            line.strip()
+            for line in lines
+            if re.search(r"ModuleNotFoundError|ImportError|No module named|Error|Traceback|pytest: error", line, re.I)
+        ),
+        "",
+    )
+    reason = first_useful or f"pytest exited with code {exit_code}"
+    return f"setup_failed: {reason}. See {as_relative(pytest_log_path, project_root)}. Run proguide doctor --fix."
 
 
 def _load_steps(run_dir: Path, case_id: str) -> list[str]:

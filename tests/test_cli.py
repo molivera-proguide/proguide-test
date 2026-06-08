@@ -103,8 +103,10 @@ features:
     assert "playwright install chromium" in result.output
 
 
-def test_agent_check_reports_missing_openai_key(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+def test_agent_check_reports_missing_anthropic_key_by_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("PROGUIDE_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
     monkeypatch.setattr(proguide.env, "_env_candidates", lambda project_root: [Path(project_root).resolve() / ".env"])
     monkeypatch.setattr(proguide.cli, "load_runtime_env", proguide.env.load_runtime_env)
     runner = CliRunner()
@@ -112,12 +114,14 @@ def test_agent_check_reports_missing_openai_key(tmp_path: Path, monkeypatch) -> 
     result = runner.invoke(app, ["agent-check", "--root", str(tmp_path)])
 
     assert result.exit_code == 1
-    assert "Falta OPENAI_API_KEY" in result.output
+    assert "Falta ANTHROPIC_API_KEY" in result.output
 
 
-def test_agent_check_loads_openai_key_from_project_env(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-test\n", encoding="utf-8")
+def test_agent_check_loads_anthropic_api_key_alias_from_project_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("PROGUIDE_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("API_KEY", raising=False)
+    (tmp_path / ".env").write_text("API_KEY=sk-test\n", encoding="utf-8")
     runner = CliRunner()
 
     result = runner.invoke(app, ["agent-check", "--root", str(tmp_path)])

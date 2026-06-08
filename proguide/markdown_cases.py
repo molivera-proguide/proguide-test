@@ -30,8 +30,11 @@ FIELD_ALIASES = {
     "steps": "original_steps",
     "resultado esperado": "expected_results",
     "resultados esperados": "expected_results",
+    "esperado": "expected_results",
+    "esperados": "expected_results",
     "expected": "expected_results",
     "expected result": "expected_results",
+    "expected results": "expected_results",
     "tags": "tags",
     "etiquetas": "tags",
     "qa": "qa_owner",
@@ -63,6 +66,7 @@ REVIEW_STEP_RE = re.compile(
     re.I,
 )
 BULLET_CHARS = "\u2022\u25e6\u2043\u2219\u00b7\u2014\u2013\ufffd"
+NAVIGATION_RE = re.compile(r"\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b", re.I)
 
 
 @dataclass
@@ -123,6 +127,9 @@ def cases_to_test_plan(
             continue
         steps = [step.normalized_action or step.original_text for step in case.executable_steps]
         expected = case.expected_results or ["page is visible"]
+        case_data = dict(case.data or {})
+        if case.data_used:
+            case_data = _merge_case_data(case_data, _data_from_lines(case.data_used))
         planned_cases.append(
             TestCase(
                 id=case.id,
@@ -135,6 +142,7 @@ def cases_to_test_plan(
                 steps=steps or ["go to /"],
                 expected=expected,
                 data={
+                    **case_data,
                     "preconditions": case.preconditions,
                     "data_used": _mask_secret_lines(case.data_used),
                     "qa_owner": case.qa_owner,
@@ -206,27 +214,64 @@ def _split_case_blocks(markdown: str) -> list[_CaseBlock]:
     if blocks:
         return blocks
 
-    # Fallback: split by any level 2/3 heading. If the document has one H1 title
-    # and field sections only, this still becomes one case from the whole file.
+    # Fallback: split by level 2/3 headings that actually contain case fields.
+    # This avoids treating document sections such as "## 1. Autenticacion" as cases.
     current = None
+    fallback_blocks: list[_CaseBlock] = []
     for line in markdown.splitlines():
         heading = re.match(r"^(#{2,3})\s+(.+?)\s*$", line)
-        if heading:
+        if heading and not _is_field_label(_norm(heading.group(2))):
             if current:
-                blocks.append(current)
+                fallback_blocks.append(current)
             current = _CaseBlock(_clean_heading(heading.group(2)))
             continue
         if current:
             current.lines.append(line)
 
-    return blocks or [_CaseBlock("Caso 1", markdown.splitlines())]
+    if current:
+        fallback_blocks.append(current)
+    content_blocks = [block for block in fallback_blocks if _has_case_content(block)]
+    return content_blocks or [_CaseBlock("Caso 1", markdown.splitlines())]
 
 
 def _is_case_heading(prefix: str, text: str) -> bool:
     normalized = _norm(text)
     if re.match(r"^(?:caso|case|test|tc)(?:\s|#|:|\.|\-|_|\d|$)", normalized):
         return True
-    return len(prefix) in {2, 3} and not _is_field_label(normalized)
+    if re.search(r"\btc[\s._-]*\d+\b", normalized):
+        return True
+    return False
+
+
+def _has_case_content(block: _CaseBlock) -> bool:
+    current_field: str | None = None
+    has_steps = False
+    has_expected = False
+    for raw_line in block.lines:
+        line = raw_line.strip()
+        if not line or _is_separator_line(line):
+            continue
+        if line.startswith("#"):
+            current_field = _field_from_heading(line) or current_field
+            if current_field == "original_steps":
+                has_steps = True
+            if current_field == "expected_results":
+                has_expected = True
+            continue
+        stripped = _strip_list_marker(_strip_markdown_emphasis(line))
+        label, _ = _extract_label(stripped)
+        if label:
+            current_field = label
+            if label == "original_steps":
+                has_steps = True
+            if label == "expected_results":
+                has_expected = True
+            continue
+        if current_field == "original_steps" or _looks_like_step(line):
+            has_steps = True
+        if current_field == "expected_results":
+            has_expected = True
+    return has_steps and has_expected
 
 
 def _parse_block(block: _CaseBlock, number: int) -> NormalizedMarkdownCase | None:
@@ -247,6 +292,8 @@ def _parse_block(block: _CaseBlock, number: int) -> NormalizedMarkdownCase | Non
     for raw_line in block.lines:
         line = raw_line.strip()
         if not line:
+            continue
+        if _is_separator_line(line):
             continue
         if line.startswith("#"):
             label = _field_from_heading(line)
@@ -289,6 +336,7 @@ def _parse_block(block: _CaseBlock, number: int) -> NormalizedMarkdownCase | Non
         tags=fields["tags"],
         preconditions=fields["preconditions"],
         data_used=_mask_secret_lines(fields["data_used"]),
+        data=_data_from_lines(fields["data_used"]),
         original_steps=fields["original_steps"],
         executable_steps=steps,
         expected_results=fields["expected_results"],
@@ -319,20 +367,27 @@ def _build_steps(original_steps: list[str]) -> list[NormalizedCaseStep]:
 
 def _normalize_step(step: str) -> str:
     normalized = _norm(step)
+    explicit = _explicit_step(step)
+    if explicit:
+        return explicit
     route = _extract_route(step)
     click_target = _extract_click_target(step)
     if click_target:
         return f"click button {click_target}"
     if route:
         return f"go to {route}"
-    if re.search(r"\b(enviar|submit|login|iniciar sesion|continuar)\b", normalized):
-        return "submit form"
-    if re.search(r"\b(ir|abrir|navegar|visitar|acceder|ingresar)\b", normalized):
-        return "go to /"
     if re.search(r"\b(email|e-mail|correo|usuario|user)\b", normalized) and re.search(r"\b(completar|ingresar|escribir|cargar|enter)\b", normalized):
+        if re.search(r"\b(invalido|invalid|malformado|incorrecto)\b", normalized):
+            return "enter invalid email"
         return "enter valid email"
     if re.search(r"\b(password|pass|clave|contrasena)\b", normalized) and re.search(r"\b(completar|ingresar|escribir|cargar|enter)\b", normalized):
+        if re.search(r"\b(invalido|invalid|corta|corto|incorrecto)\b", normalized):
+            return "enter invalid password"
         return "enter valid password"
+    if re.search(r"\b(enviar|submit|login|iniciar sesion|continuar)\b", normalized):
+        return "submit form"
+    if NAVIGATION_RE.search(normalized):
+        return "go to /"
     if re.search(r"\b(recargar|refresh)\b", normalized):
         return "refresh page"
     return step
@@ -362,6 +417,8 @@ def _has_concrete_expected(expected: list[str]) -> bool:
 
 
 def _step_confidence(step: str) -> float:
+    if _explicit_step(step):
+        return 0.95
     if NOT_AUTOMATABLE_RE.search(step):
         return 0.2
     if REVIEW_STEP_RE.search(step):
@@ -414,6 +471,10 @@ def _strip_list_marker(line: str) -> str:
 
 def _strip_markdown_emphasis(line: str) -> str:
     return line.replace("**", "").replace("__", "").strip()
+
+
+def _is_separator_line(line: str) -> bool:
+    return bool(re.match(r"^[-*_]{3,}$", line.strip()))
 
 
 def _title_from_heading(heading: str, number: int) -> str:
@@ -476,14 +537,66 @@ def _join_text(existing: str, value: str) -> str:
 
 
 def _extract_route(step: str) -> str | None:
+    normalized = _norm(step)
+    has_route_context = (
+        NAVIGATION_RE.search(normalized)
+        or (re.search(r"\bingresar\b", normalized) and re.search(r"(https?://|/[A-Za-z0-9_\-/?#=&.]+)", step))
+        or re.search(r"\b(ruta|route|url)\b", normalized)
+        or re.match(r"^\s*(?:https?://|/[A-Za-z0-9_\-/?#=&.]+)", step)
+    )
+    if not has_route_context:
+        return None
     match = re.search(r"(https?://\S+|/[A-Za-z0-9_\-/?#=&.]+)", step)
     if match:
         return match.group(1).rstrip(".,;")
-    match = re.search(r"\b(?:ruta|route)\s+([A-Za-z0-9_\-/?#=&.]+)", step, re.I)
+    match = re.search(r"\b(?:ruta|route|url)\s+([A-Za-z0-9_\-/?#=&.]+)", step, re.I)
     if match:
         value = match.group(1).strip().rstrip(".,;")
         return value if value.startswith("/") else f"/{value}"
     return None
+
+
+def _explicit_step(step: str) -> str | None:
+    text = step.strip()
+    if re.match(r"^(?:fill|click|expect)\s+\[.+?\]", text, re.I):
+        return text
+    if re.match(r"^expect\s+text\s+[\"'].+?[\"']", text, re.I):
+        return text
+    return None
+
+
+def _merge_case_data(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in extra.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged.setdefault(key, value)
+    return merged
+
+
+def _data_from_lines(lines: list[str]) -> dict[str, Any]:
+    user: dict[str, str] = {}
+    data: dict[str, Any] = {}
+    for line in lines:
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        normalized = _norm(key)
+        clean_value = value.strip()
+        if not clean_value:
+            continue
+        if re.search(r"\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b", normalized):
+            continue
+        if normalized in {"email", "correo"} or re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", clean_value):
+            user["email"] = clean_value
+        elif normalized in {"usuario", "user", "username"}:
+            user["username"] = clean_value
+        else:
+            data[re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")] = clean_value
+    if user:
+        data["user"] = user
+    return data
 
 
 def _extract_click_target(step: str) -> str | None:

@@ -37,8 +37,8 @@ class RunnerConfig(BaseModel):
 
 class LLMConfig(BaseModel):
     enabled: bool = True
-    provider: Literal["openai", "anthropic", "disabled"] = "openai"
-    model: str = "gpt-4.1-nano"
+    provider: Literal["openai", "anthropic", "disabled"] = "anthropic"
+    model: str = "claude-sonnet-4-6"
     temperature: float = 0.2
     max_cases: int = 12
     max_context_chars: int = 50000
@@ -147,6 +147,7 @@ class RunStatus(str, Enum):
     failed = "failed"
     blocked = "blocked"
     inconclusive = "inconclusive"
+    setup_failed = "setup_failed"
     error = "error"
     finished = "finished"
     canceled = "canceled"
@@ -202,6 +203,7 @@ class NormalizedMarkdownCase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
     data_used: list[str] = Field(default_factory=list)
+    data: dict[str, Any] = Field(default_factory=dict)
     original_steps: list[str] = Field(default_factory=list)
     executable_steps: list[NormalizedCaseStep] = Field(default_factory=list)
     expected_results: list[str] = Field(default_factory=list)
@@ -252,6 +254,7 @@ class RunRecord(BaseModel):
     failed: int = 0
     blocked: int = 0
     inconclusive: int = 0
+    setup_failed: int = 0
     pdf_path: str | None = None
     html_path: str | None = None
     data_dir: str = ""
@@ -261,6 +264,7 @@ class TestStatus(str, Enum):
     passed = "passed"
     failed = "failed"
     inconclusive = "inconclusive"
+    setup_failed = "setup_failed"
 
 
 class TestResult(BaseModel):
@@ -294,3 +298,7 @@ class RunSummary(BaseModel):
     @property
     def inconclusive(self) -> int:
         return sum(1 for result in self.results if result.status == TestStatus.inconclusive)
+
+    @property
+    def setup_failed(self) -> int:
+        return sum(1 for result in self.results if result.status == TestStatus.setup_failed)

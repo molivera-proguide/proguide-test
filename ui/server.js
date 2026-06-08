@@ -30,7 +30,7 @@ app.get('/preview', async (_request, reply) => {
 });
 
 app.post('/runs/prepare', async (_request, reply) => {
-  return reply.code(410).send('La importacion de casos se realiza por MCP. Usa la herramienta run_markdown_cases o create_run_from_markdown.');
+  return reply.code(410).send('La importacion de casos se realiza por MCP. Usa la herramienta run_cases/create_run o los aliases run_markdown_cases/create_run_from_markdown.');
 });
 
 app.get('/runs/:runId/preview', async (request, reply) => {
@@ -78,7 +78,7 @@ app.post('/api/runs/:runId/cases', async (request, reply) => {
 
 app.post('/api/runs/:runId/execute', async (request, reply) => {
   cleanRunId(request.params.runId);
-  return reply.code(410).send({ error: 'La ejecucion se dispara por MCP. Usa run_markdown_cases o execute_run.' });
+  return reply.code(410).send({ error: 'La ejecucion se dispara por MCP. Usa run_cases o execute_run.' });
 });
 
 app.get('/runs/:runId/events', async (request, reply) => {

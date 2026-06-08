@@ -68,15 +68,19 @@ def _require_llm_ready(config: ToolConfig) -> None:
     if not config.llm.enabled or config.llm.provider == "disabled":
         raise RuntimeError("El agente LLM esta deshabilitado en proguide_tests/config.yaml.")
     if config.llm.provider == "openai":
-        if not os.environ.get("OPENAI_API_KEY"):
-            raise RuntimeError("Falta OPENAI_API_KEY en el entorno.")
+        api_key_name, api_key = _provider_api_key("openai")
+        if not api_key:
+            raise RuntimeError("Falta OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY en el entorno.")
+        os.environ.setdefault("OPENAI_API_KEY", api_key)
         try:
             import langchain_openai  # noqa: F401
         except ImportError as exc:
             raise RuntimeError("Falta langchain-openai. Instala con: python -m pip install -e \".[llm]\"") from exc
     elif config.llm.provider == "anthropic":
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise RuntimeError("Falta ANTHROPIC_API_KEY en el entorno.")
+        api_key_name, api_key = _provider_api_key("anthropic")
+        if not api_key:
+            raise RuntimeError("Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY en el entorno.")
+        os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
         try:
             import langchain_anthropic  # noqa: F401
         except ImportError as exc:
@@ -95,6 +99,19 @@ def _build_chat_model(config: ToolConfig):
 
         return ChatAnthropic(model=config.llm.model, temperature=config.llm.temperature)
     raise RuntimeError(f"Proveedor LLM no soportado: {config.llm.provider}")
+
+
+def _provider_api_key(provider: str) -> tuple[str, str]:
+    names = (
+        ["ANTHROPIC_API_KEY", "PROGUIDE_LLM_API_KEY", "API_KEY"]
+        if provider == "anthropic"
+        else ["OPENAI_API_KEY", "PROGUIDE_LLM_API_KEY", "API_KEY"]
+    )
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return name, value
+    return names[0], ""
 
 
 def _schema(max_cases: int) -> dict[str, Any]:

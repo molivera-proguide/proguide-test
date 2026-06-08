@@ -1,6 +1,6 @@
 {
   "name": "@proguide/test",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "type": "module",
   "bin": {
@@ -20,6 +20,7 @@
     "mcp": "node mcp-server.js",
     "proguide": "node cli.js",
     "test": "node --test",
+    "prepare": "node scripts/sync-python-runtime.js",
     "prepack": "node scripts/sync-python-runtime.js"
   },
   "engines": {
