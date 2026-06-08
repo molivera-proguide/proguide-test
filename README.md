@@ -18,14 +18,14 @@ ProGuide creates and maintains its own Python runtime under the user profile. QA
 For public or internally accessible GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.2/proguide-test-0.1.2.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.3/proguide-test-0.1.3.tgz
 ```
 
 For private repositories:
 
 ```bash
-gh release download v0.1.2 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
-npm install -g ./proguide-test-0.1.2.tgz
+gh release download v0.1.3 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
+npm install -g ./proguide-test-0.1.3.tgz
 ```
 
 ### Configure Your QA Workspace
@@ -97,6 +97,8 @@ Preview normalization without creating a run:
 proguide create casos.md --dry-run --json
 ```
 
+Without `--json`, dry-run prints each step as `original -> normalized` and marks low-confidence or fallback steps with `warning`.
+
 Execute cases against a running app:
 
 ```powershell
@@ -120,11 +122,14 @@ Useful commands:
 
 ```bash
 proguide execute <run_id> --json
+proguide execute <run_id> --from-plan --json
 proguide get-run <run_id> --json
 proguide get-code <run_id> <case_id> --json
 proguide list-runs --limit 20 --json
 proguide viewer --json
 ```
+
+By default `execute` regenerates `test_plan.json` from `normalized_cases.json`. Use `--from-plan` only when you intentionally edited the existing `test_plan.json` and want execution to respect it.
 
 The JSON response includes `run_url`. Open it to inspect status, generated Python code, evidence, and results.
 
@@ -191,7 +196,7 @@ Available MCP tools:
 | `create_run` | Creates a run from structured cases or Markdown without executing. Recommended tool name. |
 | `run_markdown_cases` | Legacy alias for Markdown imports that executes the run. |
 | `create_run_from_markdown` | Legacy alias for Markdown imports without executing. |
-| `execute_run` | Generates code and executes an existing run. If no `run_id` is passed, it can create a run from `cases` or Markdown first. |
+| `execute_run` | Generates code and executes an existing run. If no `run_id` is passed, it can create a run from `cases` or Markdown first. Pass `from_plan: true` to respect an existing `test_plan.json`. |
 | `get_run` | Reads run status, cases, events, and summary. |
 | `get_generated_code` | Reads generated Python code for a case. |
 | `list_runs` | Lists local runs. |
@@ -306,11 +311,11 @@ The release workflow is:
 Create a release by pushing a version tag:
 
 ```bash
-git tag v0.1.2
-git push origin v0.1.2
+git tag v0.1.3
+git push origin v0.1.3
 ```
 
-The workflow runs tests, creates `proguide-test-0.1.2.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
+The workflow runs tests, creates `proguide-test-0.1.3.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
 
 ### Data Contract
 
@@ -332,6 +337,18 @@ proguide_tests/
 ```
 
 Passwords entered through CLI/MCP are passed to the runner process as environment variables and should not be persisted. Markdown-derived secret-looking lines are masked, for example `Password: ******`.
+
+For negative cases that need a non-production password per case, use an explicit test-only key in Markdown:
+
+```markdown
+### Datos utilizados
+- Email: qa@example.com
+- Password de prueba: 12345
+```
+
+Generic `Password:` lines remain masked and are not copied into `data.user.password`.
+
+Before code generation, ProGuide attempts a best-effort Playwright DOM snapshot for each planned route and passes visible roles, labels, placeholders, text, ids, names, and `data-testid` hints to the LLM. If the app is not reachable, execution continues without DOM context and records a `dom_context_unavailable` event.
 
 ### Legacy Python CLI
 

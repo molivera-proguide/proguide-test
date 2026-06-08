@@ -137,6 +137,60 @@ test('create dry-run previews normalization without creating a run', () => {
   }
 });
 
+test('create dry-run human output marks fallback warnings', () => {
+  const root = makeTempRoot();
+  try {
+    const preview = runCli(['create', '--stdin', '--dry-run', '--root', root, '--no-viewer'], {
+      input: `## Caso 1: Ambiguo
+
+Pasos:
+- Revisar visualmente la pantalla
+
+Resultado esperado:
+- La pagina muestra Home
+`
+    });
+
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stdout, /warning:/);
+    assert.match(preview.stdout, /unchanged_step|step_confidence/);
+    assert.equal(fs.readdirSync(path.join(root, 'proguide_tests', 'runs')).length, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('markdown data supports explicit test password only', () => {
+  const root = makeTempRoot();
+  try {
+    const created = runCli(['create', '--stdin', '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer'], {
+      input: `## Caso 1: Password corto
+
+Datos utilizados:
+- Email: qa@example.com
+- Password de prueba: 12345
+- Password: secreto-real
+
+Pasos:
+- Ir a /login
+- Completar password corto
+
+Resultado esperado:
+- La pagina muestra error
+`
+    });
+
+    assert.equal(created.status, 0, created.stderr);
+    const payload = parseJson(created.stdout);
+    assert.deepEqual(payload.cases[0].data.user, { email: 'qa@example.com', password: '12345' });
+    const runDir = path.join(root, 'proguide_tests', 'runs', payload.run_id);
+    assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto-real'), false);
+    assert.equal(fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto-real'), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prepareCasesRun creates a run from structured cases with data', async () => {
   const root = makeTempRoot();
   try {
@@ -257,6 +311,8 @@ test('mcp exposes the full tool surface', () => {
     'get_generated_code',
     'list_runs'
   ]);
+  const executeRun = payload.result.tools.find((tool) => tool.name === 'execute_run');
+  assert.equal(executeRun.inputSchema.properties.from_plan.type, 'boolean');
 });
 
 function runCli(args, options = {}) {

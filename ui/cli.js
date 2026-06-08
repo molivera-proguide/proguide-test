@@ -138,7 +138,7 @@ async function commandCreate(parsed) {
       cases: preview.cases,
       warnings: preview.warnings
     };
-    emit(payload, parsed.options, `Dry-run: ${preview.cases.length} caso(s), ${ready} listo(s), ${preview.warnings.length} advertencia(s).`);
+    emit(payload, parsed.options, renderDryRunPreview(payload));
     return EXIT.ok;
   }
 
@@ -191,7 +191,8 @@ async function commandRun(parsed) {
     runId: prepared.run.id,
     baseUrl,
     credentials: credentialsFromOptions(parsed.options),
-    python: runtime.python
+    python: runtime.python,
+    fromPlan: Boolean(parsed.options['from-plan'])
   });
   const bundle = await loadRunBundle(root, prepared.run.id);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
@@ -209,7 +210,8 @@ async function commandExecute(parsed) {
     runId,
     baseUrl: option(parsed.options, 'base-url') || '',
     credentials: credentialsFromOptions(parsed.options),
-    python: runtime.python
+    python: runtime.python,
+    fromPlan: Boolean(parsed.options['from-plan'])
   });
   const bundle = await loadRunBundle(root, runId);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
@@ -402,7 +404,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.2' }, parsed.options, '0.1.2');
+    emit({ version: '0.1.3' }, parsed.options, '0.1.3');
   }
 }
 
@@ -412,7 +414,7 @@ function commandHelp() {
 Uso:
   proguide create [casos.md] --base-url <url> [--json|--stdin|--dry-run]
   proguide run [casos.md] --base-url <url> [--json|--stdin]
-  proguide execute <run_id> [--base-url <url>] [--json]
+  proguide execute <run_id> [--base-url <url>] [--from-plan] [--json]
   proguide get-run <run_id> [--json]
   proguide get-code <run_id> <case_id> [--json]
   proguide list-runs [--limit 20] [--json]
@@ -844,7 +846,7 @@ function parseLongOption(token, argv, index) {
       index
     };
   }
-  if (['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run'].includes(raw)) {
+  if (['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run', 'from-plan'].includes(raw)) {
     return { key: raw, value: true, index };
   }
   const next = argv[index + 1];
@@ -1022,6 +1024,34 @@ function renderAgentSetup(payload) {
   }
   if (payload.clients.generic) {
     lines.push('', 'Generic MCP stdio:', JSON.stringify(payload.clients.generic, null, 2));
+  }
+  return lines.join('\n');
+}
+
+function renderDryRunPreview(payload) {
+  const lines = [
+    `Dry-run: ${payload.summary.total} caso(s), ${payload.summary.ready} listo(s), ${payload.summary.warnings} advertencia(s).`
+  ];
+  const warningsByCase = new Map();
+  for (const warning of payload.warnings || []) {
+    const list = warningsByCase.get(warning.case_id) || [];
+    list.push(warning);
+    warningsByCase.set(warning.case_id, list);
+  }
+  for (const testCase of payload.cases || []) {
+    lines.push('', `${testCase.number || '-'} ${testCase.title} [${testCase.automation_state}]`);
+    for (const step of testCase.executable_steps || []) {
+      const stepWarnings = (warningsByCase.get(testCase.id) || []).filter((warning) => Number(warning.step) === Number(step.number));
+      const marker = stepWarnings.length ? ' !' : '  ';
+      const confidence = Number(step.confidence ?? 0).toFixed(2);
+      lines.push(`${marker} ${step.number}. ${step.original_text} -> ${step.normalized_action} (${confidence})`);
+      for (const warning of stepWarnings) {
+        lines.push(`     warning: ${warning.type}`);
+      }
+    }
+    for (const warning of (warningsByCase.get(testCase.id) || []).filter((item) => !item.step)) {
+      lines.push(`  ! ${warning.type}: ${warning.message}`);
+    }
   }
   return lines.join('\n');
 }

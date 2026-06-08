@@ -93,12 +93,158 @@ Rules:
 - Use proguide_steps.set_case(case_id, title) at the start of each test.
 - Use proguide_steps.log(step, "started"|"passed"|"failed", message) around meaningful actions/assertions.
 - Use robust locators: get_by_role, get_by_label, get_by_placeholder, get_by_text, locator with semantic attributes.
+- When dom_context is available, prefer its real roles, labels, placeholders, text, data-testid, id, and name attributes over guessed selectors.
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
+- If a test case includes data.user.email or data.user.password, prefer those per-case values for inputs over global defaults.
 - Keep assertions explicit with playwright.sync_api.expect.
 - Include imports and any helper functions in the generated file.
 - Return only valid JSON with this shape:
   {"files":[{"path":"test_markdown_cases.py","content":"...python code..."}]}
 - Do not include markdown fences.`;
+
+const DOM_CONTEXT_PROBE_SCRIPT = String.raw`
+from __future__ import annotations
+
+import json
+import sys
+from urllib.parse import urljoin
+
+from playwright.sync_api import sync_playwright
+
+
+DOM_SNAPSHOT_JS = r"""
+(maxControls) => {
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.visibility !== 'hidden' &&
+      style.display !== 'none' &&
+      rect.width > 0 &&
+      rect.height > 0;
+  };
+  const text = (value, limit = 120) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+  const cssEscape = (value) => {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, '\\$&');
+  };
+  const inferredRole = (el) => {
+    const role = el.getAttribute('role');
+    if (role) return role;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'button') return 'button';
+    if (tag === 'a') return 'link';
+    if (tag === 'input') return el.type === 'submit' || el.type === 'button' ? 'button' : 'textbox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return 'combobox';
+    return '';
+  };
+  const labelsFor = (el) => {
+    const labels = [];
+    if (el.id) {
+      document.querySelectorAll('label[for="' + cssEscape(el.id) + '"]').forEach((label) => labels.push(text(label.textContent)));
+    }
+    if (el.labels) Array.from(el.labels).forEach((label) => labels.push(text(label.textContent)));
+    const wrappingLabel = el.closest('label');
+    if (wrappingLabel) labels.push(text(wrappingLabel.textContent));
+    return [...new Set(labels.filter(Boolean))].slice(0, 3);
+  };
+  const selectorHint = (el) => {
+    const testId = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy');
+    if (testId) return '[data-testid="' + testId + '"]';
+    if (el.id) return '#' + cssEscape(el.id);
+    if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+    return el.tagName.toLowerCase();
+  };
+  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role], [data-testid], [data-test], [data-cy]'))
+    .filter(visible)
+    .slice(0, maxControls)
+    .map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      role: inferredRole(el),
+      text: text(el.innerText || el.textContent),
+      label: labelsFor(el),
+      aria_label: text(el.getAttribute('aria-label')),
+      placeholder: text(el.getAttribute('placeholder')),
+      name: text(el.getAttribute('name')),
+      type: text(el.getAttribute('type')),
+      id: text(el.id),
+      data_testid: text(el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy')),
+      selector_hint: selectorHint(el)
+    }));
+  const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
+    .filter(visible)
+    .slice(0, 20)
+    .map((el) => text(el.innerText || el.textContent));
+  const visible_text = Array.from(document.querySelectorAll('main, body'))
+    .slice(0, 1)
+    .map((el) => text(el.innerText || el.textContent, 1000))[0] || '';
+  return {
+    url: window.location.href,
+    title: document.title,
+    headings,
+    controls,
+    visible_text
+  };
+}
+"""
+
+
+def target_url(base_url: str, route: str) -> str:
+    if route.startswith("http://") or route.startswith("https://"):
+        return route
+    return urljoin(base_url.rstrip("/") + "/", route.lstrip("/") or "")
+
+
+def main() -> int:
+    input_path, output_path = sys.argv[1], sys.argv[2]
+    payload = json.loads(open(input_path, encoding="utf-8").read())
+    timeout = int(payload.get("timeout_ms") or 6000)
+    max_controls = int(payload.get("max_controls") or 80)
+    browser_name = payload.get("browser") or "chromium"
+    by_case_id = {}
+
+    with sync_playwright() as playwright:
+      browser_type = getattr(playwright, browser_name, playwright.chromium)
+      browser = browser_type.launch(headless=True)
+      context = browser.new_context()
+      for case in payload.get("cases", []):
+        case_id = case.get("id") or ""
+        route = case.get("route") or "/"
+        page = context.new_page()
+        try:
+          page.goto(target_url(payload.get("base_url") or "", route), wait_until="domcontentloaded", timeout=timeout)
+          try:
+            page.wait_for_load_state("networkidle", timeout=2000)
+          except Exception:
+            pass
+          by_case_id[case_id] = {
+            "available": True,
+            "route": route,
+            "snapshot": page.evaluate(DOM_SNAPSHOT_JS, max_controls),
+          }
+        except Exception as exc:
+          by_case_id[case_id] = {
+            "available": False,
+            "route": route,
+            "error": str(exc)[:500],
+          }
+        finally:
+          page.close()
+      context.close()
+      browser.close()
+
+    output = {
+      "available": any(item.get("available") for item in by_case_id.values()),
+      "by_case_id": by_case_id,
+    }
+    with open(output_path, "w", encoding="utf-8") as handle:
+      handle.write(json.dumps(output, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
 
 export async function listRunRecords(root) {
   const runsDir = runsRoot(root);
@@ -339,7 +485,7 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
   return { cases };
 }
 
-export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, python = 'python' }) {
+export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, python = 'python', fromPlan = false }) {
   await loadDotEnv(root);
   const runDir = runPath(root, runId);
   const run = await loadRunRecord(runDir);
@@ -365,7 +511,9 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
   await saveRun(runDir, run);
   await appendEvent(runDir, { run_id: run.id, type: 'plan_generated', status: run.status, message: 'Generando plan ejecutable.' });
 
-  const plan = casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
+  const plan = fromPlan
+    ? await loadExistingTestPlan(runDir, cases, run)
+    : casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
   if (!plan.cases.length) {
     run.status = 'blocked';
     run.finished_at = nowIso();
@@ -385,13 +533,29 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
 
   let summary;
   try {
+    const domContext = await collectDomContext({
+      python,
+      root,
+      runDir,
+      plan,
+      baseUrl: actualBaseUrl,
+      config
+    });
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',
+      status: run.status,
+      message: domContext.available
+        ? `Contexto DOM recolectado para ${Object.keys(domContext.by_case_id || {}).length} caso(s).`
+        : `Contexto DOM no disponible: ${domContext.error || 'sin datos'}.`
+    });
     await appendEvent(runDir, {
       run_id: run.id,
       type: 'code_generation_started',
       status: run.status,
       message: 'Agente generando codigo Python Playwright.'
     });
-    await generateTestsWithAgent({ root, plan, cases, outputDir: generatedDir, config });
+    await generateTestsWithAgent({ root, plan, cases, outputDir: generatedDir, config, domContext });
     await appendEvent(runDir, { run_id: run.id, type: 'tests_generated', status: 'running', message: 'Codigo Python Playwright generado.' });
 
     run.status = 'running';
@@ -579,7 +743,58 @@ async function parsePytestResults({ plan, junitPath, runDir }) {
   return results;
 }
 
-async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) {
+async function collectDomContext({ python, root, runDir, plan, baseUrl, config }) {
+  const cases = (plan.cases || []).slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
+  if (!cases.length) return { available: false, error: 'no_plan_cases', by_case_id: {} };
+
+  const inputPath = path.join(runDir, 'dom_context_input.json');
+  const outputPath = path.join(runDir, 'dom_context.json');
+  const scriptPath = path.join(runDir, 'dom_context_probe.py');
+  const logPath = path.join(runDir, 'dom_context.log');
+  const payload = {
+    base_url: baseUrl,
+    browser: config.runner.browser || 'chromium',
+    timeout_ms: positiveInteger(config.llm.dom_context_timeout_ms, 6000),
+    max_controls: positiveInteger(config.llm.dom_context_max_controls, 80),
+    cases: cases.map((testCase) => ({
+      id: testCase.id,
+      title: testCase.title,
+      route: testCase.route || '/'
+    }))
+  };
+
+  await writeJson(inputPath, payload);
+  await fs.writeFile(scriptPath, DOM_CONTEXT_PROBE_SCRIPT, 'utf8');
+  await fs.writeFile(logPath, `$ ${python} ${scriptPath} ${inputPath} ${outputPath}\n`, 'utf8');
+
+  try {
+    const completed = await runProcess([python, scriptPath, inputPath, outputPath], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PYTHONPATH: pythonPathForRunner(root)
+      },
+      logPath
+    });
+    if (completed.code !== 0 && !(await exists(outputPath))) {
+      const logText = await fs.readFile(logPath, 'utf8').catch(() => '');
+      return {
+        available: false,
+        error: firstUsefulLogLine(logText) || `dom context probe exited with code ${completed.code}`,
+        by_case_id: {}
+      };
+    }
+    const context = await readJson(outputPath, null);
+    if (!context || !context.by_case_id) {
+      return { available: false, error: 'dom context probe did not produce JSON', by_case_id: {} };
+    }
+    return context;
+  } catch (error) {
+    return { available: false, error: error.message || String(error), by_case_id: {} };
+  }
+}
+
+async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {} }) {
   await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(path.join(outputDir, 'conftest.py'), 'pytest_plugins = ["proguide.pytest_plugin"]\n', 'utf8');
 
@@ -591,6 +806,7 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) 
     const payload = buildCodeGenerationPayload({
       planCases: batchCases,
       sourceCases: cases,
+      domContext,
       batchIndex,
       batchCount: batches.length
     });
@@ -612,7 +828,7 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config }) 
   await validateGeneratedCode(outputDir, plan);
 }
 
-function buildCodeGenerationPayload({ planCases, sourceCases, batchIndex, batchCount }) {
+function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, batchIndex, batchCount }) {
   const outputPath = batchCount > 1
     ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.py`
     : 'test_markdown_cases.py';
@@ -650,10 +866,23 @@ function buildCodeGenerationPayload({ planCases, sourceCases, batchIndex, batchC
         expected_results: sourceCase.expected_results || [],
         preconditions: sourceCase.preconditions || [],
         data_used: sourceCase.data_used || [],
-        data: sourceCase.data || testCase.data || {}
+        data: sourceCase.data || testCase.data || {},
+        dom_context: domContext.by_case_id?.[testCase.id] || {
+          available: false,
+          reason: domContext.error || 'dom_context_not_collected'
+        }
       };
     })
   };
+}
+
+async function loadExistingTestPlan(runDir, cases, run) {
+  const planPath = path.join(runDir, TEST_PLAN_JSON);
+  const existing = await readJson(planPath, null);
+  if (existing && Array.isArray(existing.cases)) {
+    return existing;
+  }
+  return casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
 }
 
 function extractCaseCode(moduleText, caseId) {
@@ -1042,7 +1271,13 @@ function dataFromLines(lines) {
     const key = match[1].trim();
     const value = match[2].trim();
     const normalizedKey = norm(key);
-    if (!value || isSecretKey(normalizedKey)) continue;
+    if (!value) continue;
+    if (isSecretKey(normalizedKey)) {
+      if (allowsTestPasswordKey(normalizedKey)) {
+        data.user = { ...(data.user || {}), password: value };
+      }
+      continue;
+    }
     if (/\b(email|e-mail|correo)\b/.test(normalizedKey) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
       data.user = { ...(data.user || {}), email: value };
       continue;
@@ -1085,6 +1320,12 @@ function isSecretKey(key) {
   return /\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b/i.test(norm(key));
 }
 
+function allowsTestPasswordKey(key) {
+  const normalized = norm(key).replace(/_/g, ' ');
+  return /\b(password|pass|clave|contrasena)\b/.test(normalized) &&
+    /\b(test|prueba|dummy|fake|no productiv[oa]|non production)\b/.test(normalized);
+}
+
 function normalizationWarnings(cases) {
   const warnings = [];
   for (const testCase of cases) {
@@ -1101,6 +1342,26 @@ function normalizationWarnings(cases) {
           case_id: testCase.id,
           step: step.number,
           type: 'step_confidence',
+          original_text: step.original_text,
+          normalized_action: step.normalized_action,
+          confidence: Number(step.confidence ?? 0)
+        });
+      }
+      if (step.normalized_action === step.original_text && !explicitStep(step.original_text)) {
+        warnings.push({
+          case_id: testCase.id,
+          step: step.number,
+          type: 'unchanged_step',
+          original_text: step.original_text,
+          normalized_action: step.normalized_action,
+          confidence: Number(step.confidence ?? 0)
+        });
+      }
+      if (step.normalized_action === 'go to /' && !/(https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(step.original_text || '')) {
+        warnings.push({
+          case_id: testCase.id,
+          step: step.number,
+          type: 'generic_navigation_fallback',
           original_text: step.original_text,
           normalized_action: step.normalized_action,
           confidence: Number(step.confidence ?? 0)
@@ -1818,12 +2079,16 @@ function statusFromSummary(counts, blocked) {
 }
 
 function setupFailureMessage(exitCode, logText, relativeLogPath) {
-  const firstUseful = String(logText || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => /ModuleNotFoundError|ImportError|No module named|Error|Traceback|pytest: error/i.test(line));
+  const firstUseful = firstUsefulLogLine(logText);
   const reason = firstUseful || `pytest exited with code ${exitCode}`;
   return `setup_failed: ${reason}. See ${relativeLogPath}. Run proguide doctor --fix.`;
+}
+
+function firstUsefulLogLine(logText) {
+  return String(logText || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => /ModuleNotFoundError|ImportError|No module named|Error|Traceback|pytest: error|Target page|Timeout|ERR_/i.test(line)) || '';
 }
 
 function chunkArray(items, size) {

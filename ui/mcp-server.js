@@ -144,6 +144,7 @@ const tools = [
         source_path: { type: 'string' },
         markdown: { type: 'string' },
         base_url: { type: 'string' },
+        from_plan: { type: 'boolean', description: 'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.' },
         root: { type: 'string' },
         email: { type: 'string' },
         username: { type: 'string' },
@@ -267,7 +268,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.2' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.3' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -310,7 +311,8 @@ async function callTool(name, args) {
       runId: prepared.run.id,
       baseUrl: args.base_url || prepared.run.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: runtime.python
+      python: runtime.python,
+      fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, prepared.run.id);
     return toolResult(`Run ${prepared.run.id} ejecutado.`, {
@@ -349,7 +351,8 @@ async function callTool(name, args) {
       runId,
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: runtime.python
+      python: runtime.python,
+      fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, runId);
     return toolResult(`Run ${runId} ejecutado.`, {

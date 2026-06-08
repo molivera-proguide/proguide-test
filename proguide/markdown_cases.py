@@ -569,7 +569,7 @@ def _merge_case_data(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, A
     merged = dict(base)
     for key, value in extra.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = {**merged[key], **value}
+            merged[key] = {**value, **merged[key]}
         else:
             merged.setdefault(key, value)
     return merged
@@ -587,6 +587,8 @@ def _data_from_lines(lines: list[str]) -> dict[str, Any]:
         if not clean_value:
             continue
         if re.search(r"\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b", normalized):
+            if _allows_test_password_key(normalized):
+                user["password"] = clean_value
             continue
         if normalized in {"email", "correo"} or re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", clean_value):
             user["email"] = clean_value
@@ -597,6 +599,14 @@ def _data_from_lines(lines: list[str]) -> dict[str, Any]:
     if user:
         data["user"] = user
     return data
+
+
+def _allows_test_password_key(key: str) -> bool:
+    normalized = _norm(key).replace("_", " ")
+    return bool(
+        re.search(r"\b(password|pass|clave|contrasena)\b", normalized)
+        and re.search(r"\b(test|prueba|dummy|fake|no productiv[oa]|non production)\b", normalized)
+    )
 
 
 def _extract_click_target(step: str) -> str | None:

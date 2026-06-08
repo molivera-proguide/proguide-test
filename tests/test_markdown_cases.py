@@ -171,6 +171,29 @@ def test_test_plan_keeps_safe_case_data_without_secrets() -> None:
     assert plan.cases[0].steps[1:] == ["enter invalid email", "enter invalid password"]
 
 
+def test_test_plan_allows_explicit_test_password_data() -> None:
+    markdown = """
+## Caso 1: Password corto
+
+### Datos utilizados
+- Email: qa@example.com
+- Password de prueba: 12345
+- Password: secreto-real
+
+### Pasos
+- Ir a /login
+- Completar password corto
+
+### Resultado esperado
+- La pagina muestra error
+"""
+
+    plan = cases_to_test_plan(parse_markdown_cases(markdown), source_md="source.md")
+
+    assert plan.cases[0].data["user"] == {"email": "qa@example.com", "password": "12345"}
+    assert "secreto-real" not in str(plan.model_dump())
+
+
 def test_keeps_explicit_normalizer_steps() -> None:
     markdown = """
 ## Caso 1: Selectores explicitos
