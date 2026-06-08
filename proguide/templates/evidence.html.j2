@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{{ run.title or run.ticket or "Evidencia QA" }} - Evidencia QA</title>
+  <style>
+    @page { size: A4 portrait; margin: 18mm 14mm; }
+    @page landscape { size: A4 landscape; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #1f2937;
+      background: white;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    h1, h2, h3 { margin: 0 0 10px; color: #111827; }
+    h1 { font-size: 30px; }
+    h2 { font-size: 18px; border-bottom: 1px solid #d1d5db; padding-bottom: 5px; margin-top: 22px; }
+    h3 { font-size: 14px; margin-top: 14px; }
+    p { margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border: 1px solid #9ca3af; padding: 5px; vertical-align: top; word-wrap: break-word; }
+    th { background: #e5e7eb; color: #111827; font-weight: 700; }
+    .cover {
+      min-height: 235mm;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 20mm 0;
+      page-break-after: always;
+    }
+    .brand { font-size: 24px; font-weight: 700; color: #0f766e; }
+    .subtitle { font-size: 18px; color: #475569; margin-top: 8px; }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 38mm 1fr;
+      gap: 6px 10px;
+      max-width: 150mm;
+      margin-top: 28px;
+    }
+    .label { font-weight: 700; color: #374151; }
+    .muted { color: #6b7280; }
+    .classification { border-top: 1px solid #cbd5e1; padding-top: 12px; }
+    .landscape { page: landscape; page-break-before: always; page-break-after: always; }
+    .cases-table { font-size: 8px; }
+    .status {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .status-passed { background: #dcfce7; color: #166534; }
+    .status-failed { background: #fee2e2; color: #991b1b; }
+    .status-inconclusive { background: #fef3c7; color: #92400e; }
+    .case-block { page-break-inside: avoid; margin-bottom: 14px; }
+    .screenshot {
+      width: 100%;
+      max-height: 130mm;
+      object-fit: contain;
+      border: 1px solid #cbd5e1;
+      margin: 6px 0;
+    }
+    .caption { font-size: 9px; color: #475569; margin-bottom: 10px; }
+    ul, ol { margin-top: 0; padding-left: 16px; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div>
+      <div class="brand">Proguide</div>
+      <h1>{{ run.title or run.ticket or "Evidencia QA" }}</h1>
+      <div class="subtitle">Evidencia QA</div>
+      <div class="meta-grid">
+        <div class="label">Version</div><div>1.0</div>
+        <div class="label">Fecha</div><div>{{ run.finished_at or run.created_at }}</div>
+        <div class="label">Autores</div><div>{{ run.qa_owner or "QA" }}</div>
+        <div class="label">Ticket</div><div>{{ run.ticket or "-" }}</div>
+        <div class="label">Modulo</div><div>{{ run.module or "-" }}</div>
+        <div class="label">URL</div><div>{{ run.base_url }}</div>
+      </div>
+    </div>
+    <div class="classification">
+      <div class="label">Documento publico</div>
+      <div class="muted">Generado localmente por ProGuide Test Cases.</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Historial de revisiones</h2>
+    <table>
+      <thead><tr><th>Fecha</th><th>Cambios</th><th>Responsable</th></tr></thead>
+      <tbody><tr><td>{{ run.finished_at or run.created_at }}</td><td>Generacion de evidencia QA</td><td>{{ run.qa_owner or "QA" }}</td></tr></tbody>
+    </table>
+
+    <h2>Tabla de aprobaciones</h2>
+    <table>
+      <thead><tr><th>Responsable</th><th>Cargo</th><th>Firma</th></tr></thead>
+      <tbody><tr><td>{{ run.qa_owner or "-" }}</td><td>QA</td><td></td></tr></tbody>
+    </table>
+
+    <h2>Lista de distribucion</h2>
+    <table>
+      <thead><tr><th>Destinatario</th></tr></thead>
+      <tbody><tr><td>{{ run.dev_owner or run.qa_owner or "-" }}</td></tr></tbody>
+    </table>
+
+    <h2>Objetivo del documento</h2>
+    <p>Plasmar evidencia obtenida al ejecutar los casos de prueba definidos para el requerimiento indicado.</p>
+
+    <h2>Requerimiento de referencia</h2>
+    <p><strong>Ticket:</strong> {{ run.ticket or "-" }}</p>
+    <p><strong>Descripcion:</strong> {{ run.title or run.module or "-" }}</p>
+  </section>
+
+  <section class="landscape">
+    <h2>Casos de prueba</h2>
+    <table class="cases-table">
+      <thead>
+        <tr>
+          <th style="width: 4%">N</th>
+          <th style="width: 10%">Precondiciones</th>
+          <th style="width: 10%">Datos utilizados</th>
+          <th style="width: 18%">Pasos para reproducir/Acciones</th>
+          <th style="width: 14%">Resultado esperado</th>
+          <th style="width: 13%">Resultado Obtenido</th>
+          <th style="width: 7%">Estado</th>
+          <th style="width: 8%">Fecha Inicio</th>
+          <th style="width: 8%">Fecha Fin</th>
+          <th style="width: 4%">Desa.</th>
+          <th style="width: 4%">Resp.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for case in cases %}
+        {% set result = (summary.results | selectattr("id", "equalto", case.id) | list | first) %}
+        <tr>
+          <td>{{ case.number }}</td>
+          <td>{{ case.preconditions | join("; ") }}</td>
+          <td>{{ case.data_used | join("; ") }}</td>
+          <td>{{ case.original_steps | join("; ") }}</td>
+          <td>{{ case.expected_results | join("; ") }}</td>
+          <td>{{ result.message if result and result.message else case.result_obtained or "-" }}</td>
+          <td>{{ result.status.value if result else case.automation_state.value }}</td>
+          <td>{{ case.started_at or "-" }}</td>
+          <td>{{ case.finished_at or "-" }}</td>
+          <td>{{ case.dev_owner or run.dev_owner or "-" }}</td>
+          <td>{{ case.qa_owner or run.qa_owner or "-" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Evidencia de casos</h2>
+    {% for result in summary.results %}
+      {% set case = (cases | selectattr("id", "equalto", result.id) | list | first) %}
+      <div class="case-block">
+        <h3>Caso {{ case.number if case else loop.index }} - {{ result.title }}</h3>
+        <p><span class="status status-{{ result.status.value }}">{{ result.status.value }}</span></p>
+        <p><strong>Resultado obtenido:</strong> {{ result.message or "Sin errores reportados." }}</p>
+        {% if result.videos %}
+          <p><strong>Videos:</strong> {{ result.videos | join(", ") }}</p>
+        {% endif %}
+        {% if result.traces %}
+          <p><strong>Traces:</strong> {{ result.traces | join(", ") }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </section>
+
+  <section>
+    <h2>Secuencia de pantallas</h2>
+    {% for result in summary.results %}
+      {% if result.screenshots %}
+        <h3>{{ result.title }}</h3>
+        {% for screenshot in result.screenshots %}
+          <img class="screenshot" src="{{ screenshot }}" alt="Screenshot {{ result.title }}">
+          <div class="caption">{{ screenshot }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endfor %}
+  </section>
+</body>
+</html>

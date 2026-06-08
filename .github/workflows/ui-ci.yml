@@ -1,0 +1,53 @@
+name: UI CLI CI
+
+on:
+  pull_request:
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-ci.yml"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test Node CLI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Check syntax
+        run: |
+          node --check ui/cli.js
+          node --check ui/mcp-server.js
+          node --check ui/viewer.js
+          node --check ui/server.js
+          node --check ui/proguide-service.js
+
+      - name: Run tests
+        working-directory: ui
+        run: npm test
+
+      - name: Verify package contents
+        working-directory: ui
+        run: npm pack --dry-run

@@ -1,0 +1,30 @@
+{
+  "name": "@proguide/test",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "proguide": "./cli.js"
+  },
+  "files": [
+    "cli.js",
+    "mcp-server.js",
+    "proguide-service.js",
+    "server.js",
+    "viewer.js",
+    "python/"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "mcp": "node mcp-server.js",
+    "proguide": "node cli.js",
+    "test": "node --test",
+    "prepack": "node scripts/sync-python-runtime.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "fastify": "^5.2.1"
+  }
+}

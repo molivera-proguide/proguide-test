@@ -1,0 +1,109 @@
+name: Release CLI Package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update. Defaults to v<ui/package.json version>."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package and Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Check syntax
+        run: |
+          node --check ui/cli.js
+          node --check ui/mcp-server.js
+          node --check ui/viewer.js
+          node --check ui/server.js
+          node --check ui/proguide-service.js
+
+      - name: Run tests
+        working-directory: ui
+        run: npm test
+
+      - name: Pack CLI tarball
+        id: pack
+        working-directory: ui
+        run: |
+          mkdir -p ../dist
+          package_file="$(npm pack --pack-destination ../dist)"
+          package_version="$(node -p "JSON.parse(require('fs').readFileSync('package.json', 'utf8')).version")"
+          echo "package_file=${package_file}" >> "$GITHUB_OUTPUT"
+          echo "package_path=dist/${package_file}" >> "$GITHUB_OUTPUT"
+          echo "package_version=${package_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proguide-cli-package
+          path: dist/*.tgz
+          if-no-files-found: error
+
+      - name: Resolve release tag
+        id: release_tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          PACKAGE_VERSION: ${{ steps.pack.outputs.package_version }}
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag="${GITHUB_REF_NAME}"
+          elif [[ -n "${INPUT_TAG}" ]]; then
+            tag="${INPUT_TAG}"
+          else
+            tag="v${PACKAGE_VERSION}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release_tag.outputs.tag }}
+          PACKAGE_FILE: ${{ steps.pack.outputs.package_file }}
+          PACKAGE_VERSION: ${{ steps.pack.outputs.package_version }}
+        run: |
+          notes="$(mktemp)"
+          {
+            echo "ProGuide Test CLI ${PACKAGE_VERSION}"
+            echo
+            echo "Install with:"
+            echo
+            echo '```bash'
+            echo "npm install -g https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}/${PACKAGE_FILE}"
+            echo '```'
+            echo
+            echo "For private repositories, download the asset with GitHub CLI and install the local .tgz."
+          } > "$notes"
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/*.tgz --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/*.tgz \
+              --title "ProGuide Test ${RELEASE_TAG}" \
+              --target "$GITHUB_SHA" \
+              --notes-file "$notes"
+          fi
