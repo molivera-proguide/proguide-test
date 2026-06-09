@@ -18,14 +18,14 @@ ProGuide creates and maintains its own Python runtime under the user profile. QA
 For public or internally accessible GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.4/proguide-test-0.1.4.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.5/proguide-test-0.1.5.tgz
 ```
 
 For private repositories:
 
 ```bash
-gh release download v0.1.4 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
-npm install -g ./proguide-test-0.1.4.tgz
+gh release download v0.1.5 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
+npm install -g ./proguide-test-0.1.5.tgz
 ```
 
 ### Configure Your QA Workspace
@@ -312,11 +312,11 @@ The release workflow is:
 Create a release by pushing a version tag:
 
 ```bash
-git tag v0.1.4
-git push origin v0.1.4
+git tag v0.1.5
+git push origin v0.1.5
 ```
 
-The workflow runs tests, creates `proguide-test-0.1.4.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
+The workflow runs tests, creates `proguide-test-0.1.5.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
 
 ### Data Contract
 

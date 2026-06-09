@@ -61,6 +61,7 @@ test('create/get-run/get-code/list-runs expose stable JSON', () => {
     assert.equal(createPayload.viewer_url, '');
     assert.equal(createPayload.summary.total, 1);
     assert.equal(createPayload.cases.length, 1);
+    assert.equal(createPayload.cases[0].route, '/login');
 
     const runId = createPayload.run_id;
     const caseId = createPayload.cases[0].id;
@@ -71,6 +72,10 @@ test('create/get-run/get-code/list-runs expose stable JSON', () => {
     assert.equal(runPayload.status, 'ready');
     assert.equal(runPayload.summary.total, 1);
     assert.equal(runPayload.cases[0].id, caseId);
+    assert.equal(runPayload.cases[0].route, '/login');
+    const planPath = path.join(root, 'proguide_tests', 'runs', runId, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.equal(plan.cases[0].route, '/login');
 
     const code = runCli(['get-code', runId, caseId, '--json', '--root', root]);
     assert.equal(code.status, 0, code.stderr);
@@ -109,10 +114,14 @@ test('markdown parser ignores sections and keeps TC cases', () => {
     const payload = parseJson(created.stdout);
     assert.equal(payload.cases.length, 2);
     assert.deepEqual(payload.cases.map((item) => item.title), ['Login valido', 'Logout']);
+    assert.deepEqual(payload.cases.map((item) => item.route), ['/login', '/home']);
     assert.deepEqual(payload.cases[0].expected_results, ['La pagina muestra Dashboard']);
     assert.deepEqual(payload.cases[1].expected_results, ['La URL contiene /login']);
     assert.equal(payload.cases[0].executable_steps[1].normalized_action, 'enter valid email');
     assert.equal(payload.cases.flatMap((item) => item.original_steps).some((step) => step.includes('Esperado')), false);
+    const planPath = path.join(root, 'proguide_tests', 'runs', payload.run_id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.deepEqual(plan.cases.map((item) => item.route), ['/login', '/home']);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -182,6 +191,7 @@ Resultado esperado:
 
     assert.equal(created.status, 0, created.stderr);
     const payload = parseJson(created.stdout);
+    assert.equal(payload.cases[0].route, '/login');
     assert.deepEqual(payload.cases[0].data.user, { email: 'qa@example.com', password: '12345' });
     const runDir = path.join(root, 'proguide_tests', 'runs', payload.run_id);
     assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto-real'), false);
@@ -205,10 +215,17 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
         data_used: ['Password: secreto'],
         steps: ['fill [data-testid=email] with qa@example.com', 'click [data-testid=submit]'],
         expected: ['expect text "Dashboard"']
+      }, {
+        title: 'Checkout estructurado',
+        priority: 'alta',
+        steps: ['go to /checkout', 'fill [data-testid=zipCode] with 1000', 'Verificar que [data-testid="cart-badge-count"] muestra 1'],
+        expected: ['expect text "Resumen"']
       }]
     });
 
     assert.equal(prepared.run.status, 'ready');
+    assert.equal(prepared.cases[1].route, '/checkout');
+    assert.equal(prepared.cases[1].executable_steps[2].normalized_action, 'expect [data-testid="cart-badge-count"] to contain text "1"');
     assert.equal(prepared.cases[0].data.user.email, 'qa@example.com');
     assert.equal(Object.hasOwn(prepared.cases[0].data.user, 'password'), false);
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
@@ -219,6 +236,8 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
       'fill [data-testid=email] with qa@example.com',
       'click [data-testid=submit]'
     ]);
+    assert.equal(plan.cases[1].route, '/checkout');
+    assert.equal(plan.cases[1].steps[2], 'expect [data-testid="cart-badge-count"] to contain text "1"');
     const runDir = path.join(root, 'proguide_tests', 'runs', prepared.run.id);
     assert.equal(fs.readFileSync(path.join(runDir, 'source_cases.json'), 'utf8').includes('secreto'), false);
     assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto'), false);

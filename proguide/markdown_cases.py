@@ -130,6 +130,7 @@ def cases_to_test_plan(
         case_data = dict(case.data or {})
         if case.data_used:
             case_data = _merge_case_data(case_data, _data_from_lines(case.data_used))
+        route = _infer_case_route(case.route, case.original_steps, case.executable_steps)
         planned_cases.append(
             TestCase(
                 id=case.id,
@@ -137,7 +138,7 @@ def cases_to_test_plan(
                 scenario_id=case.id,
                 title=case.title,
                 description=case.description or case.title,
-                route=case.route or "/",
+                route=route,
                 priority=_priority_for_plan(case.priority),
                 steps=steps or ["go to /"],
                 expected=expected,
@@ -321,6 +322,7 @@ def _parse_block(block: _CaseBlock, number: int) -> NormalizedMarkdownCase | Non
     fields["data_used"] = _clean_list(fields.get("data_used", []))
     fields["original_steps"] = _clean_list(fields.get("original_steps", []))
     fields["expected_results"] = _clean_list(fields.get("expected_results", []))
+    fields["route"] = _infer_case_route(fields.get("route"), fields["original_steps"])
 
     title = str(fields.get("title") or f"Caso {number}").strip()
     case_id = safe_id(f"caso_{number}_{title}")
@@ -344,7 +346,7 @@ def _parse_block(block: _CaseBlock, number: int) -> NormalizedMarkdownCase | Non
         automation_state=state,
         state_reason=reason,
         original_markdown=mask_secret_text("\n".join(original_lines).strip()),
-        route=str(fields.get("route") or "/").strip() or "/",
+        route=fields["route"],
         qa_owner=_none_if_empty(fields.get("qa_owner")),
         dev_owner=_none_if_empty(fields.get("dev_owner")),
         ticket=_none_if_empty(fields.get("ticket")),
@@ -536,6 +538,43 @@ def _join_text(existing: str, value: str) -> str:
     return f"{existing}\n{value}".strip() if existing else value.strip()
 
 
+def _infer_case_route(
+    explicit_route: Any,
+    original_steps: list[str] | None = None,
+    executable_steps: list[NormalizedCaseStep] | None = None,
+) -> str:
+    explicit = _normalize_route_value(explicit_route)
+    if explicit and explicit != "/":
+        return explicit
+
+    candidates: list[str | None] = []
+    for step in _clean_list(original_steps or []):
+        candidates.append(_extract_route(step))
+    for step in executable_steps or []:
+        candidates.append(_route_from_normalized_action(step.normalized_action))
+        candidates.append(_extract_route(step.original_text))
+
+    for candidate in candidates:
+        route = _normalize_route_value(candidate)
+        if route and route != "/":
+            return route
+    return explicit or "/"
+
+
+def _route_from_normalized_action(action: str | None) -> str | None:
+    match = re.match(r"^go to\s+(.+)$", str(action or "").strip(), re.I)
+    return match.group(1) if match else None
+
+
+def _normalize_route_value(value: Any) -> str:
+    text = str(value or "").strip().rstrip(".,;")
+    if not text:
+        return ""
+    if re.match(r"^https?://", text, re.I):
+        return text.rstrip("/")
+    return text if text.startswith("/") else f"/{text}"
+
+
 def _extract_route(step: str) -> str | None:
     normalized = _norm(step)
     has_route_context = (
@@ -562,7 +601,36 @@ def _explicit_step(step: str) -> str | None:
         return text
     if re.match(r"^expect\s+text\s+[\"'].+?[\"']", text, re.I):
         return text
+    selector_match = re.search(r"\[[^\]]+\]", text)
+    if not selector_match:
+        return None
+    selector = selector_match.group(0)
+    normalized = _norm(text)
+    if re.search(r"\b(click|clic|hacer clic|presionar|seleccionar|tocar)\b", normalized):
+        return f"click {selector}"
+    if re.search(r"\b(fill|completar|ingresar|escribir|cargar|setear|introducir)\b", normalized):
+        value = _value_after_selector(text, selector, r"(?:\bcon\b|\bwith\b|\bvalor\b|\bvalue\b)\s+(.+)$")
+        return f"fill {selector} with {value}" if value else f"fill {selector}"
+    if re.search(r"\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible)\b", normalized):
+        value = _value_after_selector(
+            text,
+            selector,
+            r"(?:\bmuestra\b|\bmostrar\b|\bcontiene\b|\btexto\b|\bvalor\b|\bshows?\b|\bcontains?\b)\s+(.+)$",
+        )
+        return f"expect {selector} to contain text {_quote_step_value(value)}" if value else f"expect {selector} to be visible"
     return None
+
+
+def _value_after_selector(text: str, selector: str, pattern: str) -> str:
+    after_selector = text[text.find(selector) + len(selector) :]
+    match = re.search(pattern, after_selector, re.I)
+    if not match:
+        return ""
+    return match.group(1).strip().strip("\"'").rstrip(".;").strip()
+
+
+def _quote_step_value(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
 def _merge_case_data(base: dict[str, Any], extra: dict[str, Any]) -> dict[str, Any]:

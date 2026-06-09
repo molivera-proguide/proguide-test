@@ -35,6 +35,7 @@ Prioridad: alta
     assert cases[0].id == "caso_1_login_valido"
     assert cases[0].priority == "alta"
     assert cases[0].automation_state == AutomationState.ready
+    assert cases[0].route == "/login"
     assert cases[0].data_used == ["Usuario: qa@example.com", "Password: ******"]
     assert cases[0].data == {"user": {"email": "qa@example.com"}}
     assert [step.normalized_action for step in cases[0].executable_steps] == [
@@ -86,6 +87,7 @@ def test_builds_test_plan_from_ready_cases_only() -> None:
     plan = cases_to_test_plan(cases, source_md="source.md")
 
     assert [case.id for case in plan.cases] == ["caso_1_listo"]
+    assert plan.cases[0].route == "/home"
     assert plan.cases[0].expected == ["La pagina muestra Dashboard"]
 
 
@@ -116,6 +118,7 @@ Pasos:
     cases = parse_markdown_cases(markdown)
 
     assert [case.title for case in cases] == ["Login valido", "Logout"]
+    assert [case.route for case in cases] == ["/login", "/home"]
     assert cases[0].expected_results == ["La pagina muestra Dashboard"]
     assert cases[1].expected_results == ["La URL contiene /login"]
     assert cases[0].executable_steps[1].normalized_action == "enter valid email"
@@ -212,4 +215,27 @@ def test_keeps_explicit_normalizer_steps() -> None:
         "fill [data-testid=email] with qa@example.com",
         "click [data-testid=submit]",
     ]
+    assert cases[0].route == "/"
     assert cases[0].executable_steps[0].confidence == 0.95
+
+
+def test_normalizes_natural_language_steps_with_explicit_selectors() -> None:
+    markdown = """
+## Caso 1: Badge de carrito
+
+### Pasos
+- Ir a /checkout
+- Verificar que [data-testid="cart-badge-count"] muestra 1
+
+### Resultado esperado
+- El badge muestra 1 producto
+"""
+
+    cases = parse_markdown_cases(markdown)
+    plan = cases_to_test_plan(cases, source_md="source.md")
+
+    assert cases[0].route == "/checkout"
+    assert cases[0].executable_steps[1].normalized_action == 'expect [data-testid="cart-badge-count"] to contain text "1"'
+    assert cases[0].executable_steps[1].confidence == 0.95
+    assert plan.cases[0].route == "/checkout"
+    assert plan.cases[0].steps[1] == 'expect [data-testid="cart-badge-count"] to contain text "1"'

@@ -44,6 +44,7 @@ def test_prepare_markdown_run_writes_contract_files(tmp_path: Path) -> None:
 
     run_dir = Path(run.data_dir)
     assert len(cases) == 1
+    assert cases[0].route == "/login"
     assert (run_dir / RUN_JSON).exists()
     assert (run_dir / SOURCE_MD).exists()
     assert (run_dir / NORMALIZED_CASES_JSON).exists()
@@ -58,6 +59,7 @@ def test_prepare_markdown_run_writes_contract_files(tmp_path: Path) -> None:
     assert run_payload["total_cases"] == 1
 
     plan_payload = json.loads((run_dir / TEST_PLAN_JSON).read_text(encoding="utf-8"))
+    assert plan_payload["cases"][0]["route"] == "/login"
     assert plan_payload["cases"][0]["steps"] == [
         "go to /login",
         "enter valid email",

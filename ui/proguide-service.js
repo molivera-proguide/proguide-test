@@ -988,13 +988,14 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
     if (testCase.automation_state !== 'listo') continue;
     const steps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
     const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
+    const route = inferCaseRoute(testCase.route, testCase.original_steps, testCase.executable_steps);
     plannedCases.push({
       id: testCase.id,
       feature_id: 'markdown_cases',
       scenario_id: testCase.id,
       title: testCase.title,
       description: testCase.description || testCase.title,
-      route: testCase.route || '/',
+      route,
       priority: priorityForPlan(testCase.priority),
       steps: steps.length ? steps : ['go to /'],
       expected: (testCase.expected_results || []).length ? testCase.expected_results : ['page is visible'],
@@ -1143,6 +1144,7 @@ function parseBlock(block, number) {
   fields.data = dataFromLines(fields.data_used);
   fields.original_steps = cleanList(fields.original_steps);
   fields.expected_results = cleanList(fields.expected_results);
+  fields.route = inferCaseRoute(fields.route, fields.original_steps);
 
   const title = String(fields.title || `Caso ${number}`).trim();
   const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results);
@@ -1163,7 +1165,7 @@ function parseBlock(block, number) {
     automation_state: automationState,
     state_reason: stateReason,
     original_markdown: maskSecretText(originalLines.join('\n').trim()),
-    route: String(fields.route || '/').trim() || '/',
+    route: fields.route,
     qa_owner: noneIfEmpty(fields.qa_owner),
     dev_owner: noneIfEmpty(fields.dev_owner),
     ticket: noneIfEmpty(fields.ticket),
@@ -1242,7 +1244,28 @@ function explicitStep(step) {
   const text = String(step || '').trim();
   if (/^(?:fill|click|expect)\s+\[[^\]]+\]/i.test(text)) return text;
   if (/^expect\s+text\s+["'][^"']+["']/i.test(text)) return text;
+  const selector = text.match(/\[[^\]]+\]/)?.[0];
+  if (!selector) return null;
+  const normalized = norm(text);
+  if (/\b(click|clic|hacer clic|presionar|seleccionar|tocar)\b/.test(normalized)) {
+    return `click ${selector}`;
+  }
+  if (/\b(fill|completar|ingresar|escribir|cargar|setear|introducir)\b/.test(normalized)) {
+    const value = valueAfterSelector(text, selector, /(?:\bcon\b|\bwith\b|\bvalor\b|\bvalue\b)\s+(.+)$/i);
+    return value ? `fill ${selector} with ${value}` : `fill ${selector}`;
+  }
+  if (/\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible)\b/.test(normalized)) {
+    const value = valueAfterSelector(text, selector, /(?:\bmuestra\b|\bmostrar\b|\bcontiene\b|\btexto\b|\bvalor\b|\bshows?\b|\bcontains?\b)\s+(.+)$/i);
+    return value ? `expect ${selector} to contain text ${JSON.stringify(value)}` : `expect ${selector} to be visible`;
+  }
   return null;
+}
+
+function valueAfterSelector(text, selector, pattern) {
+  const afterSelector = String(text || '').slice(String(text || '').indexOf(selector) + selector.length);
+  const match = afterSelector.match(pattern);
+  if (!match) return '';
+  return match[1].trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
 }
 
 function mergeCaseData(primary = {}, fallback = {}) {
@@ -1413,6 +1436,7 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
       review_reason: String(step.review_reason || '')
     }))
     : buildSteps(originalSteps);
+  const route = inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
   return {
     id: safeId(item.id || fallback.id || `caso_${number}_${title}`),
     number: Number(item.number || fallback.number || number),
@@ -1430,7 +1454,7 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     automation_state: normalizeAutomationState(item.automation_state || fallback.automation_state || 'listo'),
     state_reason: String(item.state_reason ?? fallback.state_reason ?? ''),
     original_markdown: String(item.original_markdown ?? fallback.original_markdown ?? ''),
-    route: String(item.route || fallback.route || '/').trim() || '/',
+    route,
     qa_owner: noneIfEmpty(item.qa_owner ?? fallback.qa_owner),
     dev_owner: noneIfEmpty(item.dev_owner ?? fallback.dev_owner),
     ticket: noneIfEmpty(item.ticket ?? fallback.ticket),
@@ -1814,6 +1838,35 @@ function cleanList(values) {
 
 function joinText(existing, value) {
   return existing ? `${existing}\n${String(value).trim()}` : String(value).trim();
+}
+
+function inferCaseRoute(explicitRoute, originalSteps = [], executableSteps = []) {
+  const explicit = normalizeRouteValue(explicitRoute);
+  if (explicit && explicit !== '/') return explicit;
+
+  const candidates = [];
+  for (const step of cleanList(originalSteps)) {
+    candidates.push(extractRoute(step));
+  }
+  for (const step of executableSteps || []) {
+    candidates.push(routeFromNormalizedAction(step?.normalized_action));
+    candidates.push(extractRoute(step?.original_text || ''));
+  }
+
+  const inferred = candidates.map(normalizeRouteValue).find((route) => route && route !== '/');
+  return inferred || explicit || '/';
+}
+
+function routeFromNormalizedAction(action) {
+  const match = String(action || '').trim().match(/^go to\s+(.+)$/i);
+  return match ? match[1] : null;
+}
+
+function normalizeRouteValue(value) {
+  const text = String(value || '').trim().replace(/[.,;]+$/, '');
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text.replace(/\/+$/, '');
+  return text.startsWith('/') ? text : `/${text}`;
 }
 
 function extractRoute(step) {

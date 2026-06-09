@@ -286,7 +286,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.4' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.5' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
