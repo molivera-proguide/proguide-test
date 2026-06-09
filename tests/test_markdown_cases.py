@@ -125,6 +125,38 @@ Pasos:
     assert all("Esperado" not in step for case in cases for step in case.original_steps)
 
 
+def test_normalizes_natural_data_testid_references() -> None:
+    markdown = """
+## TC-001 Login estructurado
+Pasos:
+- Navegar a /login
+- Ingresar el email 'customer@devshop.com' en el campo login-email
+- Ingresar la contrasena 'password' en el campo login-password
+- Hacer clic en el boton login-submit-btn
+- Verificar que el elemento login-error-msg es visible
+- Verificar que el badge cart-badge-count muestra '1'
+- Hacer clic en el boton cart-btn para ir al carrito
+- Verificar que el atributo data-theme cambio al tema opuesto
+- Verificar que el dashboard de administracion es visible
+Esperado:
+- Se muestra el mensaje de error
+"""
+
+    cases = parse_markdown_cases(markdown)
+
+    assert [step.normalized_action for step in cases[0].executable_steps] == [
+        "go to /login",
+        'fill [data-testid="login-email"] with customer@devshop.com',
+        'fill [data-testid="login-password"] with password',
+        'click [data-testid="login-submit-btn"]',
+        'expect [data-testid="login-error-msg"] to be visible',
+        'expect [data-testid="cart-badge-count"] to contain text "1"',
+        'click [data-testid="cart-btn"]',
+        "Verificar que el atributo data-theme cambio al tema opuesto",
+        'expect text "Dashboard"',
+    ]
+
+
 def test_masks_secret_lines_without_masking_password_steps() -> None:
     text = "Password: secreto\nCompletar password valido"
 

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { prepareCasesRun } from '../proguide-service.js';
+import { parsePytestResults, prepareCasesRun } from '../proguide-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -242,6 +242,90 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
     assert.equal(fs.readFileSync(path.join(runDir, 'source_cases.json'), 'utf8').includes('secreto'), false);
     assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto'), false);
     assert.equal(fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto'), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prepareCasesRun normalizes natural data-testid references from structured cases', async () => {
+  const root = makeTempRoot();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: 'http://localhost:3000',
+      cases: [{
+        id: 'tc_001',
+        title: 'Login estructurado',
+        priority: 'alta',
+        route: '/login',
+        steps: [
+          'Navegar a /login',
+          "Ingresar el email 'customer@devshop.com' en el campo login-email",
+          "Ingresar la contrasena 'password' en el campo login-password",
+          'Hacer clic en el boton login-submit-btn',
+          'Verificar que el elemento login-error-msg es visible',
+          "Verificar que el badge cart-badge-count muestra '1'",
+          'Hacer clic en el boton cart-btn para ir al carrito',
+          'Verificar que el atributo data-theme cambio al tema opuesto',
+          'Verificar que el dashboard de administracion es visible'
+        ],
+        expected: ['Se muestra el mensaje de error']
+      }]
+    });
+
+    const steps = prepared.cases[0].executable_steps.map((step) => step.normalized_action);
+    assert.deepEqual(steps, [
+      'go to /login',
+      'fill [data-testid="login-email"] with customer@devshop.com',
+      'fill [data-testid="login-password"] with password',
+      'click [data-testid="login-submit-btn"]',
+      'expect [data-testid="login-error-msg"] to be visible',
+      'expect [data-testid="cart-badge-count"] to contain text "1"',
+      'click [data-testid="cart-btn"]',
+      'Verificar que el atributo data-theme cambio al tema opuesto',
+      'expect text "Dashboard"'
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('parsePytestResults keeps self-closing testcase results aligned', async () => {
+  const root = makeTempRoot();
+  try {
+    const runDir = path.join(root, 'run');
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'junit.xml'), `
+<testsuite tests="2" failures="1">
+  <testcase classname="generated.test_markdown_cases" name="test_tc_003" time="4.578" />
+  <testcase classname="generated.test_markdown_cases" name="test_tc_004" time="11.648">
+    <failure message="expected admin dashboard">trace</failure>
+  </testcase>
+</testsuite>
+`, 'utf8');
+
+    const results = await parsePytestResults({
+      runDir,
+      junitPath: path.join(runDir, 'junit.xml'),
+      plan: {
+        cases: [{
+          id: 'tc_003',
+          title: 'Agregar producto al carrito',
+          steps: ['go to /'],
+          expected: ['cart updated']
+        }, {
+          id: 'tc_004',
+          title: 'Login admin',
+          steps: ['go to /login'],
+          expected: ['dashboard visible']
+        }]
+      }
+    });
+
+    assert.deepEqual(results.map((item) => [item.id, item.status, item.message]), [
+      ['tc_003', 'passed', ''],
+      ['tc_004', 'failed', 'expected admin dashboard']
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

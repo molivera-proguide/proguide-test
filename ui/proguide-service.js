@@ -94,8 +94,18 @@ Rules:
 - Use proguide_steps.log(step, "started"|"passed"|"failed", message) around meaningful actions/assertions.
 - Use robust locators: get_by_role, get_by_label, get_by_placeholder, get_by_text, locator with semantic attributes.
 - When dom_context is available, prefer its real roles, labels, placeholders, text, data-testid, id, and name attributes over guessed selectors.
+- Treat normalized steps as authoritative DSL:
+  - fill [selector] with value -> page.locator(selector).fill(value)
+  - click [selector] -> page.locator(selector).click()
+  - expect [selector] to contain text "value" -> assert that exact text
+  - expect [selector] to be visible -> assert visibility
+  - expect text "value" -> assert visible text containing value
+- Do not use PROGUIDE_USER_* environment credentials when the step contains a literal email, username, password, or value.
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
 - If a test case includes data.user.email or data.user.password, prefer those per-case values for inputs over global defaults.
+- Exact strings in expected and expected_results override shorter or older strings in original_steps.
+- Never invent data-testid/id selectors. Use only selectors present in normalized steps or dom_context.snapshot.controls[].selector_hint. If no selector exists, assert real headings or visible text from dom_context instead.
+- Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.
 - Keep assertions explicit with playwright.sync_api.expect.
 - Include imports and any helper functions in the generated file.
 - Return only valid JSON with this shape:
@@ -682,16 +692,16 @@ function runProcess(command, { cwd, env, logPath }) {
   });
 }
 
-async function parsePytestResults({ plan, junitPath, runDir }) {
+export async function parsePytestResults({ plan, junitPath, runDir }) {
   const caseBySafeId = new Map(plan.cases.map((testCase) => [safeId(testCase.id), testCase]));
   const parsed = new Map();
   if (await exists(junitPath)) {
     const xml = await fs.readFile(junitPath, 'utf8');
-    const testcaseRe = /<testcase\b([^>]*)>([\s\S]*?)<\/testcase>|<testcase\b([^/>]*)\/>/g;
+    const testcaseRe = /<testcase\b([^>]*?)\/>|<testcase\b([^>]*?)>([\s\S]*?)<\/testcase>/g;
     let match;
     while ((match = testcaseRe.exec(xml))) {
-      const attrs = parseXmlAttrs(match[1] || match[3] || '');
-      const inner = match[2] || '';
+      const attrs = parseXmlAttrs(match[1] || match[2] || '');
+      const inner = match[3] || '';
       const safeCaseId = safeId(String(attrs.name || '').replace(/^test_/, ''));
       const testCase = caseBySafeId.get(safeCaseId);
       if (!testCase) continue;
@@ -1202,6 +1212,7 @@ function normalizeStep(step) {
   const normalized = norm(step);
   const explicit = explicitStep(step);
   if (explicit) return explicit;
+  const isAssertion = /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(normalized);
   const route = extractRoute(step);
   const clickTarget = extractClickTarget(step);
   if (clickTarget) return `click button ${clickTarget}`;
@@ -1212,7 +1223,8 @@ function normalizeStep(step) {
   if (/\b(password|pass|clave|contrasena)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) {
     return /\b(invalido|invalid|corta|corto|incorrecto)\b/.test(normalized) ? 'enter invalid password' : 'enter valid password';
   }
-  if (/\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized)) return 'submit form';
+  if (isAssertion && /\bdashboard\b/.test(normalized)) return 'expect text "Dashboard"';
+  if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized)) return 'submit form';
   if (NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
   return step;
@@ -1244,7 +1256,7 @@ function explicitStep(step) {
   const text = String(step || '').trim();
   if (/^(?:fill|click|expect)\s+\[[^\]]+\]/i.test(text)) return text;
   if (/^expect\s+text\s+["'][^"']+["']/i.test(text)) return text;
-  const selector = text.match(/\[[^\]]+\]/)?.[0];
+  const selector = extractExplicitSelector(text);
   if (!selector) return null;
   const normalized = norm(text);
   if (/\b(click|clic|hacer clic|presionar|seleccionar|tocar)\b/.test(normalized)) {
@@ -1261,10 +1273,52 @@ function explicitStep(step) {
   return null;
 }
 
+function extractExplicitSelector(text) {
+  const bracketSelector = String(text || '').match(/\[[^\]]+\]/)?.[0];
+  if (bracketSelector) return bracketSelector;
+  const token = extractSelectorToken(text);
+  return token ? `[data-testid="${escapeSelectorValue(token)}"]` : null;
+}
+
+function extractSelectorToken(text) {
+  const normalizedText = stripAccents(String(text || ''));
+  const patterns = [
+    /\b(?:campo|input|elemento|selector|boton|enlace|link|badge|contador|toggle|id|data-testid)\s+["']?([A-Za-z][A-Za-z0-9_-]{1,80})["']?/i,
+    /["']([A-Za-z][A-Za-z0-9_-]{1,80})["']/i
+  ];
+  for (const pattern of patterns) {
+    const match = normalizedText.match(pattern);
+    if (!match) continue;
+    const token = match[1].trim().replace(/[.,;:]+$/, '');
+    if (isSelectorLikeToken(token)) return token;
+  }
+  const fallback = normalizedText.match(/\b([A-Za-z][A-Za-z0-9_-]*(?:[-_][A-Za-z0-9]+)+)\b/);
+  if (fallback && /\b(attribute|atributo)\b/i.test(normalizedText) && /^data-/i.test(fallback[1])) return '';
+  return fallback && isSelectorLikeToken(fallback[1]) ? fallback[1] : '';
+}
+
+function isSelectorLikeToken(token) {
+  const value = String(token || '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9_-]{1,80}$/.test(value)) return false;
+  if (/[-_]/.test(value)) return true;
+  return /[a-z][A-Z]/.test(value);
+}
+
+function escapeSelectorValue(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function valueAfterSelector(text, selector, pattern) {
-  const afterSelector = String(text || '').slice(String(text || '').indexOf(selector) + selector.length);
+  const source = String(text || '');
+  const selectorIndex = source.indexOf(selector);
+  const afterSelector = selectorIndex >= 0 ? source.slice(selectorIndex + selector.length) : source;
   const match = afterSelector.match(pattern);
-  if (!match) return '';
+  if (!match) {
+    const quoted = [...String(text || '').matchAll(/["']([^"']+)["']/g)]
+      .map((item) => item[1].trim())
+      .find((item) => item && item !== selector && !isSelectorLikeToken(item));
+    return quoted || '';
+  }
   return match[1].trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
 }
 
@@ -1807,6 +1861,10 @@ function norm(value) {
     .trim()
     .replace(/[*_`]+/g, '')
     .replace(/\s+/g, ' ');
+}
+
+function stripAccents(value) {
+  return String(value || '').normalize('NFKD').replace(/\p{M}/gu, '');
 }
 
 function normalizePriority(value) {

@@ -372,6 +372,7 @@ def _normalize_step(step: str) -> str:
     explicit = _explicit_step(step)
     if explicit:
         return explicit
+    is_assertion = bool(re.search(r"\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b", normalized))
     route = _extract_route(step)
     click_target = _extract_click_target(step)
     if click_target:
@@ -386,7 +387,9 @@ def _normalize_step(step: str) -> str:
         if re.search(r"\b(invalido|invalid|corta|corto|incorrecto)\b", normalized):
             return "enter invalid password"
         return "enter valid password"
-    if re.search(r"\b(enviar|submit|login|iniciar sesion|continuar)\b", normalized):
+    if is_assertion and re.search(r"\bdashboard\b", normalized):
+        return 'expect text "Dashboard"'
+    if not is_assertion and re.search(r"\b(enviar|submit|login|iniciar sesion|continuar)\b", normalized):
         return "submit form"
     if NAVIGATION_RE.search(normalized):
         return "go to /"
@@ -502,6 +505,11 @@ def _norm(value: str) -> str:
     return asciiish
 
 
+def _strip_accents(value: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in decomposed if not unicodedata.combining(char))
+
+
 def _normalize_priority(value: str) -> str:
     normalized = _norm(value)
     if normalized in {"critica", "critical", "bloqueante"}:
@@ -601,10 +609,9 @@ def _explicit_step(step: str) -> str | None:
         return text
     if re.match(r"^expect\s+text\s+[\"'].+?[\"']", text, re.I):
         return text
-    selector_match = re.search(r"\[[^\]]+\]", text)
-    if not selector_match:
+    selector = _extract_explicit_selector(text)
+    if not selector:
         return None
-    selector = selector_match.group(0)
     normalized = _norm(text)
     if re.search(r"\b(click|clic|hacer clic|presionar|seleccionar|tocar)\b", normalized):
         return f"click {selector}"
@@ -621,11 +628,55 @@ def _explicit_step(step: str) -> str | None:
     return None
 
 
+def _extract_explicit_selector(text: str) -> str | None:
+    selector_match = re.search(r"\[[^\]]+\]", text)
+    if selector_match:
+        return selector_match.group(0)
+    token = _extract_selector_token(text)
+    return f"[data-testid=\"{_escape_selector_value(token)}\"]" if token else None
+
+
+def _extract_selector_token(text: str) -> str:
+    normalized_text = _strip_accents(text)
+    patterns = [
+        r"\b(?:campo|input|elemento|selector|boton|enlace|link|badge|contador|toggle|id|data-testid)\s+[\"']?([A-Za-z][A-Za-z0-9_-]{1,80})[\"']?",
+        r"[\"']([A-Za-z][A-Za-z0-9_-]{1,80})[\"']",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized_text, re.I)
+        if not match:
+            continue
+        token = match.group(1).strip().rstrip(".,;:")
+        if _is_selector_like_token(token):
+            return token
+    fallback = re.search(r"\b([A-Za-z][A-Za-z0-9_-]*(?:[-_][A-Za-z0-9]+)+)\b", normalized_text)
+    if fallback and re.search(r"\b(attribute|atributo)\b", normalized_text, re.I) and re.match(r"^data-", fallback.group(1), re.I):
+        return ""
+    if fallback and _is_selector_like_token(fallback.group(1)):
+        return fallback.group(1)
+    return ""
+
+
+def _is_selector_like_token(token: str) -> bool:
+    value = token.strip()
+    if not re.match(r"^[A-Za-z][A-Za-z0-9_-]{1,80}$", value):
+        return False
+    if "-" in value or "_" in value:
+        return True
+    return bool(re.search(r"[a-z][A-Z]", value))
+
+
+def _escape_selector_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _value_after_selector(text: str, selector: str, pattern: str) -> str:
-    after_selector = text[text.find(selector) + len(selector) :]
+    selector_index = text.find(selector)
+    after_selector = text[selector_index + len(selector) :] if selector_index >= 0 else text
     match = re.search(pattern, after_selector, re.I)
     if not match:
-        return ""
+        quoted_values = [item.strip() for item in re.findall(r"[\"']([^\"']+)[\"']", text)]
+        return next((item for item in quoted_values if item and item != selector and not _is_selector_like_token(item)), "")
     return match.group(1).strip().strip("\"'").rstrip(".;").strip()
 
 
