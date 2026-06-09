@@ -9,6 +9,7 @@ import {
   listRunRecords,
   loadGeneratedCaseCode,
   loadRunBundle,
+  loadUsageSummary,
   prepareMarkdownRun,
   previewMarkdownRun
 } from './proguide-service.js';
@@ -96,6 +97,8 @@ async function dispatch(parsed) {
       return commandGetCode(parsed);
     case 'list-runs':
       return commandListRuns(parsed);
+    case 'usage':
+      return commandUsage(parsed);
     case 'viewer':
       return commandViewer(parsed);
     case 'doctor':
@@ -261,6 +264,14 @@ async function commandListRuns(parsed) {
   return EXIT.ok;
 }
 
+async function commandUsage(parsed) {
+  const root = resolveRoot(parsed.options);
+  const runId = option(parsed.options, 'run') || parsed.positionals[0] || '';
+  const usage = await loadUsageSummary(root, runId ? { runId } : {});
+  emit(usage, parsed.options, renderUsage(usage));
+  return EXIT.ok;
+}
+
 async function commandViewer(parsed) {
   const root = resolveRoot(parsed.options);
   const host = option(parsed.options, 'host') || DEFAULT_VIEWER_HOST;
@@ -404,7 +415,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.7' }, parsed.options, '0.1.7');
+    emit({ version: '0.1.8' }, parsed.options, '0.1.8');
   }
 }
 
@@ -418,6 +429,7 @@ Uso:
   proguide get-run <run_id> [--json]
   proguide get-code <run_id> <case_id> [--json]
   proguide list-runs [--limit 20] [--json]
+  proguide usage [--run <run_id>] [--json]
   proguide viewer [--port 8787] [--json]
   proguide mcp
   proguide doctor [--json] [--fix]
@@ -1054,6 +1066,44 @@ function renderDryRunPreview(payload) {
     }
   }
   return lines.join('\n');
+}
+
+function renderUsage(usage) {
+  const lines = [
+    `Uso LLM (${usage.scope}${usage.run_id ? ` ${usage.run_id}` : ''})`,
+    `Costo estimado: ${formatCliUsd(usage.estimated_cost_usd)}`,
+    `Tokens: ${formatCliTokens(usage.total_tokens)} total, ${formatCliTokens(usage.input_tokens)} input, ${formatCliTokens(usage.output_tokens)} output`,
+    `Cache: ${formatCliTokens(usage.cache_creation_input_tokens)} write, ${formatCliTokens(usage.cache_read_input_tokens)} read`,
+    `Llamadas: ${usage.entries_count}`
+  ];
+  if (!usage.entries_count) return [...lines, 'Sin uso registrado.'].join('\n');
+  lines.push('', 'Ultimas llamadas:');
+  for (const entry of usage.entries.slice(0, 8)) {
+    lines.push([
+      entry.timestamp || '-',
+      entry.run_id || '-',
+      entry.provider || 'llm',
+      entry.model || '-',
+      formatCliTokens(entry.usage?.total_tokens),
+      formatCliUsd(entry.estimated_cost_usd),
+      entry.purpose || '-'
+    ].join('\t'));
+  }
+  if (usage.entries.length > 8) lines.push(`... ${usage.entries.length - 8} mas`);
+  return lines.join('\n');
+}
+
+function formatCliTokens(value) {
+  const number = Math.round(Number(value || 0));
+  if (!Number.isFinite(number) || number <= 0) return '0';
+  return String(number);
+}
+
+function formatCliUsd(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'sin estimar';
+  const number = Number(value);
+  const digits = number > 0 && number < 0.01 ? 6 : (number < 1 ? 4 : 2);
+  return `USD ${number.toFixed(digits)}`;
 }
 
 function writeJson(payload) {

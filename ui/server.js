@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadGeneratedCaseCode,
+  loadUsageSummary,
   listRunRecords,
   loadRunBundle
 } from './proguide-service.js';
@@ -21,8 +22,16 @@ app.get('/', async (_request, reply) => {
 });
 
 app.get('/runs', async (_request, reply) => {
-  const runs = await listRunRecords(ROOT);
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecuciones', renderRunsIndex(runs)));
+  const [runs, usage] = await Promise.all([
+    listRunRecords(ROOT),
+    loadUsageSummary(ROOT)
+  ]);
+  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecuciones', renderRunsIndex(runs, usage)));
+});
+
+app.get('/usage', async (_request, reply) => {
+  const usage = await loadUsageSummary(ROOT);
+  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Uso LLM', renderUsageDashboard(usage)));
 });
 
 app.get('/preview', async (_request, reply) => {
@@ -38,10 +47,19 @@ app.get('/runs/:runId/preview', async (request, reply) => {
   return reply.redirect(`/runs/${encodeURIComponent(runId)}`);
 });
 
+app.get('/runs/:runId/usage', async (request, reply) => {
+  const runId = cleanRunId(request.params.runId);
+  const usage = await loadUsageSummary(ROOT, { runId });
+  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Uso LLM', renderUsageDashboard(usage, { runId })));
+});
+
 app.get('/runs/:runId', async (request, reply) => {
   const runId = cleanRunId(request.params.runId);
-  const payload = await loadRunBundle(ROOT, runId);
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecucion', renderRunDetail(payload.run, payload.cases || [], payload.summary)));
+  const [payload, usage] = await Promise.all([
+    loadRunBundle(ROOT, runId),
+    loadUsageSummary(ROOT, { runId })
+  ]);
+  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecucion', renderRunDetail(payload.run, payload.cases || [], payload.summary, usage)));
 });
 
 app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
@@ -62,6 +80,13 @@ app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
 app.get('/api/runs/:runId', async (request) => {
   const runId = cleanRunId(request.params.runId);
   return loadRunBundle(ROOT, runId);
+});
+
+app.get('/api/usage', async () => loadUsageSummary(ROOT));
+
+app.get('/api/runs/:runId/usage', async (request) => {
+  const runId = cleanRunId(request.params.runId);
+  return loadUsageSummary(ROOT, { runId });
 });
 
 app.get('/api/health', async () => ({
@@ -156,7 +181,7 @@ async function readStepLog(runId, caseId) {
   }
 }
 
-function renderRunsIndex(runs) {
+function renderRunsIndex(runs, usage) {
   return `
     <section class="tool-band reveal">
       <div class="tool-band-main">
@@ -164,7 +189,11 @@ function renderRunsIndex(runs) {
         <h1>Ejecuciones de pruebas</h1>
         <p class="muted run-meta">Los runs se crean y ejecutan desde MCP. Este visor muestra estado, evidencia y codigo generado.</p>
       </div>
+      <div class="actions">
+        <a class="button-link ghost" href="/usage">Uso LLM</a>
+      </div>
     </section>
+    ${renderUsageStrip(usage, { href: '/usage' })}
     <main class="grid detail">
       <section class="panel reveal" style="--delay:.05s">
         <header class="panel-head">
@@ -180,7 +209,7 @@ function renderHistory(runs) {
   if (!runs.length) {
     return `
       <div class="empty">
-        <div class="empty-mark" aria-hidden="true">○</div>
+        <div class="empty-mark" aria-hidden="true">o</div>
         <p>Aun no hay ejecuciones guardadas.</p>
         <span class="muted">Tu primera corrida aparecera aqui.</span>
       </div>`;
@@ -204,6 +233,143 @@ function renderHistory(runs) {
     </div>`;
 }
 
+function renderUsageStrip(usage, { href = '/usage' } = {}) {
+  if (!usage?.entries_count) return '';
+  return `
+    <section class="usage-strip reveal" style="--delay:.03s">
+      <div class="usage-strip-main">
+        <span class="eyebrow">LLM</span>
+        <strong>${escapeHtml(formatUsd(usage.estimated_cost_usd))}</strong>
+        <span class="muted">${escapeHtml(formatTokens(usage.total_tokens))} tokens en ${usage.entries_count} llamada(s)</span>
+      </div>
+      <dl class="usage-strip-kv">
+        <div><dt>Input</dt><dd>${escapeHtml(formatTokens(usage.input_tokens))}</dd></div>
+        <div><dt>Output</dt><dd>${escapeHtml(formatTokens(usage.output_tokens))}</dd></div>
+        <div><dt>Cache</dt><dd>${escapeHtml(formatTokens(usage.cache_creation_input_tokens + usage.cache_read_input_tokens))}</dd></div>
+      </dl>
+      <a class="row-link" href="${attr(href)}">Ver uso<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9M9 4.5 12.5 8 9 11.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
+    </section>`;
+}
+
+function renderUsageDashboard(usage, { runId = null } = {}) {
+  const isRun = Boolean(runId);
+  return `
+    <section class="tool-band reveal">
+      <div class="tool-band-main">
+        <a class="back-link" href="${isRun ? `/runs/${encodeURIComponent(runId)}` : '/runs'}"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13 8H4M7 4.5 3.5 8 7 11.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>${isRun ? 'Run' : 'Runs'}</a>
+        <span class="eyebrow">Costo estimado</span>
+        <h1>Uso LLM</h1>
+        <p class="muted run-meta">${isRun ? `<span class="mono">${escapeHtml(runId)}</span>` : 'Workspace local'}<span class="meta-sep">&middot;</span>${escapeHtml(usage.entries_count)} llamada(s)</p>
+      </div>
+      <div class="actions">
+        ${isRun ? '<a class="button-link ghost" href="/usage">Workspace</a>' : ''}
+      </div>
+    </section>
+    <main class="usage-page">
+      ${renderUsageStats(usage)}
+      ${usage.entries_count ? `
+        <section class="usage-grid">
+          <section class="panel reveal" style="--delay:.08s">
+            <header class="panel-head"><h2>Por modelo</h2><p class="panel-sub">${usage.by_model.length} modelo(s)</p></header>
+            ${renderUsageGroupTable(usage.by_model, 'Modelo')}
+          </section>
+          <section class="panel reveal" style="--delay:.12s">
+            <header class="panel-head"><h2>${isRun ? 'Por proveedor' : 'Por run'}</h2><p class="panel-sub">${isRun ? usage.by_provider.length : usage.by_run.length} grupo(s)</p></header>
+            ${isRun ? renderUsageGroupTable(usage.by_provider, 'Proveedor') : renderUsageGroupTable(usage.by_run, 'Run', { runLinks: true })}
+          </section>
+        </section>
+        <section class="panel reveal" style="--delay:.16s">
+          <header class="panel-head">
+            <h2>Llamadas</h2>
+            <p class="panel-sub">${escapeHtml(usage.pricing_note)}</p>
+          </header>
+          ${renderUsageEntriesTable(usage.entries, { showRun: !isRun })}
+        </section>` : renderUsageEmpty()}
+    </main>`;
+}
+
+function renderUsageStats(usage) {
+  const stats = [
+    ['Costo', formatUsd(usage.estimated_cost_usd), usage.unknown_cost_entries ? `${usage.unknown_cost_entries} sin estimar` : 'Estimacion local'],
+    ['Total tokens', formatTokens(usage.total_tokens), `${usage.entries_count} llamada(s)`],
+    ['Input', formatTokens(usage.input_tokens), `Cache read ${formatTokens(usage.cache_read_input_tokens)}`],
+    ['Output', formatTokens(usage.output_tokens), `Cache write ${formatTokens(usage.cache_creation_input_tokens)}`]
+  ];
+  return `
+    <section class="usage-stats reveal" style="--delay:.04s">
+      ${stats.map(([label, value, hint]) => `
+        <article class="usage-stat">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(hint)}</small>
+        </article>`).join('')}
+    </section>`;
+}
+
+function renderUsageEmpty() {
+  return `
+    <section class="panel reveal" style="--delay:.08s">
+      <div class="empty">
+        <div class="empty-mark" aria-hidden="true">o</div>
+        <p>Todavia no hay uso LLM registrado.</p>
+        <span class="muted">Los proximos runs guardaran tokens y costo estimado automaticamente.</span>
+      </div>
+    </section>`;
+}
+
+function renderUsageGroupTable(groups, label, { runLinks = false } = {}) {
+  if (!groups.length) return '<p class="muted">Sin datos.</p>';
+  return `
+    <div class="table-wrap">
+      <table class="usage-table">
+        <thead><tr><th>${escapeHtml(label)}</th><th>Llamadas</th><th>Tokens</th><th>Costo</th><th>Ultima</th></tr></thead>
+        <tbody>
+          ${groups.map((group) => {
+            const title = runLinks && group.key !== 'sin_run'
+              ? `<a href="/runs/${encodeURIComponent(group.key)}/usage">${escapeHtml(group.key)}</a>`
+              : escapeHtml(group.key);
+            return `
+              <tr>
+                <td class="mono">${title}</td>
+                <td>${escapeHtml(group.entries_count)}</td>
+                <td class="mono">${escapeHtml(formatTokens(group.total_tokens))}</td>
+                <td class="mono">${escapeHtml(formatUsd(group.estimated_cost_usd))}</td>
+                <td class="mono nowrap">${escapeHtml(shortDate(group.last_at))}</td>
+              </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function renderUsageEntriesTable(entries, { showRun = true } = {}) {
+  if (!entries.length) return '<p class="muted">Sin llamadas registradas.</p>';
+  return `
+    <div class="table-wrap">
+      <table class="usage-table">
+        <thead>
+          <tr>
+            <th>Fecha</th>${showRun ? '<th>Run</th>' : ''}
+            <th>Modelo</th><th>Proposito</th><th>Input</th><th>Output</th><th>Cache</th><th>Costo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map((entry) => `
+            <tr>
+              <td class="mono nowrap">${escapeHtml(shortDate(entry.timestamp))}</td>
+              ${showRun ? `<td class="mono">${entry.run_id ? `<a href="/runs/${encodeURIComponent(entry.run_id)}/usage">${escapeHtml(entry.run_id)}</a>` : '<span class="muted">-</span>'}</td>` : ''}
+              <td><span class="usage-provider">${escapeHtml(entry.provider || 'llm')}</span><span class="mono usage-model">${escapeHtml(entry.model || '-')}</span></td>
+              <td>${escapeHtml(entry.purpose || '-')}</td>
+              <td class="mono">${escapeHtml(formatTokens(entry.usage.input_tokens))}</td>
+              <td class="mono">${escapeHtml(formatTokens(entry.usage.output_tokens))}</td>
+              <td class="mono">${escapeHtml(formatTokens(entry.usage.cache_creation_input_tokens + entry.usage.cache_read_input_tokens))}</td>
+              <td class="mono">${escapeHtml(formatUsd(entry.estimated_cost_usd))}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
 function renderBadge(status) {
   const label = String(status || '').replace(/_/g, ' ');
   const indicator = isActiveStatus(status) ? '<i class="status-spinner"></i>' : '<i class="badge-dot"></i>';
@@ -218,7 +384,7 @@ function isActiveStatus(status) {
   return ['running', 'executing', 'ejecutando', 'queued', 'started', 'generating', 'interpreting'].includes(statusClass(status));
 }
 
-function renderRunDetail(run, cases, summary) {
+function renderRunDetail(run, cases, summary, usage) {
   return `
     <section class="tool-band reveal">
       <div class="tool-band-main">
@@ -227,10 +393,12 @@ function renderRunDetail(run, cases, summary) {
         <p class="muted run-meta"><span class="mono">${escapeHtml(run.id)}</span>${run.base_url ? `<span class="meta-sep">·</span><a href="${attr(run.base_url)}" target="_blank" rel="noreferrer">${escapeHtml(run.base_url)}</a>` : ''}</p>
       </div>
       <div class="actions">
+        <a class="button-link ghost" href="/runs/${encodeURIComponent(run.id)}/usage">Uso LLM</a>
         ${run.html_path ? `<a class="button-link ghost" href="/artifacts/${encodeURIComponent(run.id)}/${encodeURIComponent(run.html_path)}">Reporte HTML</a>` : ''}
         ${run.pdf_path ? `<a class="button-link ghost" href="/artifacts/${encodeURIComponent(run.id)}/${encodeURIComponent(run.pdf_path)}">PDF</a>` : ''}
       </div>
     </section>
+    ${renderUsageStrip(usage, { href: `/runs/${encodeURIComponent(run.id)}/usage` })}
     <main class="grid detail">
       <section class="panel cases-panel reveal" style="--delay:.05s">
         <header class="panel-head"><h2>Casos</h2><p class="panel-sub">${cases.length} ${cases.length === 1 ? 'caso' : 'casos'}</p></header>
@@ -924,6 +1092,25 @@ function formatSeconds(value) {
   return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
 }
 
+function formatTokens(value) {
+  const number = Math.round(Number(value || 0));
+  if (!Number.isFinite(number) || number <= 0) return '0';
+  return String(number).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+function formatUsd(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Sin estimar';
+  const number = Number(value);
+  const digits = number > 0 && number < 0.01 ? 6 : (number < 1 ? 4 : 2);
+  return `USD ${number.toFixed(digits)}`;
+}
+
+function shortDate(value) {
+  const text = String(value || '');
+  if (!text) return '-';
+  return text.replace('T', ' ').replace(/\.\d{3}Z$/, 'Z');
+}
+
 function codeTabsScript() {
   return `
       (() => {
@@ -1086,6 +1273,7 @@ function layout(title, body) {
         </a>
         <nav class="appnav" aria-label="Principal">
           <a href="/runs">Runs</a>
+          <a href="/usage">Uso</a>
         </nav>
         <span class="appbar-tag mono">e2e · local</span>
       </header>
@@ -1295,6 +1483,73 @@ function styles() {
     .run-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
     .run-meta .mono { font-size: 13px; color: var(--muted); }
     .meta-sep { color: var(--faint); }
+
+    /* Usage dashboard */
+    .usage-page { display: grid; gap: 20px; margin-top: 28px; min-width: 0; }
+    .usage-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; min-width: 0; }
+    .usage-strip {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 18px;
+      margin-top: 20px;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025));
+      box-shadow: var(--shadow);
+      min-width: 0;
+    }
+    .usage-strip-main { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+    .usage-strip-main .eyebrow { padding: 4px 9px; font-size: 10px; }
+    .usage-strip-main strong { font-family: var(--font-display); font-size: 22px; line-height: 1; }
+    .usage-strip-kv { display: flex; align-items: center; gap: 14px; margin: 0; }
+    .usage-strip-kv div { display: grid; gap: 2px; }
+    .usage-strip-kv dt {
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .usage-strip-kv dd { margin: 0; font-family: var(--font-mono); color: var(--text); font-size: 12px; }
+    .usage-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+    .usage-stat {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(180deg, var(--surface-2), var(--surface));
+      box-shadow: var(--shadow);
+    }
+    .usage-stat span {
+      display: block;
+      color: var(--faint);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .usage-stat strong {
+      display: block;
+      margin-top: 10px;
+      font-family: var(--font-display);
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .usage-stat small { display: block; margin-top: 9px; color: var(--muted); }
+    .usage-table th, .usage-table td { white-space: nowrap; }
+    .usage-table td:nth-child(4) { white-space: normal; min-width: 220px; }
+    .usage-provider {
+      display: block;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .usage-model { display: block; margin-top: 2px; color: var(--muted); font-size: 11.5px; }
 
     /* Tables */
     .table-wrap { overflow-x: auto; border-radius: var(--radius-sm); }
@@ -1558,13 +1813,15 @@ function styles() {
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
 
     @media (max-width: 900px) {
-      .two, .detail, .case-detail-grid, .form-grid { grid-template-columns: 1fr; }
+      .two, .detail, .case-detail-grid, .form-grid, .usage-grid, .usage-stats, .usage-strip { grid-template-columns: 1fr; }
       .field.span-2 { grid-column: auto; }
       .tool-band { align-items: flex-start; }
       .actions { justify-content: flex-start; }
       .truncate { max-width: 220px; }
       .timeline-item { grid-template-columns: 1fr; gap: 7px; }
       .timeline-status { justify-content: flex-start; width: max-content; }
+      .usage-strip { align-items: start; }
+      .usage-strip-kv { flex-wrap: wrap; }
     }
   `;
 }

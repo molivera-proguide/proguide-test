@@ -13,7 +13,35 @@ const NORMALIZED_CASES_JSON = 'normalized_cases.json';
 const TEST_PLAN_JSON = 'test_plan.json';
 const EVENTS_JSONL = 'events.jsonl';
 const RESULTS_JSON = 'results.json';
+const USAGE_DIR = 'usage';
+const LLM_USAGE_JSON = 'llm_usage.json';
+const LLM_USAGE_JSONL = 'llm_usage.jsonl';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const ANTHROPIC_PRICING_SOURCE = 'https://docs.anthropic.com/en/docs/about-claude/pricing';
+const ANTHROPIC_PRICING_BY_FAMILY = {
+  sonnet: {
+    input_per_mtok: 3,
+    output_per_mtok: 15,
+    cache_write_5m_per_mtok: 3.75,
+    cache_write_1h_per_mtok: 6,
+    cache_read_per_mtok: 0.30
+  },
+  opus: {
+    input_per_mtok: 5,
+    output_per_mtok: 25,
+    cache_write_5m_per_mtok: 6.25,
+    cache_write_1h_per_mtok: 10,
+    cache_read_per_mtok: 0.50
+  },
+  haiku: {
+    input_per_mtok: 1,
+    output_per_mtok: 5,
+    cache_write_5m_per_mtok: 1.25,
+    cache_write_1h_per_mtok: 2,
+    cache_read_per_mtok: 0.10
+  }
+};
 
 const FIELD_ALIASES = {
   titulo: 'title',
@@ -311,6 +339,78 @@ export async function loadGeneratedCaseCode(root, runId, caseId) {
   return found;
 }
 
+export async function recordLlmUsage({
+  root,
+  runId = null,
+  runDir = null,
+  provider,
+  model,
+  purpose,
+  usage,
+  request = {}
+}) {
+  const normalized = normalizeLlmUsage(provider, usage);
+  if (!normalized.total_tokens && !normalized.input_tokens && !normalized.output_tokens) return null;
+
+  const estimate = estimateLlmCost(provider, model, normalized);
+  const entry = {
+    id: `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+    timestamp: nowIso(),
+    run_id: runId || null,
+    provider: String(provider || '').toLowerCase(),
+    model: String(model || ''),
+    purpose: String(purpose || ''),
+    usage: normalized,
+    estimated_cost_usd: estimate.cost_usd,
+    pricing: estimate.pricing,
+    request: {
+      max_output_tokens: request.max_output_tokens || null
+    }
+  };
+
+  await fs.mkdir(usageRoot(root), { recursive: true });
+  await fs.appendFile(globalUsageLogPath(root), `${JSON.stringify(entry)}\n`, 'utf8');
+
+  const effectiveRunDir = runDir || (runId ? runPath(root, runId) : null);
+  if (effectiveRunDir) {
+    const runUsagePath = path.join(effectiveRunDir, LLM_USAGE_JSON);
+    const current = await readJson(runUsagePath, { run_id: runId || path.basename(effectiveRunDir), entries: [] });
+    const entries = Array.isArray(current.entries) ? current.entries : [];
+    entries.push(entry);
+    await writeJson(runUsagePath, {
+      run_id: runId || path.basename(effectiveRunDir),
+      updated_at: entry.timestamp,
+      summary: summarizeUsageEntries(entries, { scope: 'run', runId: runId || path.basename(effectiveRunDir) }),
+      entries
+    });
+    await appendEvent(effectiveRunDir, {
+      run_id: runId || path.basename(effectiveRunDir),
+      type: 'llm_usage_recorded',
+      status: '',
+      message: `Uso LLM registrado: ${formatUsageTokensForEvent(normalized)} tokens.`,
+      payload: {
+        provider: entry.provider,
+        model: entry.model,
+        purpose: entry.purpose,
+        estimated_cost_usd: entry.estimated_cost_usd,
+        usage: entry.usage
+      }
+    }).catch(() => {});
+  }
+
+  return entry;
+}
+
+export async function loadUsageSummary(root, { runId = null } = {}) {
+  const entries = runId
+    ? await loadRunUsageEntries(root, runId)
+    : await loadGlobalUsageEntries(root);
+  return summarizeUsageEntries(entries, {
+    scope: runId ? 'run' : 'workspace',
+    runId: runId || null
+  });
+}
+
 export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {}, useAgent = false }) {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -351,7 +451,11 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   let cases;
   try {
     cases = useAgent
-      ? await interpretMarkdownWithAgent(markdown, { root, sourceName: path.basename(sourceMd) })
+      ? await interpretMarkdownWithAgent(markdown, {
+        root,
+        sourceName: path.basename(sourceMd),
+        usageContext: { runId: run.id, runDir }
+      })
       : parseMarkdownCases(markdown, { sourceName: path.basename(sourceMd) });
   } catch (error) {
     run.status = 'error';
@@ -565,7 +669,15 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
       status: run.status,
       message: 'Agente generando codigo Python Playwright.'
     });
-    await generateTestsWithAgent({ root, plan, cases, outputDir: generatedDir, config, domContext });
+    await generateTestsWithAgent({
+      root,
+      plan,
+      cases,
+      outputDir: generatedDir,
+      config,
+      domContext,
+      usageContext: { runId: run.id, runDir }
+    });
     await appendEvent(runDir, { run_id: run.id, type: 'tests_generated', status: 'running', message: 'Codigo Python Playwright generado.' });
 
     run.status = 'running';
@@ -804,7 +916,7 @@ async function collectDomContext({ python, root, runDir, plan, baseUrl, config }
   }
 }
 
-async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {} }) {
+async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {}, usageContext = null }) {
   await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(path.join(outputDir, 'conftest.py'), 'pytest_plugins = ["proguide.pytest_plugin"]\n', 'utf8');
 
@@ -824,7 +936,8 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config, do
       root,
       system: PLAYWRIGHT_CODE_AGENT_PROMPT,
       payload,
-      purpose: `generar codigo Python Playwright (lote ${batchIndex + 1}/${batches.length})`
+      purpose: `generar codigo Python Playwright (lote ${batchIndex + 1}/${batches.length})`,
+      usageContext
     });
     const files = normalizeGeneratedFiles(data);
     if (!files.length) {
@@ -1449,7 +1562,7 @@ function normalizationWarnings(cases) {
   return warnings;
 }
 
-async function interpretMarkdownWithAgent(markdown, { root, sourceName }) {
+async function interpretMarkdownWithAgent(markdown, { root, sourceName, usageContext = null }) {
   const config = await loadUiConfig(root);
   const baseline = parseMarkdownCases(markdown, { sourceName });
   const payload = {
@@ -1462,7 +1575,8 @@ async function interpretMarkdownWithAgent(markdown, { root, sourceName }) {
     root,
     system: MARKDOWN_AGENT_PROMPT,
     payload,
-    purpose: 'interpretar casos Markdown'
+    purpose: 'interpretar casos Markdown',
+    usageContext
   });
   const casesData = coerceCasesPayload(parsed);
   const cases = casesData.map((item, index) => normalizeCaseForStorage(item, index + 1, baseline[index]));
@@ -1565,7 +1679,7 @@ function coerceCasesPayload(data) {
   throw new Error('El agente no devolvio una lista de casos en la clave cases.');
 }
 
-async function callJsonModel(config, { root, system, payload, purpose }) {
+async function callJsonModel(config, { root, system, payload, purpose, usageContext = null }) {
   await loadDotEnv(root);
   const provider = String(config.llm.provider || 'disabled').toLowerCase();
   const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
@@ -1597,6 +1711,16 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
       throw new Error(`OpenAI fallo al ${purpose} (${response.status}): ${await response.text()}`);
     }
     const data = await response.json();
+    await recordLlmUsage({
+      root,
+      runId: usageContext?.runId || null,
+      runDir: usageContext?.runDir || null,
+      provider,
+      model: config.llm.model,
+      purpose,
+      usage: data.usage,
+      request: { max_output_tokens: maxOutputTokens }
+    }).catch(() => {});
     const choice = data.choices?.[0] || {};
     if (choice.finish_reason === 'length') {
       throw new Error(`OpenAI trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`);
@@ -1627,6 +1751,16 @@ async function callJsonModel(config, { root, system, payload, purpose }) {
       throw new Error(`Anthropic fallo al ${purpose} (${response.status}): ${await response.text()}`);
     }
     const data = await response.json();
+    await recordLlmUsage({
+      root,
+      runId: usageContext?.runId || null,
+      runDir: usageContext?.runDir || null,
+      provider,
+      model: config.llm.model,
+      purpose,
+      usage: data.usage,
+      request: { max_output_tokens: maxOutputTokens }
+    }).catch(() => {});
     const text = (data.content || [])
       .map((block) => block.type === 'text' ? block.text : '')
       .join('\n');
@@ -1984,8 +2118,229 @@ function noneIfEmpty(value) {
   return text || null;
 }
 
+async function loadGlobalUsageEntries(root) {
+  const logPath = globalUsageLogPath(root);
+  if (!(await exists(logPath))) return [];
+  const text = await fs.readFile(logPath, 'utf8');
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => {
+      try {
+        return normalizeStoredUsageEntry(JSON.parse(line));
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+}
+
+async function loadRunUsageEntries(root, runId) {
+  const runDir = runPath(root, runId);
+  const payload = await readJson(path.join(runDir, LLM_USAGE_JSON), null);
+  if (payload && Array.isArray(payload.entries)) {
+    return payload.entries
+      .map(normalizeStoredUsageEntry)
+      .filter(Boolean)
+      .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+  }
+  const entries = await loadGlobalUsageEntries(root);
+  return entries.filter((entry) => entry.run_id === runId);
+}
+
+function normalizeStoredUsageEntry(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const provider = String(entry.provider || '').toLowerCase();
+  return {
+    id: String(entry.id || `${entry.timestamp || nowIso()}_${provider || 'llm'}`),
+    timestamp: entry.timestamp || '',
+    run_id: entry.run_id || null,
+    provider,
+    model: String(entry.model || ''),
+    purpose: String(entry.purpose || ''),
+    usage: normalizeLlmUsage(provider, entry.usage || {}),
+    estimated_cost_usd: finiteOrNull(entry.estimated_cost_usd),
+    pricing: entry.pricing || { source: 'unknown', note: 'Sin informacion de precios.' },
+    request: entry.request || {}
+  };
+}
+
+function summarizeUsageEntries(entries, { scope = 'workspace', runId = null } = {}) {
+  const normalizedEntries = (entries || []).map(normalizeStoredUsageEntry).filter(Boolean);
+  const totals = usageTotals(normalizedEntries);
+  return {
+    scope,
+    run_id: runId || null,
+    generated_at: nowIso(),
+    entries_count: normalizedEntries.length,
+    ...totals,
+    unknown_cost_entries: normalizedEntries.filter((entry) => entry.estimated_cost_usd === null).length,
+    by_provider: groupUsage(normalizedEntries, (entry) => entry.provider || 'unknown'),
+    by_model: groupUsage(normalizedEntries, (entry) => entry.model || 'unknown'),
+    by_run: groupUsage(normalizedEntries, (entry) => entry.run_id || 'sin_run'),
+    entries: normalizedEntries.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || ''))),
+    pricing_note: 'Costos estimados con tokens reportados por la API. La factura final puede diferir por descuentos, impuestos, tiers o cambios de proveedor.'
+  };
+}
+
+function usageTotals(entries) {
+  const totals = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_creation_input_tokens: 0,
+    cache_creation_5m_input_tokens: 0,
+    cache_creation_1h_input_tokens: 0,
+    cache_read_input_tokens: 0,
+    total_tokens: 0,
+    estimated_cost_usd: 0
+  };
+  let hasKnownCost = false;
+  for (const entry of entries || []) {
+    const usage = entry.usage || {};
+    totals.input_tokens += safeNumber(usage.input_tokens);
+    totals.output_tokens += safeNumber(usage.output_tokens);
+    totals.cache_creation_input_tokens += safeNumber(usage.cache_creation_input_tokens);
+    totals.cache_creation_5m_input_tokens += safeNumber(usage.cache_creation_5m_input_tokens);
+    totals.cache_creation_1h_input_tokens += safeNumber(usage.cache_creation_1h_input_tokens);
+    totals.cache_read_input_tokens += safeNumber(usage.cache_read_input_tokens);
+    totals.total_tokens += safeNumber(usage.total_tokens);
+    if (entry.estimated_cost_usd !== null && Number.isFinite(Number(entry.estimated_cost_usd))) {
+      hasKnownCost = true;
+      totals.estimated_cost_usd += Number(entry.estimated_cost_usd);
+    }
+  }
+  totals.estimated_cost_usd = hasKnownCost ? roundMoney(totals.estimated_cost_usd) : null;
+  return totals;
+}
+
+function groupUsage(entries, keyFn) {
+  const groups = new Map();
+  for (const entry of entries || []) {
+    const key = String(keyFn(entry) || 'unknown');
+    const current = groups.get(key) || { key, entries: [] };
+    current.entries.push(entry);
+    groups.set(key, current);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      key: group.key,
+      entries_count: group.entries.length,
+      last_at: group.entries.map((entry) => entry.timestamp || '').sort().at(-1) || '',
+      ...usageTotals(group.entries)
+    }))
+    .sort((a, b) => {
+      const costA = a.estimated_cost_usd ?? -1;
+      const costB = b.estimated_cost_usd ?? -1;
+      if (costA !== costB) return costB - costA;
+      return String(b.last_at || '').localeCompare(String(a.last_at || ''));
+    });
+}
+
+function normalizeLlmUsage(provider, usage = {}) {
+  const inputTokens = safeNumber(usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens);
+  const outputTokens = safeNumber(usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokens ?? usage.completionTokens);
+  const cacheCreation = usage.cache_creation && typeof usage.cache_creation === 'object' ? usage.cache_creation : {};
+  const hasDetailedCacheCreation = usage.cache_creation_5m_input_tokens !== undefined ||
+    usage.cache_creation_1h_input_tokens !== undefined ||
+    Boolean(usage.cache_creation);
+  const cacheCreation5m = safeNumber(usage.cache_creation_5m_input_tokens ?? cacheCreation.ephemeral_5m_input_tokens) +
+    safeNumber(!hasDetailedCacheCreation ? usage.cache_creation_input_tokens : 0);
+  const cacheCreation1h = safeNumber(usage.cache_creation_1h_input_tokens ?? cacheCreation.ephemeral_1h_input_tokens);
+  const cacheRead = safeNumber(usage.cache_read_input_tokens ?? usage.prompt_tokens_details?.cached_tokens);
+  const cacheCreationTotal = cacheCreation5m + cacheCreation1h;
+  const reportedTotal = safeNumber(usage.total_tokens ?? usage.totalTokens);
+  const totalTokens = reportedTotal || inputTokens + outputTokens + cacheCreationTotal + cacheRead;
+  return {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    cache_creation_input_tokens: cacheCreationTotal,
+    cache_creation_5m_input_tokens: cacheCreation5m,
+    cache_creation_1h_input_tokens: cacheCreation1h,
+    cache_read_input_tokens: cacheRead,
+    total_tokens: totalTokens,
+    provider: String(provider || '').toLowerCase()
+  };
+}
+
+function estimateLlmCost(provider, model, usage) {
+  if (String(provider || '').toLowerCase() !== 'anthropic') {
+    return {
+      cost_usd: null,
+      pricing: {
+        source: 'unknown',
+        note: 'Costo no estimado para este proveedor.'
+      }
+    };
+  }
+  const family = anthropicModelFamily(model);
+  const pricing = family ? ANTHROPIC_PRICING_BY_FAMILY[family] : null;
+  if (!pricing) {
+    return {
+      cost_usd: null,
+      pricing: {
+        source: ANTHROPIC_PRICING_SOURCE,
+        note: `Modelo Anthropic sin tabla local de precios: ${model || 'unknown'}.`
+      }
+    };
+  }
+  const cost = (
+    safeNumber(usage.input_tokens) * pricing.input_per_mtok +
+    safeNumber(usage.output_tokens) * pricing.output_per_mtok +
+    safeNumber(usage.cache_creation_5m_input_tokens) * pricing.cache_write_5m_per_mtok +
+    safeNumber(usage.cache_creation_1h_input_tokens) * pricing.cache_write_1h_per_mtok +
+    safeNumber(usage.cache_read_input_tokens) * pricing.cache_read_per_mtok
+  ) / 1_000_000;
+  return {
+    cost_usd: roundMoney(cost),
+    pricing: {
+      source: ANTHROPIC_PRICING_SOURCE,
+      provider: 'anthropic',
+      model_family: family,
+      unit: 'USD_per_million_tokens',
+      rates: pricing
+    }
+  };
+}
+
+function anthropicModelFamily(model) {
+  const normalized = String(model || '').toLowerCase();
+  if (normalized.includes('sonnet')) return 'sonnet';
+  if (normalized.includes('opus')) return 'opus';
+  if (normalized.includes('haiku')) return 'haiku';
+  return '';
+}
+
+function formatUsageTokensForEvent(usage) {
+  return String(safeNumber(usage.total_tokens));
+}
+
+function finiteOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function safeNumber(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function roundMoney(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? Math.round(number * 1_000_000_000) / 1_000_000_000 : null;
+}
+
 async function ensureLayout(root) {
   await fs.mkdir(path.join(root, PROGUIDE_DIR, RUNS_DIR), { recursive: true });
+  await fs.mkdir(usageRoot(root), { recursive: true });
+}
+
+function usageRoot(root) {
+  return path.join(root, PROGUIDE_DIR, USAGE_DIR);
+}
+
+function globalUsageLogPath(root) {
+  return path.join(usageRoot(root), LLM_USAGE_JSONL);
 }
 
 function runsRoot(root) {

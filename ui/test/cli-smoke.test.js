@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { parsePytestResults, prepareCasesRun } from '../proguide-service.js';
+import { loadUsageSummary, parsePytestResults, prepareCasesRun, recordLlmUsage } from '../proguide-service.js';
 import { viewerPortCandidates } from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -371,6 +371,55 @@ test('new workspaces default to Anthropic Sonnet without QA configuration', () =
     const model = runCli(['config', 'get', 'llm.model', '--json', '--root', root]);
     assert.equal(model.status, 0, model.stderr);
     assert.deepEqual(parseJson(model.stdout), { key: 'llm.model', value: 'claude-sonnet-4-6' });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('LLM usage is recorded with Anthropic cost estimate and exposed by CLI', async () => {
+  const root = makeTempRoot();
+  try {
+    const runId = 'usage_run_001';
+    const runDir = path.join(root, 'proguide_tests', 'runs', runId);
+    await recordLlmUsage({
+      root,
+      runId,
+      runDir,
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      purpose: 'generar codigo Python Playwright',
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 2000,
+        cache_read_input_tokens: 500,
+        cache_creation: {
+          ephemeral_5m_input_tokens: 100,
+          ephemeral_1h_input_tokens: 50
+        }
+      }
+    });
+
+    const summary = await loadUsageSummary(root, { runId });
+    assert.equal(summary.entries_count, 1);
+    assert.equal(summary.input_tokens, 1000);
+    assert.equal(summary.output_tokens, 2000);
+    assert.equal(summary.cache_read_input_tokens, 500);
+    assert.equal(summary.cache_creation_input_tokens, 150);
+    assert.equal(summary.estimated_cost_usd, 0.033825);
+
+    const workspaceUsage = runCli(['usage', '--json', '--root', root]);
+    assert.equal(workspaceUsage.status, 0, workspaceUsage.stderr);
+    const workspacePayload = parseJson(workspaceUsage.stdout);
+    assert.equal(workspacePayload.entries_count, 1);
+    assert.equal(workspacePayload.by_run[0].key, runId);
+    assert.equal(workspacePayload.estimated_cost_usd, 0.033825);
+
+    const runUsage = runCli(['usage', '--run', runId, '--json', '--root', root]);
+    assert.equal(runUsage.status, 0, runUsage.stderr);
+    const runPayload = parseJson(runUsage.stdout);
+    assert.equal(runPayload.scope, 'run');
+    assert.equal(runPayload.run_id, runId);
+    assert.equal(runPayload.entries[0].model, 'claude-sonnet-4-6');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
