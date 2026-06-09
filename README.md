@@ -18,14 +18,14 @@ ProGuide creates and maintains its own Python runtime under the user profile. QA
 For public or internally accessible GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.3/proguide-test-0.1.3.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.1.4/proguide-test-0.1.4.tgz
 ```
 
 For private repositories:
 
 ```bash
-gh release download v0.1.3 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
-npm install -g ./proguide-test-0.1.3.tgz
+gh release download v0.1.4 --repo molivera-proguide/proguide-test --pattern "proguide-test-*.tgz" --dir .
+npm install -g ./proguide-test-0.1.4.tgz
 ```
 
 ### Configure Your QA Workspace
@@ -200,8 +200,9 @@ Available MCP tools:
 | `get_run` | Reads run status, cases, events, and summary. |
 | `get_generated_code` | Reads generated Python code for a case. |
 | `list_runs` | Lists local runs. |
+| `start_viewer` | Starts or reuses the local Fastify result viewer and opens it in the local browser. Pass `run_id` to get a direct run URL. |
 
-The result viewer defaults to `http://127.0.0.1:8787/runs`. If that port is occupied, ProGuide automatically tries the following ports. Use `PROGUIDE_VIEWER_PORT` only when you need to force a specific port.
+The result viewer defaults to `http://127.0.0.1:8787/runs`. MCP tools open the viewer URL in the local browser by default; pass `open_browser: false` or set `PROGUIDE_OPEN_BROWSER=0` for headless environments. If that port is occupied, ProGuide automatically tries the following ports. Use `PROGUIDE_VIEWER_PORT` only when you need to force a specific port.
 
 ## Developer Guide
 
@@ -311,11 +312,11 @@ The release workflow is:
 Create a release by pushing a version tag:
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
-The workflow runs tests, creates `proguide-test-0.1.3.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
+The workflow runs tests, creates `proguide-test-0.1.4.tgz`, uploads it as a workflow artifact, and attaches it to the GitHub Release.
 
 ### Data Contract
 

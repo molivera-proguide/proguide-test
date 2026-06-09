@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
@@ -67,7 +68,8 @@ const tools = [
         dev_owner: { type: 'string' },
         email: { type: 'string' },
         username: { type: 'string' },
-        password: { type: 'string' }
+        password: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       },
       required: ['base_url']
     }
@@ -87,7 +89,8 @@ const tools = [
         ticket: { type: 'string' },
         module: { type: 'string' },
         qa_owner: { type: 'string' },
-        dev_owner: { type: 'string' }
+        dev_owner: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       }
     }
   },
@@ -109,7 +112,8 @@ const tools = [
         dev_owner: { type: 'string' },
         email: { type: 'string' },
         username: { type: 'string' },
-        password: { type: 'string' }
+        password: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       },
       required: ['base_url']
     }
@@ -129,7 +133,8 @@ const tools = [
         ticket: { type: 'string' },
         module: { type: 'string' },
         qa_owner: { type: 'string' },
-        dev_owner: { type: 'string' }
+        dev_owner: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       }
     }
   },
@@ -148,7 +153,8 @@ const tools = [
         root: { type: 'string' },
         email: { type: 'string' },
         username: { type: 'string' },
-        password: { type: 'string' }
+        password: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       }
     }
   },
@@ -185,6 +191,18 @@ const tools = [
       properties: {
         root: { type: 'string' },
         limit: { type: 'number' }
+      }
+    }
+  },
+  {
+    name: 'start_viewer',
+    description: 'Levanta o reutiliza el visor local Fastify para ver ejecuciones ProGuide. Si se pasa run_id, devuelve tambien el link directo al run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        root: { type: 'string' },
+        run_id: { type: 'string' },
+        open_browser: { type: 'boolean', description: 'Abre el run_url o viewer_url en el navegador local. Default: true.' }
       }
     }
   }
@@ -268,7 +286,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.3' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.4' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -304,7 +322,7 @@ async function callTool(name, args) {
   if (name === 'run_markdown_cases' || name === 'run_cases') {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
-    const viewer = await attachViewer(root, prepared.run.id);
+    const viewer = await attachViewer(root, prepared.run.id, args);
     const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
       root,
@@ -315,26 +333,28 @@ async function callTool(name, args) {
       fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, prepared.run.id);
-    return toolResult(`Run ${prepared.run.id} ejecutado.`, {
+    const payload = {
       run_id: prepared.run.id,
       run: bundle.run,
       cases: bundle.cases,
       summary,
       ...viewer,
       report_url_path: bundle.run.html_path ? `/artifacts/${prepared.run.id}/${bundle.run.html_path}` : ''
-    });
+    };
+    return toolResult(runMessage('ejecutado', payload), payload);
   }
 
   if (name === 'create_run_from_markdown' || name === 'create_run') {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
-    const viewer = await attachViewer(root, prepared.run.id);
-    return toolResult(`Run ${prepared.run.id} creado desde Markdown.`, {
+    const viewer = await attachViewer(root, prepared.run.id, args);
+    const payload = {
       run_id: prepared.run.id,
       run: prepared.run,
       cases: prepared.cases,
       ...viewer
-    });
+    };
+    return toolResult(runMessage('creado desde Markdown', payload), payload);
   }
 
   if (name === 'execute_run') {
@@ -344,7 +364,7 @@ async function callTool(name, args) {
       const prepared = await prepareRunFromArgs(root, args);
       runId = prepared.run.id;
     }
-    const viewer = await attachViewer(root, runId);
+    const viewer = await attachViewer(root, runId, args);
     const runtime = await ensurePythonRuntime(root);
     const summary = await executePreparedRun({
       root,
@@ -355,12 +375,13 @@ async function callTool(name, args) {
       fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, runId);
-    return toolResult(`Run ${runId} ejecutado.`, {
+    const payload = {
       run_id: runId,
       run: bundle.run,
       summary,
       ...viewer
-    });
+    };
+    return toolResult(runMessage('ejecutado', payload), payload);
   }
 
   if (name === 'get_run') {
@@ -392,6 +413,13 @@ async function callTool(name, args) {
     return toolResult(`${Math.min(limit, runs.length)} run(s).`, {
       runs: runs.slice(0, limit)
     });
+  }
+
+  if (name === 'start_viewer') {
+    const root = resolveRoot(args.root);
+    const runId = args.run_id ? cleanHandle(args.run_id, 'run_id') : '';
+    const viewer = await startViewer(root, runId, args);
+    return toolResult(viewerMessage(viewer), viewer);
   }
 
   throw new Error(`Unknown tool: ${name}`);
@@ -514,21 +542,136 @@ function cleanHandle(value, label) {
   return text;
 }
 
-async function attachViewer(root, runId) {
+async function attachViewer(root, runId, options = {}) {
   try {
-    const viewer = await ensureViewer(root);
-    const links = viewerLinks(viewer.baseUrl, runId);
-    console.error(`[ProGuide] Visor de resultados: ${links.run_url}`);
-    return {
-      ...links,
-      viewer_started: viewer.started,
-      viewer_port: viewer.port
-    };
+    const viewer = await startViewer(root, runId, options);
+    console.error(`[ProGuide] Visor de resultados: ${viewer.run_url || viewer.viewer_url}`);
+    return viewer;
   } catch (error) {
     const message = error.message || String(error);
     console.error(`[ProGuide] No se pudo iniciar el visor: ${message}`);
     return { viewer_error: message };
   }
+}
+
+async function startViewer(root, runId = '', options = {}) {
+  const viewer = await ensureViewer(root);
+  const links = runId ? viewerLinks(viewer.baseUrl, runId) : { viewer_url: `${viewer.baseUrl}/runs` };
+  const browser = await openViewerInBrowser(links.run_url || links.viewer_url, options);
+  return {
+    ...links,
+    viewer_started: viewer.started,
+    viewer_port: viewer.port,
+    ...browser
+  };
+}
+
+async function openViewerInBrowser(url, options = {}) {
+  if (!shouldOpenBrowser(options)) {
+    return { browser_opened: false, browser_url: '', browser_disabled: true };
+  }
+  try {
+    openExternalUrl(url);
+    return { browser_opened: true, browser_url: url };
+  } catch (error) {
+    return {
+      browser_opened: false,
+      browser_url: url,
+      browser_error: error.message || String(error)
+    };
+  }
+}
+
+function shouldOpenBrowser(options = {}) {
+  if (options.open_browser === false) return false;
+  if (String(process.env.PROGUIDE_OPEN_BROWSER || '').trim() === '0') return false;
+  return true;
+}
+
+function openExternalUrl(url) {
+  if (!url) throw new Error('No hay URL de visor para abrir.');
+  let command;
+  let args;
+  if (process.platform === 'win32') {
+    command = 'rundll32.exe';
+    args = ['url.dll,FileProtocolHandler', url];
+  } else if (process.platform === 'darwin') {
+    command = 'open';
+    args = [url];
+  } else {
+    command = 'xdg-open';
+    args = [url];
+  }
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true
+  });
+  child.unref();
+}
+
+function runMessage(action, payload) {
+  const lines = [`Run ${payload.run_id} ${action}.`];
+  if (payload.run_url) lines.push(`Ejecucion en visor: ${payload.run_url}`);
+  if (payload.viewer_url) lines.push(`Servidor del visor: ${payload.viewer_url}`);
+  if (payload.viewer_port) {
+    lines.push(payload.viewer_started
+      ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
+      : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`);
+  }
+  if (payload.browser_opened) lines.push(`Navegador abierto: ${payload.browser_url}`);
+  if (payload.browser_disabled) lines.push('Apertura de navegador deshabilitada.');
+  if (payload.browser_error) lines.push(`No se pudo abrir el navegador: ${payload.browser_error}`);
+  if (payload.run?.status) lines.push(`Estado: ${payload.run.status}`);
+  const summary = summaryLine(payload.summary, payload.run);
+  if (summary) lines.push(summary);
+  if (payload.report_url_path && payload.viewer_url) {
+    lines.push(`Reporte HTML: ${payload.viewer_url.replace(/\/runs$/, payload.report_url_path)}`);
+  }
+  if (payload.viewer_error) lines.push(`No se pudo iniciar el visor: ${payload.viewer_error}`);
+  return lines.join('\n');
+}
+
+function viewerMessage(payload) {
+  const lines = [];
+  if (payload.run_url) lines.push(`Ejecucion en visor: ${payload.run_url}`);
+  if (payload.viewer_url) lines.push(`Servidor del visor: ${payload.viewer_url}`);
+  if (payload.viewer_port) {
+    lines.push(payload.viewer_started
+      ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
+      : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`);
+  }
+  if (payload.browser_opened) lines.push(`Navegador abierto: ${payload.browser_url}`);
+  if (payload.browser_disabled) lines.push('Apertura de navegador deshabilitada.');
+  if (payload.browser_error) lines.push(`No se pudo abrir el navegador: ${payload.browser_error}`);
+  return lines.join('\n') || 'Visor no disponible.';
+}
+
+function summaryLine(summary, run) {
+  const counts = summaryCounts(summary, run);
+  if (!counts) return '';
+  return `Resumen: total=${counts.total}, passed=${counts.passed}, failed=${counts.failed}, blocked=${counts.blocked}, inconclusive=${counts.inconclusive}, setup_failed=${counts.setup_failed}.`;
+}
+
+function summaryCounts(summary, run) {
+  const total = Number(run?.total_cases || summary?.results?.length || 0);
+  if (!total && !summary?.results?.length) return null;
+  const counted = (summary?.results || []).reduce((acc, result) => {
+    if (result.status === 'passed') acc.passed += 1;
+    else if (result.status === 'failed') acc.failed += 1;
+    else if (result.status === 'blocked') acc.blocked += 1;
+    else if (result.status === 'setup_failed') acc.setup_failed += 1;
+    else acc.inconclusive += 1;
+    return acc;
+  }, { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 });
+  return {
+    total,
+    passed: Number(run?.passed ?? counted.passed),
+    failed: Number(run?.failed ?? counted.failed),
+    blocked: Number(run?.blocked ?? counted.blocked),
+    inconclusive: Number(run?.inconclusive ?? counted.inconclusive),
+    setup_failed: Number(run?.setup_failed ?? counted.setup_failed)
+  };
 }
 
 function toolResult(message, structuredContent) {

@@ -309,7 +309,8 @@ test('mcp exposes the full tool surface', () => {
     'execute_run',
     'get_run',
     'get_generated_code',
-    'list_runs'
+    'list_runs',
+    'start_viewer'
   ]);
   const executeRun = payload.result.tools.find((tool) => tool.name === 'execute_run');
   assert.equal(executeRun.inputSchema.properties.from_plan.type, 'boolean');
