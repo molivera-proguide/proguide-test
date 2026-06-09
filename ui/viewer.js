@@ -18,8 +18,7 @@ export async function ensureViewer(root, options = {}) {
     return { ...cached, started: false };
   }
 
-  for (let offset = 0; offset < attempts; offset += 1) {
-    const port = firstPort + offset;
+  for (const port of viewerPortCandidates({ firstPort, attempts })) {
     const baseUrl = viewerBaseUrl(host, port);
     if (await viewerMatchesRoot(baseUrl, rootPath)) {
       const info = { baseUrl, port, started: false };
@@ -60,6 +59,43 @@ export async function ensureViewer(root, options = {}) {
   throw new Error(`No se pudo iniciar el visor Fastify desde el puerto ${firstPort}.`);
 }
 
+export async function stopViewer(root, options = {}) {
+  const rootPath = path.resolve(root);
+  const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
+  const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
+  const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
+  const stopped = [];
+  const skipped = [];
+
+  for (const port of viewerPortCandidates({ firstPort, attempts })) {
+    const baseUrl = viewerBaseUrl(host, port);
+    const health = await fetchViewerHealth(baseUrl);
+    if (health?.service !== 'proguide-test-viewer') continue;
+    if (rootIdentity(health.root) !== rootIdentity(rootPath)) {
+      skipped.push({ baseUrl, port, root: health.root || '', reason: 'different_root' });
+      continue;
+    }
+
+    const result = await shutdownViewer(baseUrl, rootPath, health);
+    stopped.push({
+      baseUrl,
+      port,
+      root: health.root || rootPath,
+      pid: Number(health.pid || 0) || null,
+      stopped: result.stopped,
+      message: result.message
+    });
+  }
+
+  if (stopped.some((item) => item.stopped)) viewerCache.clear();
+  return {
+    root: rootPath,
+    stopped_count: stopped.filter((item) => item.stopped).length,
+    viewers: stopped,
+    skipped
+  };
+}
+
 export async function viewerMatchesRoot(baseUrl, root) {
   const health = await fetchViewerHealth(baseUrl);
   return health?.service === 'proguide-test-viewer' && rootIdentity(health.root) === rootIdentity(root);
@@ -94,9 +130,54 @@ export function viewerBaseUrl(host, port) {
   return `http://${formattedHost}:${port}`;
 }
 
+export function viewerPortCandidates({ firstPort, attempts }) {
+  const ports = [];
+  const appendRange = (start, count) => {
+    const base = positiveNumber(start, 8787);
+    const limit = positiveNumber(count, 20);
+    for (let offset = 0; offset < limit; offset += 1) ports.push(base + offset);
+  };
+  appendRange(firstPort, attempts);
+  if (Number(firstPort) !== 8787) appendRange(8787, attempts);
+  return [...new Set(ports)];
+}
+
 export function rootIdentity(value) {
   const resolved = path.resolve(String(value || ''));
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+async function shutdownViewer(baseUrl, root, health) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1200);
+  try {
+    const response = await fetch(`${baseUrl}/api/shutdown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ root }),
+      signal: controller.signal
+    });
+    if (response.ok) {
+      await sleep(300);
+      return { stopped: !(await fetchViewerHealth(baseUrl)), message: 'shutdown_requested' };
+    }
+  } catch {
+    // Older viewers do not expose /api/shutdown; fall back to pid when health reports it.
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const pid = Number(health?.pid || 0);
+  if (!pid || pid === process.pid) {
+    return { stopped: false, message: 'shutdown_endpoint_unavailable' };
+  }
+  try {
+    process.kill(pid);
+    await sleep(500);
+    return { stopped: !(await fetchViewerHealth(baseUrl)), message: 'pid_terminated' };
+  } catch (error) {
+    return { stopped: false, message: error.message || String(error) };
+  }
 }
 
 async function waitForViewer(baseUrl, root) {

@@ -6,6 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parsePytestResults, prepareCasesRun } from '../proguide-service.js';
+import { viewerPortCandidates } from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -331,6 +332,16 @@ test('parsePytestResults keeps self-closing testcase results aligned', async () 
   }
 });
 
+test('viewer discovery includes the default port range for reuse', () => {
+  assert.deepEqual(viewerPortCandidates({ firstPort: 8789, attempts: 3 }), [
+    8789,
+    8790,
+    8791,
+    8787,
+    8788
+  ]);
+});
+
 test('config get/set reads and writes proguide_tests/config.yaml', () => {
   const root = makeTempRoot();
   try {
@@ -413,7 +424,8 @@ test('mcp exposes the full tool surface', () => {
     'get_run',
     'get_generated_code',
     'list_runs',
-    'start_viewer'
+    'start_viewer',
+    'stop_viewer'
   ]);
   const executeRun = payload.result.tools.find((tool) => tool.name === 'execute_run');
   assert.equal(executeRun.inputSchema.properties.from_plan.type, 'boolean');

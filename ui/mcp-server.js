@@ -12,7 +12,7 @@ import {
   prepareMarkdownRun
 } from './proguide-service.js';
 import { ensurePythonRuntime } from './python-runtime.js';
-import { ensureViewer, viewerLinks } from './viewer.js';
+import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(
@@ -205,6 +205,17 @@ const tools = [
         open_browser: { type: 'boolean', description: 'Abre el run_url o viewer_url en el navegador local. Default: true.' }
       }
     }
+  },
+  {
+    name: 'stop_viewer',
+    description: 'Detiene el visor local ProGuide asociado al root indicado. No afecta viewers de otros workspaces.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        root: { type: 'string' },
+        port: { type: 'number', description: 'Puerto inicial para buscar viewers. Default: 8787 o PROGUIDE_VIEWER_PORT.' }
+      }
+    }
   }
 ];
 
@@ -286,7 +297,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.5' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.7' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -420,6 +431,14 @@ async function callTool(name, args) {
     const runId = args.run_id ? cleanHandle(args.run_id, 'run_id') : '';
     const viewer = await startViewer(root, runId, args);
     return toolResult(viewerMessage(viewer), viewer);
+  }
+
+  if (name === 'stop_viewer') {
+    const root = resolveRoot(args.root);
+    const stopped = await stopViewer(root, {
+      port: Number.isFinite(Number(args.port)) ? Number(args.port) : undefined
+    });
+    return toolResult(stopViewerMessage(stopped), stopped);
   }
 
   throw new Error(`Unknown tool: ${name}`);
@@ -645,6 +664,24 @@ function viewerMessage(payload) {
   if (payload.browser_disabled) lines.push('Apertura de navegador deshabilitada.');
   if (payload.browser_error) lines.push(`No se pudo abrir el navegador: ${payload.browser_error}`);
   return lines.join('\n') || 'Visor no disponible.';
+}
+
+function stopViewerMessage(payload) {
+  if (!payload.viewers?.length) {
+    return `No habia visor ProGuide activo para ${payload.root}.`;
+  }
+  const stopped = payload.viewers.filter((item) => item.stopped);
+  const failed = payload.viewers.filter((item) => !item.stopped);
+  const lines = [
+    `Visores detenidos: ${stopped.length}/${payload.viewers.length}.`
+  ];
+  for (const item of stopped) {
+    lines.push(`Detenido: ${item.baseUrl}${item.pid ? ` pid=${item.pid}` : ''}`);
+  }
+  for (const item of failed) {
+    lines.push(`No detenido: ${item.baseUrl} (${item.message || 'sin detalle'})`);
+  }
+  return lines.join('\n');
 }
 
 function summaryLine(summary, run) {

@@ -68,8 +68,22 @@ app.get('/api/health', async () => ({
   service: 'proguide-test-viewer',
   root: ROOT,
   host: HOST,
-  port: PORT
+  port: PORT,
+  pid: process.pid
 }));
+
+app.post('/api/shutdown', async (request, reply) => {
+  const requestedRoot = path.resolve(String(request.body?.root || ''));
+  if (rootIdentity(requestedRoot) !== rootIdentity(ROOT)) {
+    return reply.code(403).send({ error: 'root_mismatch' });
+  }
+  reply.send({ ok: true, pid: process.pid });
+  setTimeout(() => {
+    app.close()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  }, 50);
+});
 
 app.post('/api/runs/:runId/cases', async (request, reply) => {
   cleanRunId(request.params.runId);
@@ -248,7 +262,10 @@ function renderCaseRow(testCase, summary, runId) {
       <td class="status-cell">${renderBadge(status)}</td>
       <td class="message-cell">${escapeHtml(result?.message || testCase.state_reason || '')}</td>
       <td class="evidence-cell">${evidence || '<span class="muted">-</span>'}</td>
-      <td class="code-cell"><a class="chip-link" href="${attr(detailHref)}#codigo-python">Python</a></td>
+      <td class="code-cell">
+        <a class="chip-link" href="${attr(detailHref)}#codigo-python">Python</a>
+        <a class="chip-link" href="${attr(detailHref)}#codigo-typescript">TS</a>
+      </td>
     </tr>`;
 }
 
@@ -295,9 +312,8 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
           <h3>Resultado esperado</h3>
           ${renderList(testCase.expected_results || result?.expected || [], 'Sin resultado esperado registrado.')}
         </section>
-        <section class="detail-section" id="codigo-python">
-          <h3>Codigo Python</h3>
-          ${renderGeneratedCode(generatedCode)}
+        <section class="detail-section code-section" id="codigo-playwright">
+          ${renderCodeTabs(generatedCode, testCase, run)}
         </section>
       </section>
       <aside class="detail-side">
@@ -324,7 +340,8 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
           </div>
         </section>
       </aside>
-    </main>`;
+    </main>
+    <script>${codeTabsScript()}</script>`;
 }
 
 function findCaseResult(summary, caseId) {
@@ -350,20 +367,485 @@ function renderEvidenceLinks(result, runId) {
   return evidence.join('');
 }
 
-function renderGeneratedCode(generatedCode) {
-  if (!generatedCode?.code) {
+function renderCodeTabs(generatedCode, testCase, run) {
+  const typeScriptCode = {
+    code: buildTypeScriptCode(testCase, run),
+    path: `generated/${safeName(testCase.id || 'case')}.spec.ts`
+  };
+  return `
+    <div class="code-section-head">
+      <h3>Codigo Playwright</h3>
+      <div class="code-tabs" role="tablist" aria-label="Lenguaje del codigo generado" data-code-tabs>
+        <button class="code-tab is-active" type="button" role="tab" id="tab-codigo-python" aria-selected="true" aria-controls="codigo-python" data-tab-target="codigo-python">Python</button>
+        <button class="code-tab" type="button" role="tab" id="tab-codigo-typescript" aria-selected="false" aria-controls="codigo-typescript" data-tab-target="codigo-typescript">TypeScript</button>
+      </div>
+    </div>
+    <div class="code-panels">
+      <div class="code-panel is-active" id="codigo-python" role="tabpanel" aria-labelledby="tab-codigo-python">
+        ${renderCodeBlock(generatedCode, 'El codigo Python se genera cuando ejecutas el run.', 'generated/test_markdown_cases.py', 'python')}
+      </div>
+      <div class="code-panel" id="codigo-typescript" role="tabpanel" aria-labelledby="tab-codigo-typescript" hidden>
+        ${renderCodeBlock(typeScriptCode, 'No hay datos suficientes para generar el ejemplo TypeScript.', `generated/${safeName(testCase.id || 'case')}.spec.ts`, 'typescript')}
+      </div>
+    </div>`;
+}
+
+function renderCodeBlock(codeData, emptyText, fallbackPath, language) {
+  if (!codeData?.code) {
     return `
       <div class="code-empty">
-        <p class="muted">El codigo Python se genera cuando ejecutas el run.</p>
+        <p class="muted">${escapeHtml(emptyText)}</p>
       </div>`;
   }
   return `
     <div class="code-block">
       <div class="code-block-head">
-        <span class="mono">${escapeHtml(generatedCode.path || 'generated/test_markdown_cases.py')}</span>
+        <span class="mono">${escapeHtml(codeData.path || fallbackPath)}</span>
+        <span class="code-lang">${escapeHtml(language === 'typescript' ? 'TypeScript' : 'Python')}</span>
       </div>
-      <pre><code>${escapeHtml(generatedCode.code)}</code></pre>
+      <pre class="code-editor language-${escapeHtml(language)}"><code>${highlightCode(codeData.code, language)}</code></pre>
     </div>`;
+}
+
+function highlightCode(code, language) {
+  return String(code || '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => `<span class="code-line">${highlightCodeLine(line, language) || '&nbsp;'}</span>`)
+    .join('');
+}
+
+function highlightCodeLine(line, language) {
+  const tokens = [];
+  const keywordSet = codeKeywords(language);
+  let index = 0;
+  while (index < line.length) {
+    const rest = line.slice(index);
+    if (language === 'python' && rest.startsWith('#')) {
+      tokens.push(token('comment', rest));
+      break;
+    }
+    if (language === 'typescript' && rest.startsWith('//')) {
+      tokens.push(token('comment', rest));
+      break;
+    }
+    if (language === 'typescript' && rest.startsWith('/*')) {
+      const end = rest.indexOf('*/', 2);
+      const comment = end >= 0 ? rest.slice(0, end + 2) : rest;
+      tokens.push(token('comment', comment));
+      index += comment.length;
+      continue;
+    }
+
+    const quote = line[index];
+    if (quote === '"' || quote === "'" || (language === 'typescript' && quote === '`')) {
+      const value = readQuoted(line, index, quote);
+      tokens.push(token('string', value));
+      index += value.length;
+      continue;
+    }
+
+    const numberMatch = rest.match(/^\b\d+(?:\.\d+)?\b/);
+    if (numberMatch) {
+      tokens.push(token('number', numberMatch[0]));
+      index += numberMatch[0].length;
+      continue;
+    }
+
+    const identifierMatch = rest.match(/^[A-Za-z_$][A-Za-z0-9_$]*/);
+    if (identifierMatch) {
+      const value = identifierMatch[0];
+      if (keywordSet.has(value)) {
+        tokens.push(token('keyword', value));
+      } else if (rest.slice(value.length).trimStart().startsWith('(')) {
+        tokens.push(token('function', value));
+      } else {
+        tokens.push(escapeHtml(value));
+      }
+      index += value.length;
+      continue;
+    }
+
+    const punctuationMatch = rest.match(/^[{}()[\].,;:+\-*/%=<>!|&?]+/);
+    if (punctuationMatch) {
+      tokens.push(token('punctuation', punctuationMatch[0]));
+      index += punctuationMatch[0].length;
+      continue;
+    }
+
+    tokens.push(escapeHtml(line[index]));
+    index += 1;
+  }
+  return tokens.join('');
+}
+
+function readQuoted(line, start, quote) {
+  let index = start + 1;
+  while (index < line.length) {
+    if (line[index] === '\\') {
+      index += 2;
+      continue;
+    }
+    if (line[index] === quote) {
+      index += 1;
+      break;
+    }
+    index += 1;
+  }
+  return line.slice(start, index);
+}
+
+function token(kind, value) {
+  return `<span class="tok-${kind}">${escapeHtml(value)}</span>`;
+}
+
+function codeKeywords(language) {
+  if (language === 'python') {
+    return new Set([
+      'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class',
+      'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from',
+      'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass',
+      'raise', 'return', 'try', 'while', 'with', 'yield'
+    ]);
+  }
+  return new Set([
+    'as', 'async', 'await', 'break', 'catch', 'class', 'const', 'continue', 'default',
+    'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if',
+    'implements', 'import', 'in', 'instanceof', 'interface', 'let', 'new', 'null', 'of',
+    'return', 'throw', 'true', 'try', 'type', 'undefined', 'var', 'while'
+  ]);
+}
+
+function buildTypeScriptCode(testCase, run) {
+  const steps = (testCase.executable_steps || [])
+    .map((step) => step.normalized_action || step.original_text)
+    .filter(Boolean);
+  const expected = (testCase.expected_results || []).filter(Boolean);
+  const route = testCase.route || '/';
+  const baseUrl = run.base_url || 'http://localhost:3000';
+  const user = testCase.data?.user || {};
+  const lines = [
+    "import { test, expect, type Locator, type Page } from '@playwright/test';",
+    '',
+    `test(${jsString(cleanCaseTitle(testCase.title) || testCase.id || 'ProGuide case')}, async ({ page }) => {`,
+    `  const baseUrl = process.env.PROGUIDE_BASE_URL ?? ${jsString(baseUrl)};`,
+    '  const user = {',
+    `    email: process.env.PROGUIDE_USER_EMAIL ?? ${jsString(user.email || 'test@example.com')},`,
+    `    username: process.env.PROGUIDE_USER_USERNAME ?? ${jsString(user.username || user.email || 'test@example.com')},`,
+    "    password: process.env.PROGUIDE_USER_PASSWORD ?? 'password123',",
+    '  };',
+    ''
+  ];
+
+  let hasNavigation = false;
+  const actionBlocks = [];
+  for (const step of steps) {
+    const rendered = renderTypeScriptAction(step, route);
+    hasNavigation ||= rendered.navigates;
+    actionBlocks.push(...rendered.lines);
+  }
+  if (!hasNavigation && route) {
+    lines.push(`  await goto(page, baseUrl, ${jsString(route)});`, '');
+  }
+  lines.push(...actionBlocks);
+  for (const item of expected) {
+    lines.push(...renderTypeScriptExpectation(item));
+  }
+  if (!steps.length && !expected.length) {
+    lines.push('  await expect(page.locator("body")).toBeVisible({ timeout: 10000 });');
+  }
+  lines.push('});', '', ...typeScriptHelperLines());
+  return lines.join('\n') + '\n';
+}
+
+function renderTypeScriptAction(step, caseRoute) {
+  const text = String(step || '').trim();
+  const normalized = text.toLowerCase();
+  const lines = [`  // ${tsComment(text)}`];
+
+  const fillMatch = text.match(/^\s*fill\s+\[([^\]]+)\]\s+(?:with\s+)?(.+?)\s*$/i);
+  if (fillMatch) {
+    lines.push(`  await page.locator(${jsString(selectorFromBracket(fillMatch[1]))}).first().fill(${jsString(stripQuotes(fillMatch[2].trim()))}, { timeout: 5000 });`, '');
+    return { lines, navigates: false };
+  }
+
+  const clickMatch = text.match(/^\s*click\s+\[([^\]]+)\]\s*$/i);
+  if (clickMatch) {
+    lines.push(`  await page.locator(${jsString(selectorFromBracket(clickMatch[1]))}).first().click({ timeout: 5000 });`);
+    lines.push("  await page.waitForLoadState('domcontentloaded');", '');
+    return { lines, navigates: false };
+  }
+
+  const textExpectation = renderExplicitTextExpectation(text, '  ');
+  if (textExpectation.length) {
+    lines.push(...textExpectation, '');
+    return { lines, navigates: false };
+  }
+
+  const route = routeFromStep(text);
+  if (route || /\b(go to|open|navigate|visitar|abrir|navegar)\b/i.test(text)) {
+    const targetRoute = route && route !== '/' ? route : caseRoute || '/';
+    lines.push(`  await goto(page, baseUrl, ${jsString(targetRoute)});`, '');
+    return { lines, navigates: true };
+  }
+
+  if (normalized.includes('refresh') || normalized.includes('recargar')) {
+    lines.push('  await page.reload();');
+    lines.push("  await page.waitForLoadState('domcontentloaded');", '');
+    return { lines, navigates: false };
+  }
+
+  if ((normalized.includes('empty') || normalized.includes('vacio')) && /email|correo/.test(normalized)) {
+    lines.push("  await fillEmail(page, '');", '');
+    return { lines, navigates: false };
+  }
+
+  if (/email|e-mail|correo|username|usuario|user/.test(normalized)) {
+    const value = /invalid|invalido|malformado|incorrecto/.test(normalized) ? "'invalid-email'" : 'user.email';
+    lines.push(`  await fillEmail(page, ${value});`, '');
+    return { lines, navigates: false };
+  }
+
+  if (/password|pass|clave|contrasena|contrase/.test(normalized)) {
+    const value = /invalid|invalido|corta|corto|incorrecto/.test(normalized) ? "'123'" : 'user.password';
+    lines.push(`  await fillPassword(page, ${value});`, '');
+    return { lines, navigates: false };
+  }
+
+  const clickTarget = clickTargetFromStep(text);
+  if (clickTarget) {
+    lines.push(`  await clickByText(page, ${jsString(clickTarget)});`);
+    lines.push("  await page.waitForLoadState('domcontentloaded');", '');
+    return { lines, navigates: false };
+  }
+
+  if (/submit|login|ingresar|enviar|continuar|iniciar sesion/.test(normalized)) {
+    lines.push('  await clickSubmit(page);');
+    lines.push("  await page.waitForLoadState('domcontentloaded');", '');
+    return { lines, navigates: false };
+  }
+
+  lines.push('  // TODO: ajustar este paso con selectores reales si hace falta.', '');
+  return { lines, navigates: false };
+}
+
+function renderTypeScriptExpectation(expected) {
+  const text = String(expected || '').trim();
+  const normalized = text.toLowerCase();
+  const lines = [`  // assert: ${tsComment(text)}`];
+  const explicit = renderExplicitTextExpectation(text, '  ');
+  if (explicit.length) return [...lines, ...explicit, ''];
+
+  const notShowsMatch = text.match(/(?:page\s+does\s+not\s+show|does\s+not\s+show|not\s+visible|pagina\s+no\s+muestra|no\s+se\s+muestra)\s+(.+)/i);
+  if (notShowsMatch) {
+    lines.push(`  await expect(page.getByText(new RegExp(escapeRegExp(${jsString(notShowsMatch[1].trim())}), 'i'))).toHaveCount(0, { timeout: 10000 });`, '');
+    return lines;
+  }
+
+  const containsMatch = normalized.match(/(?:url\s+contains|url\s+contiene|la\s+url\s+contiene)\s+(\S+)/);
+  if (containsMatch) {
+    lines.push(`  await expect(page).toHaveURL(new RegExp(${jsString(`.*${escapeRegex(containsMatch[1].trim())}.*`)}, 'i'), { timeout: 10000 });`, '');
+    return lines;
+  }
+
+  const showsMatch = text.match(/(?:page\s+shows|shows|pagina\s+muestra|la\s+pagina\s+muestra|se\s+muestra|muestra|visible)\s+(.+)/i);
+  if (showsMatch && showsMatch[1].trim().length > 1) {
+    lines.push(`  await expect(textLocator(page, ${jsString(showsMatch[1].trim())})).toBeVisible({ timeout: 10000 });`, '');
+    return lines;
+  }
+
+  const storageExistsMatch = text.match(/localStorage\s+key\s+["'](.+?)["']\s+exists/i);
+  if (storageExistsMatch) {
+    lines.push(`  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), ${jsString(storageExistsMatch[1].trim())})).not.toBeNull();`, '');
+    return lines;
+  }
+
+  const storageMissingMatch = text.match(/localStorage\s+key\s+["'](.+?)["']\s+does\s+not\s+exist/i);
+  if (storageMissingMatch) {
+    lines.push(`  await expect.poll(() => page.evaluate((key) => window.localStorage.getItem(key), ${jsString(storageMissingMatch[1].trim())})).toBeNull();`, '');
+    return lines;
+  }
+
+  if (normalized.includes('session email displayed correctly')) {
+    lines.push('  await expect(textLocator(page, user.email)).toBeVisible({ timeout: 10000 });', '');
+    return lines;
+  }
+
+  if (normalized.includes('login form is visible') || normalized.includes('login screen')) {
+    lines.push('  await expect(page.locator("input").first()).toBeVisible({ timeout: 10000 });', '');
+    return lines;
+  }
+
+  if (/redirect|home|dashboard|inicio/.test(normalized)) {
+    lines.push("  await expect(page).toHaveURL(/.*(home|dashboard|app|inicio).*/i, { timeout: 10000 });", '');
+    return lines;
+  }
+
+  if (/error|validation|invalid|invalido|incorrecto/.test(normalized)) {
+    lines.push("  await expect(page.getByText(/error|required|invalid|incorrect|obligatorio|invalido|incorrecto|ingresa|email|contrasena/i).first()).toBeVisible({ timeout: 10000 });", '');
+    return lines;
+  }
+
+  lines.push('  await expect(page.locator("body")).toBeVisible({ timeout: 10000 });', '');
+  return lines;
+}
+
+function renderExplicitTextExpectation(text, indent) {
+  const textMatch = text.match(/^\s*expect\s+text\s+["'](.+?)["']\s*$/i);
+  if (textMatch) {
+    return [`${indent}await expect(textLocator(page, ${jsString(textMatch[1].trim())})).toBeVisible({ timeout: 10000 });`];
+  }
+  const visibleMatch = text.match(/^\s*expect\s+\[([^\]]+)\]\s+(?:to\s+be\s+)?visible\s*$/i);
+  if (visibleMatch) {
+    return [`${indent}await expect(page.locator(${jsString(selectorFromBracket(visibleMatch[1]))}).first()).toBeVisible({ timeout: 10000 });`];
+  }
+  const containsMatch = text.match(/^\s*expect\s+\[([^\]]+)\]\s+to\s+contain\s+text\s+["'](.+?)["']\s*$/i);
+  if (containsMatch) {
+    return [`${indent}await expect(page.locator(${jsString(selectorFromBracket(containsMatch[1]))}).first()).toContainText(${jsString(containsMatch[2].trim())}, { timeout: 10000 });`];
+  }
+  return [];
+}
+
+function typeScriptHelperLines() {
+  return [
+    'async function goto(page: Page, baseUrl: string, route: string) {',
+    "  const base = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;",
+    "  const normalizedRoute = route.startsWith('/') ? route.slice(1) : route;",
+    '  await page.goto(new URL(normalizedRoute, base).toString());',
+    "  await page.waitForLoadState('domcontentloaded');",
+    '}',
+    '',
+    'async function fillEmail(page: Page, value: string) {',
+    '  await fillFirst([',
+    '    page.getByLabel(/email|e-mail|correo|usuario|user/i),',
+    '    page.getByPlaceholder(/email|e-mail|correo|usuario|user/i),',
+    '    page.locator("input[type=\'email\']"),',
+    '    page.locator("input[name*=\'email\' i]"),',
+    '    page.locator("input[name*=\'user\' i]"),',
+    '    page.locator("input[autocomplete=\'username\']"),',
+    '    page.locator("input").first(),',
+    '  ], value);',
+    '}',
+    '',
+    'async function fillPassword(page: Page, value: string) {',
+    '  await fillFirst([',
+    '    page.getByLabel(/password|pass|clave|contrasena/i),',
+    '    page.getByPlaceholder(/password|pass|clave|contrasena/i),',
+    '    page.locator("input[type=\'password\']"),',
+    '    page.locator("input[name*=\'password\' i]"),',
+    '    page.locator("input[autocomplete=\'current-password\']"),',
+    '  ], value);',
+    '}',
+    '',
+    'async function clickSubmit(page: Page) {',
+    '  await clickFirst([',
+    '    page.getByRole("button", { name: /submit|login|log in|sign in|ingresar|iniciar|entrar|acceder|continuar|enviar/i }),',
+    '    page.locator("button[type=\'submit\']"),',
+    '    page.locator("input[type=\'submit\']"),',
+    '    page.locator("button").first(),',
+    '  ]);',
+    '}',
+    '',
+    'async function clickByText(page: Page, label: string) {',
+    '  await clickFirst([',
+    "    page.getByRole('button', { name: new RegExp(escapeRegExp(label), 'i') }),",
+    "    page.getByText(new RegExp(escapeRegExp(label), 'i')),",
+    '  ]);',
+    '}',
+    '',
+    'async function fillFirst(locators: Locator[], value: string) {',
+    '  for (const locator of locators) {',
+    '    if (await hasVisible(locator)) {',
+    '      await locator.first().fill(value, { timeout: 5000 });',
+    '      return;',
+    '    }',
+    '  }',
+    "  throw new Error('Could not find a visible input to fill.');",
+    '}',
+    '',
+    'async function clickFirst(locators: Locator[]) {',
+    '  for (const locator of locators) {',
+    '    if (await hasVisible(locator)) {',
+    '      await locator.first().click({ timeout: 5000 });',
+    '      return;',
+    '    }',
+    '  }',
+    "  throw new Error('Could not find a visible target to click.');",
+    '}',
+    '',
+    'async function hasVisible(locator: Locator) {',
+    '  try {',
+    '    return await locator.first().isVisible({ timeout: 1000 });',
+    '  } catch {',
+    '    return false;',
+    '  }',
+    '}',
+    '',
+    'function textLocator(page: Page, value: string) {',
+    "  return page.getByText(new RegExp(escapeRegExp(value), 'i')).first();",
+    '}',
+    '',
+    'function escapeRegExp(value: string) {',
+    "  return value.split('').map((char) => '\\\\^$.*+?()[]{}|'.includes(char) ? `\\\\${char}` : char).join('');",
+    '}'
+  ];
+}
+
+function routeFromStep(step) {
+  const match = String(step || '').match(/(?:go to|open|navigate to|visitar|abrir|navegar(?:\s+a)?|ir\s+a)\s+(\S+)/i);
+  if (!match) return '';
+  const value = stripQuotes(match[1].trim().replace(/[.,;:]+$/, ''));
+  if (['login', 'home', 'homepage', 'page', 'pagina'].includes(value.toLowerCase())) return '';
+  return value;
+}
+
+function clickTargetFromStep(step) {
+  const match = String(step || '').trim().match(/^click\s+(?:button\s+)?["']?([^"']+?)["']?$/i);
+  if (!match) return '';
+  const target = match[1].trim();
+  if (!target || ['submit', 'form', 'button'].includes(target.toLowerCase())) return '';
+  return target;
+}
+
+function selectorFromBracket(value) {
+  const selector = String(value || '').trim();
+  if (!selector) return '';
+  if (/^(#|\.|\[|:|\*)/.test(selector) || /\s|>|\+|~/.test(selector)) return selector;
+  if (/^[a-z][a-z0-9_-]*\[[^\]]+\]$/i.test(selector)) return selector;
+  if (['a', 'button', 'form', 'input', 'select', 'textarea', 'div', 'span', 'label', 'main', 'section'].includes(selector.toLowerCase())) {
+    return selector;
+  }
+
+  const attrMatch = selector.match(/^([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(.+)$/);
+  if (attrMatch) {
+    return `[${attrMatch[1]}="${cssAttrValue(stripQuotes(attrMatch[2].trim()))}"]`;
+  }
+
+  return `[data-testid="${cssAttrValue(selector)}"]`;
+}
+
+function stripQuotes(value) {
+  const text = String(value || '');
+  if (text.length >= 2 && text[0] === text.at(-1) && ['"', "'"].includes(text[0])) {
+    return text.slice(1, -1);
+  }
+  return text;
+}
+
+function cssAttrValue(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function tsComment(value) {
+  return String(value || '').replace(/\s+/g, ' ').replace(/\*\//g, '* /').trim();
+}
+
+function jsString(value) {
+  return JSON.stringify(String(value ?? ''));
+}
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function renderPriorityBadge(value) {
@@ -440,6 +922,38 @@ function formatSeconds(value) {
   const seconds = Number(value || 0);
   if (!Number.isFinite(seconds) || seconds <= 0) return '-';
   return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+}
+
+function codeTabsScript() {
+  return `
+      (() => {
+        const tabs = document.querySelector('[data-code-tabs]');
+        if (!tabs) return;
+        const buttons = Array.from(tabs.querySelectorAll('[data-tab-target]'));
+        const panels = Array.from(document.querySelectorAll('.code-panel'));
+        const activate = (targetId, updateHash = false) => {
+          const target = panels.find((panel) => panel.id === targetId) ? targetId : 'codigo-python';
+          for (const button of buttons) {
+            const selected = button.dataset.tabTarget === target;
+            button.classList.toggle('is-active', selected);
+            button.setAttribute('aria-selected', selected ? 'true' : 'false');
+          }
+          for (const panel of panels) {
+            const selected = panel.id === target;
+            panel.hidden = !selected;
+            panel.classList.toggle('is-active', selected);
+          }
+          if (updateHash) history.replaceState(null, '', '#' + target);
+        };
+        for (const button of buttons) {
+          button.addEventListener('click', () => activate(button.dataset.tabTarget, true));
+        }
+        activate(location.hash === '#codigo-typescript' ? 'codigo-typescript' : 'codigo-python', false);
+        window.addEventListener('hashchange', () => {
+          activate(location.hash === '#codigo-typescript' ? 'codigo-typescript' : 'codigo-python', false);
+        });
+      })();
+    `;
 }
 
 function clientRunScript() {
@@ -683,15 +1197,17 @@ function styles() {
     .lede { margin: 16px 0 0; font-size: 16.5px; color: var(--muted); max-width: 60ch; }
 
     /* Layout grids */
-    .grid { display: grid; gap: 20px; margin-top: 28px; }
+    .grid { display: grid; gap: 20px; margin-top: 28px; min-width: 0; }
     .two { grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); align-items: start; }
     .detail { grid-template-columns: minmax(0, 1fr); align-items: start; }
     .case-detail-grid { grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr); align-items: start; }
+    .case-detail-grid > *, .detail-side, .code-section, .code-panels, .code-panel { min-width: 0; }
     .detail-side { display: grid; gap: 20px; }
 
     /* Panels */
     .panel {
       position: relative;
+      min-width: 0;
       background: linear-gradient(180deg, var(--surface-2), var(--surface));
       border: 1px solid var(--border);
       border-radius: var(--radius);
@@ -801,7 +1317,8 @@ function styles() {
     #casesTable .case-title { min-width: 320px; }
     #casesTable .message-cell { min-width: 280px; }
     #casesTable .evidence-cell { min-width: 150px; }
-    #casesTable .code-cell { min-width: 92px; }
+    #casesTable .code-cell { min-width: 124px; white-space: nowrap; }
+    #casesTable .code-cell .chip-link + .chip-link { margin-left: 6px; }
     .truncate { max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
     .row-link svg { opacity: 0; transform: translateX(-3px); transition: all .16s ease; }
@@ -856,25 +1373,96 @@ function styles() {
     }
     .detail-list { margin: 0; padding-left: 18px; color: var(--text); }
     .detail-list li + li { margin-top: 8px; }
+    .code-section-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .code-tabs {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 4px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .code-tab {
+      min-height: 30px;
+      padding: 5px 11px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+    .code-tab:hover {
+      transform: none;
+      filter: none;
+      box-shadow: none;
+      color: var(--accent);
+      background: var(--surface-2);
+    }
+    .code-tab.is-active {
+      color: var(--accent);
+      border-color: var(--border-strong);
+      background: var(--accent-soft);
+    }
+    .code-panel[hidden] { display: none; }
     .code-block {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
       overflow: hidden;
       border: 1px solid var(--border-strong);
       border-radius: var(--radius-sm);
-      background: rgba(0, 0, 0, 0.32);
+      background:
+        linear-gradient(180deg, rgba(6, 10, 17, 0.98), rgba(8, 12, 20, 0.96)),
+        rgba(0, 0, 0, 0.32);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.045);
     }
     .code-block-head {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      padding: 10px 13px;
+      padding: 10px 13px 10px 14px;
       color: var(--muted);
       border-bottom: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.035);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.025)),
+        rgba(0, 0, 0, 0.18);
+    }
+    .code-block-head::before {
+      content: "";
+      width: 34px;
+      height: 10px;
+      border-radius: 999px;
+      background:
+        radial-gradient(circle at 5px 5px, #ff6a76 0 4px, transparent 4.5px),
+        radial-gradient(circle at 17px 5px, #ffc35f 0 4px, transparent 4.5px),
+        radial-gradient(circle at 29px 5px, #53df9d 0 4px, transparent 4.5px);
+      flex: 0 0 auto;
+    }
+    .code-block-head .mono {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .code-lang {
+      flex: 0 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 700;
     }
     .code-block pre {
       margin: 0;
       max-height: 460px;
       border-radius: 0;
       background: transparent;
-      padding: 16px;
+      padding: 0;
       font-size: 12.5px;
       line-height: 1.55;
     }
@@ -884,6 +1472,46 @@ function styles() {
       background: transparent;
       color: var(--text);
     }
+    .code-editor {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      counter-reset: code-line;
+      white-space: pre;
+      overflow-x: auto;
+      overflow-y: auto;
+      font-family: var(--font-mono);
+      tab-size: 2;
+    }
+    .code-line {
+      counter-increment: code-line;
+      display: table;
+      min-width: 100%;
+      min-height: 1.55em;
+      padding: 0 16px 0 0;
+    }
+    .code-line::before {
+      content: counter(code-line);
+      display: inline-block;
+      width: 46px;
+      margin-right: 14px;
+      padding: 0 10px 0 0;
+      color: rgba(135, 147, 166, 0.54);
+      text-align: right;
+      border-right: 1px solid rgba(255, 255, 255, 0.07);
+      background: rgba(255, 255, 255, 0.018);
+      user-select: none;
+    }
+    .code-line:first-child { padding-top: 14px; }
+    .code-line:first-child::before { padding-top: 14px; margin-top: -14px; }
+    .code-line:last-child { padding-bottom: 14px; }
+    .code-line:last-child::before { padding-bottom: 14px; margin-bottom: -14px; }
+    .tok-keyword { color: #ff8fb3; font-weight: 700; }
+    .tok-string { color: #f2ce6f; }
+    .tok-number { color: #a7c7ff; }
+    .tok-comment { color: #68778d; font-style: italic; }
+    .tok-function { color: #6fe4ff; }
+    .tok-punctuation { color: #9aa7ba; }
     .code-empty {
       padding: 14px 16px;
       border: 1px dashed var(--border-strong);
@@ -959,6 +1587,11 @@ function safeName(value) {
 
 function cleanCaseTitle(value) {
   return String(value ?? '').replace(/^\s*[•◦⁃∙·—–�-]\s+/, '').trim();
+}
+
+function rootIdentity(value) {
+  const resolved = path.resolve(String(value || ''));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
 function scriptJson(value) {
