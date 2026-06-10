@@ -574,7 +574,9 @@ async function attachViewer(root, runId, options = {}) {
 }
 
 async function startViewer(root, runId = '', options = {}) {
-  const viewer = await ensureViewer(root);
+  const viewer = await ensureViewer(root, {
+    port: Number.isFinite(Number(options.port)) ? Number(options.port) : undefined
+  });
   const links = runId ? viewerLinks(viewer.baseUrl, runId) : { viewer_url: `${viewer.baseUrl}/runs` };
   const browser = await openViewerInBrowser(links.run_url || links.viewer_url, options);
   return {

@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -11,6 +12,9 @@ import {
 } from './proguide-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const PACKAGE_VERSION = require('./package.json').version;
+const VIEWER_CAPABILITIES = ['usage'];
 const ROOT = path.resolve(process.env.PROGUIDE_UI_ROOT || path.join(__dirname, '..'));
 const HOST = process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const PORT = Number(process.env.PROGUIDE_UI_PORT || 8787);
@@ -91,6 +95,8 @@ app.get('/api/runs/:runId/usage', async (request) => {
 
 app.get('/api/health', async () => ({
   service: 'proguide-test-viewer',
+  version: PACKAGE_VERSION,
+  capabilities: VIEWER_CAPABILITIES,
   root: ROOT,
   host: HOST,
   port: PORT,

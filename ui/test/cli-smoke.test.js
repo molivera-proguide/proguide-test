@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadUsageSummary, parsePytestResults, prepareCasesRun, recordLlmUsage } from '../proguide-service.js';
-import { viewerPortCandidates } from '../viewer.js';
+import { viewerHasCapabilities, viewerHealthMatchesRoot, viewerPortCandidates } from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -340,6 +340,24 @@ test('viewer discovery includes the default port range for reuse', () => {
     8787,
     8788
   ]);
+});
+
+test('viewer health requires usage capability before reuse', () => {
+  const root = makeTempRoot();
+  try {
+    assert.equal(viewerHealthMatchesRoot({
+      service: 'proguide-test-viewer',
+      root,
+      capabilities: ['usage']
+    }, root), true);
+    assert.equal(viewerHealthMatchesRoot({
+      service: 'proguide-test-viewer',
+      root
+    }, root), false);
+    assert.equal(viewerHasCapabilities({ capabilities: ['runs'] }), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('config get/set reads and writes proguide_tests/config.yaml', () => {

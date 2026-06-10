@@ -5,30 +5,39 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const viewerCache = new Map();
+const REQUIRED_VIEWER_CAPABILITIES = ['usage'];
 
 export async function ensureViewer(root, options = {}) {
   const rootPath = path.resolve(root);
   const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
   const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
   const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
+  const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
   const rootKey = `${rootIdentity(rootPath)}|${host}|${firstPort}`;
   const cached = viewerCache.get(rootKey);
 
-  if (cached && await viewerMatchesRoot(cached.baseUrl, rootPath)) {
+  if (cached && await viewerMatchesRoot(cached.baseUrl, rootPath, { requiredCapabilities })) {
     return { ...cached, started: false };
   }
 
   for (const port of viewerPortCandidates({ firstPort, attempts })) {
     const baseUrl = viewerBaseUrl(host, port);
-    if (await viewerMatchesRoot(baseUrl, rootPath)) {
+    let health = await fetchViewerHealth(baseUrl);
+    if (viewerHealthMatchesRoot(health, rootPath, { requiredCapabilities })) {
       const info = { baseUrl, port, started: false };
       viewerCache.set(rootKey, info);
       return info;
     }
 
-    const health = await fetchViewerHealth(baseUrl);
     if (health?.service === 'proguide-test-viewer') {
-      continue;
+      if (rootIdentity(health.root) === rootIdentity(rootPath) && !viewerHasCapabilities(health, requiredCapabilities)) {
+        const stopped = await shutdownViewer(baseUrl, rootPath, health);
+        if (!stopped.stopped) continue;
+        health = await fetchViewerHealth(baseUrl);
+        if (health?.service === 'proguide-test-viewer') continue;
+      } else {
+        continue;
+      }
     }
 
     try {
@@ -49,7 +58,7 @@ export async function ensureViewer(root, options = {}) {
       continue;
     }
 
-    if (await waitForViewer(baseUrl, rootPath)) {
+    if (await waitForViewer(baseUrl, rootPath, { requiredCapabilities })) {
       const info = { baseUrl, port, started: true };
       viewerCache.set(rootKey, info);
       return info;
@@ -96,9 +105,21 @@ export async function stopViewer(root, options = {}) {
   };
 }
 
-export async function viewerMatchesRoot(baseUrl, root) {
+export async function viewerMatchesRoot(baseUrl, root, options = {}) {
   const health = await fetchViewerHealth(baseUrl);
-  return health?.service === 'proguide-test-viewer' && rootIdentity(health.root) === rootIdentity(root);
+  return viewerHealthMatchesRoot(health, root, options);
+}
+
+export function viewerHealthMatchesRoot(health, root, options = {}) {
+  const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
+  return health?.service === 'proguide-test-viewer' &&
+    rootIdentity(health.root) === rootIdentity(root) &&
+    viewerHasCapabilities(health, requiredCapabilities);
+}
+
+export function viewerHasCapabilities(health, requiredCapabilities = REQUIRED_VIEWER_CAPABILITIES) {
+  const capabilities = Array.isArray(health?.capabilities) ? health.capabilities : [];
+  return requiredCapabilities.every((capability) => capabilities.includes(capability));
 }
 
 export async function fetchViewerHealth(baseUrl) {
@@ -180,10 +201,10 @@ async function shutdownViewer(baseUrl, root, health) {
   }
 }
 
-async function waitForViewer(baseUrl, root) {
+async function waitForViewer(baseUrl, root, options = {}) {
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
-    if (await viewerMatchesRoot(baseUrl, root)) return true;
+    if (await viewerMatchesRoot(baseUrl, root, options)) return true;
     await sleep(200);
   }
   return false;
