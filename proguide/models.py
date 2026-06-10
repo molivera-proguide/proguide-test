@@ -38,7 +38,7 @@ class RunnerConfig(BaseModel):
 class LLMConfig(BaseModel):
     enabled: bool = True
     provider: Literal["openai", "anthropic", "disabled"] = "anthropic"
-    model: str = "claude-sonnet-4-6"
+    model: str = "claude-haiku-4-5-20251001"
     temperature: float = 0.2
     max_cases: int = 12
     max_context_chars: int = 50000

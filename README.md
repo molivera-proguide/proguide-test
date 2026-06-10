@@ -58,7 +58,7 @@ PROGUIDE_LLM_API_KEY=sk-...
 
 Workspace `.env` files are still read for backwards compatibility, but they are not the recommended place for ProGuide LLM secrets. Avoid putting `API_KEY` in product repos because it can collide with app configuration and be committed accidentally.
 
-The LLM provider/model is maintained by the ProGuide tool. QA users only provide the API key. The current default is Anthropic Claude Sonnet.
+The LLM provider/model is maintained by the ProGuide tool. QA users only provide the API key. The current default is Anthropic Claude Haiku 4.5.
 
 ```powershell
 cd C:\QA\frontend-app

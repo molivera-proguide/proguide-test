@@ -297,7 +297,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.11' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.1.12' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -457,7 +457,7 @@ function getPrompt(name, args) {
             'Use the ProGuide MCP tools to run QA Markdown cases.',
             `Call ${toolName} with cases or markdown and base_url.`,
             'Return run_id, run_url, viewer_url, status, and a concise result summary.',
-            'Do not ask the user to set provider or model; ProGuide defaults to Anthropic Sonnet.',
+            'Do not ask the user to set provider or model; ProGuide defaults to Anthropic Haiku.',
             `base_url: ${args.base_url || '<base_url>'}`,
             'markdown:',
             args.markdown || '<markdown_cases>'

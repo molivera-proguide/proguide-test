@@ -29,7 +29,7 @@ const DEFAULT_CONFIG = {
   },
   llm: {
     provider: 'anthropic',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-haiku-4-5-20251001',
     temperature: 0.2,
     max_cases: 12,
     max_context_chars: 50000,
@@ -415,7 +415,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.11' }, parsed.options, '0.1.11');
+    emit({ version: '0.1.12' }, parsed.options, '0.1.12');
   }
 }
 

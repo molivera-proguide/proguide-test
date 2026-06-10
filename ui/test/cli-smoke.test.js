@@ -379,7 +379,7 @@ test('config get/set reads and writes proguide_tests/config.yaml', () => {
   }
 });
 
-test('new workspaces default to Anthropic Sonnet without QA configuration', () => {
+test('new workspaces default to Anthropic Haiku without QA configuration', () => {
   const root = makeTempRoot();
   try {
     const provider = runCli(['config', 'get', 'llm.provider', '--json', '--root', root]);
@@ -388,7 +388,7 @@ test('new workspaces default to Anthropic Sonnet without QA configuration', () =
 
     const model = runCli(['config', 'get', 'llm.model', '--json', '--root', root]);
     assert.equal(model.status, 0, model.stderr);
-    assert.deepEqual(parseJson(model.stdout), { key: 'llm.model', value: 'claude-sonnet-4-6' });
+    assert.deepEqual(parseJson(model.stdout), { key: 'llm.model', value: 'claude-haiku-4-5-20251001' });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -404,7 +404,7 @@ test('LLM usage is recorded with Anthropic cost estimate and exposed by CLI', as
       runId,
       runDir,
       provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-haiku-4-5-20251001',
       purpose: 'generar codigo Python Playwright',
       usage: {
         input_tokens: 1000,
@@ -423,21 +423,21 @@ test('LLM usage is recorded with Anthropic cost estimate and exposed by CLI', as
     assert.equal(summary.output_tokens, 2000);
     assert.equal(summary.cache_read_input_tokens, 500);
     assert.equal(summary.cache_creation_input_tokens, 150);
-    assert.equal(summary.estimated_cost_usd, 0.033825);
+    assert.equal(summary.estimated_cost_usd, 0.011275);
 
     const workspaceUsage = runCli(['usage', '--json', '--root', root]);
     assert.equal(workspaceUsage.status, 0, workspaceUsage.stderr);
     const workspacePayload = parseJson(workspaceUsage.stdout);
     assert.equal(workspacePayload.entries_count, 1);
     assert.equal(workspacePayload.by_run[0].key, runId);
-    assert.equal(workspacePayload.estimated_cost_usd, 0.033825);
+    assert.equal(workspacePayload.estimated_cost_usd, 0.011275);
 
     const runUsage = runCli(['usage', '--run', runId, '--json', '--root', root]);
     assert.equal(runUsage.status, 0, runUsage.stderr);
     const runPayload = parseJson(runUsage.stdout);
     assert.equal(runPayload.scope, 'run');
     assert.equal(runPayload.run_id, runId);
-    assert.equal(runPayload.entries[0].model, 'claude-sonnet-4-6');
+    assert.equal(runPayload.entries[0].model, 'claude-haiku-4-5-20251001');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
