@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -414,6 +414,8 @@ export async function loadUsageSummary(root, { runId = null } = {}) {
 export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {}, useAgent = false }) {
   await ensureLayout(root);
   await loadDotEnv(root);
+  const config = await loadUiConfig(root);
+  const identity = await resolveRunIdentity(root, metadata, config);
   const runDir = await newRunDir(root);
   const run = {
     id: path.basename(runDir),
@@ -424,7 +426,17 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
     mode: 'url',
     base_url: String(baseUrl || '').replace(/\/+$/, ''),
     source_filename: path.basename(sourceMd),
-    app_name: metadata.app_name || metadata.title || null,
+    app_name: metadata.app_name || identity.project_name || metadata.title || null,
+    project_name: identity.project_name || null,
+    project_key: identity.project_key || null,
+    run_user_email: identity.run_user_email || null,
+    run_user_name: identity.run_user_name || null,
+    company_domain: identity.company_domain || null,
+    workspace_root: identity.workspace_root || null,
+    run_source: identity.run_source || null,
+    git_branch: identity.git_branch || null,
+    git_commit: identity.git_commit || null,
+    identity_source: identity.identity_source || {},
     ticket: metadata.ticket || null,
     module: metadata.module || null,
     title: metadata.title || null,
@@ -497,6 +509,8 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
 export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   await ensureLayout(root);
   await loadDotEnv(root);
+  const config = await loadUiConfig(root);
+  const identity = await resolveRunIdentity(root, metadata, config);
   if (!Array.isArray(cases) || !cases.length) {
     throw new Error('cases debe contener al menos un caso.');
   }
@@ -511,7 +525,17 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
     mode: 'url',
     base_url: String(baseUrl || '').replace(/\/+$/, ''),
     source_filename: SOURCE_CASES_JSON,
-    app_name: metadata.app_name || metadata.title || null,
+    app_name: metadata.app_name || identity.project_name || metadata.title || null,
+    project_name: identity.project_name || null,
+    project_key: identity.project_key || null,
+    run_user_email: identity.run_user_email || null,
+    run_user_name: identity.run_user_name || null,
+    company_domain: identity.company_domain || null,
+    workspace_root: identity.workspace_root || null,
+    run_source: identity.run_source || null,
+    git_branch: identity.git_branch || null,
+    git_commit: identity.git_commit || null,
+    identity_source: identity.identity_source || {},
     ticket: metadata.ticket || null,
     module: metadata.module || null,
     title: metadata.title || null,
@@ -1894,6 +1918,14 @@ async function loadUiConfig(root) {
       screenshots: 'on_failure',
       traces: 'retain_on_failure'
     },
+    identity: {
+      run_user_email: '',
+      run_user_name: '',
+      project_name: '',
+      project_key: '',
+      require_user_email: false,
+      require_project_name: false
+    },
     llm: {
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
@@ -1918,6 +1950,173 @@ async function loadUiConfig(root) {
     config[section][valueMatch[1]] = parseYamlScalar(valueMatch[2]);
   }
   return config;
+}
+
+async function resolveRunIdentity(root, metadata = {}, config = {}) {
+  const rootPath = path.resolve(root);
+  const identityConfig = config.identity || {};
+  const git = gitIdentity(rootPath);
+  const packageName = await packageProjectName(rootPath);
+  const pyprojectName = await pyprojectProjectName(rootPath);
+  const remoteProjectName = projectNameFromRemote(git.remote);
+  const folderName = path.basename(rootPath);
+
+  const runUserEmail = firstValue(
+    metadata.run_user_email,
+    metadata.user_email,
+    identityConfig.run_user_email,
+    process.env.PROGUIDE_RUN_USER_EMAIL,
+    git.email
+  );
+  const runUserName = firstValue(
+    metadata.run_user_name,
+    metadata.user_name,
+    identityConfig.run_user_name,
+    process.env.PROGUIDE_RUN_USER_NAME,
+    git.name
+  );
+  const projectName = firstValue(
+    metadata.project_name,
+    metadata.project,
+    metadata.app_name,
+    identityConfig.project_name,
+    process.env.PROGUIDE_PROJECT_NAME,
+    packageName,
+    pyprojectName,
+    remoteProjectName,
+    folderName
+  );
+  const projectKey = firstValue(
+    metadata.project_key,
+    identityConfig.project_key,
+    process.env.PROGUIDE_PROJECT_KEY,
+    slug(projectName)
+  );
+
+  if (identityConfig.require_user_email && !runUserEmail) {
+    throw new Error('Falta metadata de usuario: configura identity.run_user_email, PROGUIDE_RUN_USER_EMAIL o pasa run_user_email por MCP/CLI.');
+  }
+  if (identityConfig.require_project_name && !projectName) {
+    throw new Error('Falta metadata de proyecto: configura identity.project_name, PROGUIDE_PROJECT_NAME o pasa project_name por MCP/CLI.');
+  }
+
+  return {
+    run_user_email: runUserEmail || '',
+    run_user_name: runUserName || '',
+    company_domain: emailDomain(runUserEmail),
+    project_name: projectName || '',
+    project_key: projectKey || '',
+    workspace_root: rootPath,
+    run_source: firstValue(metadata.run_source, metadata.source, process.env.PROGUIDE_RUN_SOURCE) || '',
+    git_branch: git.branch || '',
+    git_commit: git.commit || '',
+    identity_source: {
+      run_user_email: sourceFor([
+        ['metadata', metadata.run_user_email || metadata.user_email],
+        ['config', identityConfig.run_user_email],
+        ['env', process.env.PROGUIDE_RUN_USER_EMAIL],
+        ['git', git.email]
+      ]),
+      run_user_name: sourceFor([
+        ['metadata', metadata.run_user_name || metadata.user_name],
+        ['config', identityConfig.run_user_name],
+        ['env', process.env.PROGUIDE_RUN_USER_NAME],
+        ['git', git.name]
+      ]),
+      project_name: sourceFor([
+        ['metadata', metadata.project_name || metadata.project || metadata.app_name],
+        ['config', identityConfig.project_name],
+        ['env', process.env.PROGUIDE_PROJECT_NAME],
+        ['package_json', packageName],
+        ['pyproject', pyprojectName],
+        ['git_remote', remoteProjectName],
+        ['folder', folderName]
+      ]),
+      project_key: sourceFor([
+        ['metadata', metadata.project_key],
+        ['config', identityConfig.project_key],
+        ['env', process.env.PROGUIDE_PROJECT_KEY],
+        ['derived', slug(projectName)]
+      ])
+    }
+  };
+}
+
+function gitIdentity(root) {
+  return {
+    email: gitValue(root, ['config', '--get', 'user.email']),
+    name: gitValue(root, ['config', '--get', 'user.name']),
+    remote: gitValue(root, ['config', '--get', 'remote.origin.url']),
+    branch: gitValue(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
+    commit: gitValue(root, ['rev-parse', '--short', 'HEAD'])
+  };
+}
+
+function gitValue(root, args) {
+  const result = spawnSync('git', ['-C', root, ...args], {
+    encoding: 'utf8',
+    timeout: 2500,
+    windowsHide: true
+  });
+  if (result.status !== 0) return '';
+  return String(result.stdout || '').trim();
+}
+
+async function packageProjectName(root) {
+  const packagePath = path.join(root, 'package.json');
+  try {
+    const data = JSON.parse(await fs.readFile(packagePath, 'utf8'));
+    return cleanProjectName(data.name || '');
+  } catch {
+    return '';
+  }
+}
+
+async function pyprojectProjectName(root) {
+  try {
+    const text = await fs.readFile(path.join(root, 'pyproject.toml'), 'utf8');
+    const match = text.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
+    return cleanProjectName(match?.[1] || '');
+  } catch {
+    return '';
+  }
+}
+
+function projectNameFromRemote(remote) {
+  const text = String(remote || '').trim();
+  if (!text) return '';
+  const withoutQuery = text.split(/[?#]/)[0];
+  const last = withoutQuery.split(/[/:\\]/).filter(Boolean).at(-1) || '';
+  return cleanProjectName(last.replace(/\.git$/i, ''));
+}
+
+function cleanProjectName(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  return text.replace(/^@[^/]+\//, '');
+}
+
+function firstValue(...values) {
+  return values.map((value) => String(value ?? '').trim()).find(Boolean) || '';
+}
+
+function sourceFor(entries) {
+  const found = entries.find(([, value]) => String(value ?? '').trim());
+  return found?.[0] || '';
+}
+
+function emailDomain(email) {
+  const match = String(email || '').trim().match(/@([^@\s]+)$/);
+  return match ? match[1].toLowerCase() : '';
+}
+
+function slug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }
 
 function parseYamlScalar(value) {
@@ -2436,6 +2635,16 @@ async function legacyRunRecord(runDir, runId, error) {
     base_url: '',
     source_filename: '',
     app_name: null,
+    project_name: null,
+    project_key: null,
+    run_user_email: null,
+    run_user_name: null,
+    company_domain: null,
+    workspace_root: null,
+    run_source: null,
+    git_branch: null,
+    git_commit: null,
+    identity_source: {},
     ticket: null,
     module: null,
     title: null,

@@ -27,6 +27,14 @@ const DEFAULT_CONFIG = {
     screenshots: 'on_failure',
     traces: 'retain_on_failure'
   },
+  identity: {
+    run_user_email: '',
+    run_user_name: '',
+    project_name: '',
+    project_key: '',
+    require_user_email: false,
+    require_project_name: false
+  },
   llm: {
     provider: 'anthropic',
     model: 'claude-haiku-4-5-20251001',
@@ -164,6 +172,7 @@ async function commandCreate(parsed) {
   const payload = {
     run_id: prepared.run.id,
     status: prepared.run.status,
+    run: prepared.run,
     ...viewer,
     summary: summaryCounts(prepared.run, null, prepared.cases),
     cases: prepared.cases
@@ -465,7 +474,11 @@ Opciones comunes:
   --no-viewer         no levantar visor automaticamente
   --email <value>     credencial opcional
   --username <value>  credencial opcional
-  --password <value>  credencial opcional`);
+  --password <value>  credencial opcional
+  --run-user-email <email>  usuario que crea/ejecuta el run
+  --run-user-name <name>    nombre del usuario del run
+  --project-name <name>     proyecto bajo prueba
+  --project-key <key>       clave corta del proyecto`);
 }
 
 async function resolveMarkdownSource(root, parsed) {
@@ -532,6 +545,7 @@ function runPayload(run, summary, cases, viewer) {
   return {
     run_id: run.id,
     status: run.status,
+    run,
     ...viewer,
     summary: summaryCounts(run, summary, cases)
   };
@@ -739,6 +753,7 @@ async function readConfig(root) {
   return {
     ...parsed,
     runner: { ...DEFAULT_CONFIG.runner, ...(parsed.runner || {}) },
+    identity: { ...DEFAULT_CONFIG.identity, ...(parsed.identity || {}) },
     llm: { ...DEFAULT_CONFIG.llm, ...(parsed.llm || {}) }
   };
 }
@@ -917,7 +932,12 @@ function metadataFromOptions(options) {
     ticket: option(options, 'ticket') || null,
     module: option(options, 'module') || null,
     qa_owner: option(options, 'qa-owner', 'qa_owner') || null,
-    dev_owner: option(options, 'dev-owner', 'dev_owner') || null
+    dev_owner: option(options, 'dev-owner', 'dev_owner') || null,
+    run_user_email: option(options, 'run-user-email', 'run_user_email', 'user-email', 'user_email') || null,
+    run_user_name: option(options, 'run-user-name', 'run_user_name', 'user-name', 'user_name') || null,
+    project_name: option(options, 'project-name', 'project_name', 'project') || null,
+    project_key: option(options, 'project-key', 'project_key') || null,
+    run_source: 'cli'
   };
 }
 

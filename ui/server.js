@@ -260,11 +260,13 @@ function renderHistory(runs) {
   return `
     <div class="table-wrap">
     <table>
-      <thead><tr><th>Fecha</th><th>Estado</th><th>URL</th><th>Casos</th><th></th></tr></thead>
+      <thead><tr><th>Fecha</th><th>Proyecto</th><th>Usuario</th><th>Estado</th><th>URL</th><th>Casos</th><th></th></tr></thead>
       <tbody>
         ${runs.map((run) => `
           <tr>
             <td class="mono nowrap">${escapeHtml(run.created_at || '')}</td>
+            <td class="truncate" title="${attr(run.project_name || run.app_name || '')}">${escapeHtml(run.project_name || run.app_name || '-')}</td>
+            <td class="truncate" title="${attr(run.run_user_email || run.run_user_name || '')}">${escapeHtml(run.run_user_email || run.run_user_name || '-')}</td>
             <td>${renderBadge(run.status)}</td>
             <td class="truncate" title="${attr(run.base_url || '')}">${escapeHtml(run.base_url || '-')}</td>
             <td class="mono">${run.total_cases || 0}</td>
@@ -274,6 +276,23 @@ function renderHistory(runs) {
       </tbody>
     </table>
     </div>`;
+}
+
+function renderRunIdentity(run) {
+  const items = [
+    ['Proyecto', run.project_name || run.app_name || '-'],
+    ['Usuario', run.run_user_email || run.run_user_name || '-'],
+    ['Origen', run.run_source || '-'],
+    ['Git', [run.git_branch, run.git_commit].filter(Boolean).join(' @ ') || '-']
+  ];
+  return `
+    <section class="identity-strip reveal" style="--delay:.035s">
+      ${items.map(([label, value]) => `
+        <div>
+          <dt>${escapeHtml(label)}</dt>
+          <dd title="${attr(value)}">${escapeHtml(value)}</dd>
+        </div>`).join('')}
+    </section>`;
 }
 
 function renderUsageStrip(usage, { href = '/usage' } = {}) {
@@ -442,6 +461,7 @@ function renderRunDetail(run, cases, summary, usage) {
       </div>
     </section>
     ${renderUsageStrip(usage, { href: `/runs/${encodeURIComponent(run.id)}/usage` })}
+    ${renderRunIdentity(run)}
     ${renderRunProgress(run, cases, summary)}
     <main class="grid detail">
       <section class="panel cases-panel reveal" style="--delay:.05s">
@@ -1797,6 +1817,35 @@ function styles() {
     .run-meta .mono { font-size: 13px; color: var(--muted); }
     .meta-sep { color: var(--faint); }
 
+    .identity-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.026);
+    }
+    .identity-strip div { min-width: 0; display: grid; gap: 2px; }
+    .identity-strip dt {
+      color: var(--faint);
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .identity-strip dd {
+      margin: 0;
+      min-width: 0;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     /* Live run progress */
     .run-progress {
       display: grid;
@@ -2216,7 +2265,7 @@ function styles() {
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
 
     @media (max-width: 900px) {
-      .two, .detail, .case-detail-grid, .form-grid, .usage-grid, .usage-stats, .usage-strip, .run-progress { grid-template-columns: 1fr; }
+      .two, .detail, .case-detail-grid, .form-grid, .usage-grid, .usage-stats, .usage-strip, .run-progress, .identity-strip { grid-template-columns: 1fr; }
       .field.span-2 { grid-column: auto; }
       .tool-band { align-items: flex-start; }
       .actions { justify-content: flex-start; }

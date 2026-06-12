@@ -49,6 +49,13 @@ const casesInputSchema = {
   }
 };
 
+const identityInputProperties = {
+  run_user_email: { type: 'string', description: 'Email de la persona que crea o ejecuta el run. No es la credencial de login de la app.' },
+  run_user_name: { type: 'string', description: 'Nombre de la persona que crea o ejecuta el run.' },
+  project_name: { type: 'string', description: 'Nombre del proyecto bajo prueba.' },
+  project_key: { type: 'string', description: 'Clave corta o slug del proyecto bajo prueba.' }
+};
+
 const tools = [
   {
     name: 'run_cases',
@@ -66,6 +73,7 @@ const tools = [
         module: { type: 'string' },
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
+        ...identityInputProperties,
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
@@ -90,6 +98,7 @@ const tools = [
         module: { type: 'string' },
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
+        ...identityInputProperties,
         open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       }
     }
@@ -110,6 +119,7 @@ const tools = [
         module: { type: 'string' },
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
+        ...identityInputProperties,
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
@@ -134,6 +144,7 @@ const tools = [
         module: { type: 'string' },
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
+        ...identityInputProperties,
         open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
       }
     }
@@ -151,6 +162,7 @@ const tools = [
         base_url: { type: 'string' },
         from_plan: { type: 'boolean', description: 'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.' },
         root: { type: 'string' },
+        ...identityInputProperties,
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
@@ -543,7 +555,12 @@ function metadataFromArgs(args) {
     ticket: args.ticket || null,
     module: args.module || null,
     qa_owner: args.qa_owner || null,
-    dev_owner: args.dev_owner || null
+    dev_owner: args.dev_owner || null,
+    run_user_email: args.run_user_email || null,
+    run_user_name: args.run_user_name || null,
+    project_name: args.project_name || null,
+    project_key: args.project_key || null,
+    run_source: 'mcp'
   };
 }
 

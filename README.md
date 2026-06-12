@@ -135,6 +135,33 @@ The JSON response includes `run_url`. Open it to inspect status, generated Pytho
 
 Run execution uses pytest-xdist in parallel by default (`runner.parallel_workers: auto`). Set `runner.parallel_workers: 1` in `proguide_tests/config.yaml` when a target app or case set must run sequentially.
 
+### Run Identity Tracking
+
+Each run stores the user and project context in `run.json` and shows it in the viewer. ProGuide resolves identity in this order:
+
+- Explicit CLI/MCP metadata: `run_user_email`, `run_user_name`, `project_name`, `project_key`.
+- Local config or environment: `identity.*`, `PROGUIDE_RUN_USER_EMAIL`, `PROGUIDE_RUN_USER_NAME`, `PROGUIDE_PROJECT_NAME`, `PROGUIDE_PROJECT_KEY`.
+- Git config: `git config user.email` and `git config user.name`.
+- Project inference: `package.json` name, `pyproject.toml` project name, Git remote repo name, then workspace folder name.
+
+CLI example:
+
+```powershell
+proguide create casos.md --base-url http://localhost:3000 --run-user-email molivera@proguidemc.com --project-name storefront --json
+```
+
+Config example:
+
+```yaml
+identity:
+  run_user_email: molivera@proguidemc.com
+  run_user_name: Mario Olivera
+  project_name: storefront
+  project_key: storefront
+  require_user_email: false
+  require_project_name: false
+```
+
 ### Use With Claude Code
 
 Register ProGuide as a Claude Code MCP server from the QA workspace/app under test. The supported onboarding path is to pass the key through `claude mcp add --env`, not through the app repo:
@@ -142,6 +169,12 @@ Register ProGuide as a Claude Code MCP server from the QA workspace/app under te
 ```powershell
 cd C:\QA\frontend-app
 claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp
+```
+
+Comando directo:
+
+```powershell
+claude mcp add proguide-test --env API_KEY=api_key -- proguide mcp
 ```
 
 If ProGuide is published and you do not want to install it globally, use the npx form:

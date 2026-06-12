@@ -291,6 +291,43 @@ test('prepareCasesRun normalizes natural data-testid references from structured 
   }
 });
 
+test('prepareCasesRun records project and run user identity', async () => {
+  const root = makeTempRoot();
+  try {
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: '@proguide/shop-front' }), 'utf8');
+    assert.equal(spawnSync('git', ['init'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.email', 'molivera@proguidemc.com'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
+    assert.equal(spawnSync('git', ['config', 'user.name', 'Mario Olivera'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
+
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: 'http://localhost:3000',
+      cases: [{
+        id: 'tc_001',
+        title: 'Login estructurado',
+        steps: ['go to /login'],
+        expected: ['expect text "Login"']
+      }]
+    });
+
+    assert.equal(prepared.run.run_user_email, 'molivera@proguidemc.com');
+    assert.equal(prepared.run.run_user_name, 'Mario Olivera');
+    assert.equal(prepared.run.company_domain, 'proguidemc.com');
+    assert.equal(prepared.run.project_name, 'shop-front');
+    assert.equal(prepared.run.project_key, 'shop-front');
+    assert.equal(prepared.run.workspace_root, path.resolve(root));
+    assert.equal(prepared.run.identity_source.run_user_email, 'git');
+    assert.equal(prepared.run.identity_source.project_name, 'package_json');
+
+    const runPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'run.json');
+    const stored = JSON.parse(fs.readFileSync(runPath, 'utf8'));
+    assert.equal(stored.run_user_email, 'molivera@proguidemc.com');
+    assert.equal(stored.project_name, 'shop-front');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('parsePytestResults keeps self-closing testcase results aligned', async () => {
   const root = makeTempRoot();
   try {
