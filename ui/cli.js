@@ -445,7 +445,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.13' }, parsed.options, '0.1.13');
+    emit({ version: '0.1.14' }, parsed.options, '0.1.14');
   }
 }
 
