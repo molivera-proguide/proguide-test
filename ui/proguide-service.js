@@ -647,6 +647,12 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
 
   let summary;
   try {
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'dom_context_started',
+      status: run.status,
+      message: 'Abriendo browser para leer contexto visible de la app.'
+    });
     const domContext = await collectDomContext({
       python,
       root,
@@ -682,7 +688,13 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
 
     run.status = 'running';
     await saveRun(runDir, run);
-    await appendEvent(runDir, { run_id: run.id, type: 'run_started', status: run.status, message: 'Ejecucion iniciada.' });
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'run_started',
+      status: run.status,
+      message: 'Ejecucion iniciada en pytest.',
+      payload: { parallel_workers: config.runner.parallel_workers || 'auto' }
+    });
 
     summary = await runPytest({
       python,
@@ -732,7 +744,15 @@ async function runPytest({ python, testsDir, runDir, plan, baseUrl, config, proj
   const startedAt = nowIso();
   const junitPath = path.join(runDir, 'junit.xml');
   const pytestLogPath = path.join(runDir, 'pytest.log');
-  const command = [python, '-m', 'pytest', testsDir, '--junitxml', junitPath];
+  const command = [
+    python,
+    '-m',
+    'pytest',
+    testsDir,
+    '--junitxml',
+    junitPath,
+    ...pytestWorkerArgs(config)
+  ];
   const runnerConfig = {
     browser: config.runner.browser || 'chromium',
     video: config.runner.video || 'on',
@@ -779,6 +799,18 @@ async function runPytest({ python, testsDir, runDir, plan, baseUrl, config, proj
     finished_at: nowIso(),
     results
   };
+}
+
+export function pytestWorkerArgs(config = {}) {
+  const rawWorkers = config?.runner?.parallel_workers ?? 'auto';
+  const workers = String(rawWorkers ?? '').trim().toLowerCase();
+  if (!workers || ['1', '0', 'false', 'off', 'none'].includes(workers)) return [];
+  if (workers === 'auto') return ['-n', 'auto'];
+
+  const count = Number(rawWorkers);
+  if (Number.isInteger(count) && count > 1) return ['-n', String(count)];
+
+  throw new Error(`runner.parallel_workers invalido: ${rawWorkers}. Usa "auto", 1 o un entero mayor que 1.`);
 }
 
 function pythonPathForRunner(projectRoot) {
@@ -946,6 +978,19 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config, do
     for (const file of files) {
       const relative = targetGeneratedPath(file.path, batchIndex, batches.length, usedPaths);
       await fs.writeFile(path.join(outputDir, relative), String(file.content || ''), 'utf8');
+    }
+    if (usageContext?.runDir) {
+      await appendEvent(usageContext.runDir, {
+        run_id: usageContext.runId,
+        type: 'code_generation_progress',
+        status: 'generating',
+        message: `Codigo generado para lote ${batchIndex + 1}/${batches.length}.`,
+        payload: {
+          batch_index: batchIndex + 1,
+          batch_count: batches.length,
+          cases: batchCases.map((testCase) => testCase.id)
+        }
+      });
     }
   }
   await validateGeneratedCode(outputDir, plan);

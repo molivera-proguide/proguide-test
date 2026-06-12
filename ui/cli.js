@@ -14,7 +14,7 @@ import {
   previewMarkdownRun
 } from './proguide-service.js';
 import { ensurePythonRuntime, playwrightBrowserProbe, pythonCommand } from './python-runtime.js';
-import { ensureViewer, fetchViewerHealth, rootIdentity, viewerBaseUrl, viewerLinks } from './viewer.js';
+import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUrl, viewerLinks } from './viewer.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
@@ -101,6 +101,8 @@ async function dispatch(parsed) {
       return commandUsage(parsed);
     case 'viewer':
       return commandViewer(parsed);
+    case 'stop-viewer':
+      return commandStopViewer(parsed);
     case 'doctor':
       return commandDoctor(parsed);
     case 'config':
@@ -287,6 +289,19 @@ async function commandViewer(parsed) {
   return EXIT.ok;
 }
 
+async function commandStopViewer(parsed) {
+  const root = resolveRoot(parsed.options);
+  const host = option(parsed.options, 'host') || DEFAULT_VIEWER_HOST;
+  const port = numberOption(parsed.options, 'port', DEFAULT_VIEWER_PORT);
+  const stopped = await stopViewer(root, { host, port });
+  const payload = {
+    ...stopped,
+    stopped: stopped.stopped_count
+  };
+  emit(payload, parsed.options, renderStopViewer(payload));
+  return EXIT.ok;
+}
+
 async function commandDoctor(parsed) {
   const root = resolveRoot(parsed.options);
   const fix = Boolean(parsed.options.fix);
@@ -328,6 +343,12 @@ async function commandDoctor(parsed) {
   }
   checks.push(checkCommand('python', python, ['--version'], 'Instala Python 3.12+; ProGuide lo usa para crear su runtime administrado.'));
   checks.push(checkCommand('pytest', python, ['-m', 'pytest', '--version'], 'ProGuide instala pytest automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'));
+  checks.push(checkCommand(
+    'pytest_xdist',
+    python,
+    ['-c', 'import xdist; print("installed")'],
+    'ProGuide instala pytest-xdist automaticamente; ejecuta proguide doctor --fix o revisa PROGUIDE_RUNTIME_DIR si falla.'
+  ));
   checks.push(checkCommand(
     'pydantic',
     python,
@@ -431,6 +452,7 @@ Uso:
   proguide list-runs [--limit 20] [--json]
   proguide usage [--run <run_id>] [--json]
   proguide viewer [--port 8787] [--json]
+  proguide stop-viewer [--port 8787] [--json]
   proguide mcp
   proguide doctor [--json] [--fix]
   proguide config get|set ...
@@ -1090,6 +1112,20 @@ function renderUsage(usage) {
     ].join('\t'));
   }
   if (usage.entries.length > 8) lines.push(`... ${usage.entries.length - 8} mas`);
+  return lines.join('\n');
+}
+
+function renderStopViewer(payload) {
+  if (!payload.viewers?.length) {
+    return `No habia visor ProGuide activo para ${payload.root}.`;
+  }
+  const lines = [`Visores detenidos: ${payload.stopped_count}/${payload.viewers.length}.`];
+  for (const item of payload.viewers) {
+    const status = item.stopped ? 'Detenido' : 'No detenido';
+    const pid = item.pid ? ` pid=${item.pid}` : '';
+    const reason = item.stopped ? '' : ` (${item.message || 'sin detalle'})`;
+    lines.push(`${status}: ${item.baseUrl}${pid}${reason}`);
+  }
   return lines.join('\n');
 }
 

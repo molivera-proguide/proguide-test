@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -6,17 +7,20 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const viewerCache = new Map();
 const REQUIRED_VIEWER_CAPABILITIES = ['usage'];
+const DEFAULT_VIEWER_START_TIMEOUT_MS = 15000;
 
 export async function ensureViewer(root, options = {}) {
-  const rootPath = path.resolve(root);
+  const rootPath = normalizeRootPath(root);
   const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
   const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
   const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
+  const startTimeoutMs = positiveNumber(options.startTimeoutMs, process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS, DEFAULT_VIEWER_START_TIMEOUT_MS);
   const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
   const rootKey = `${rootIdentity(rootPath)}|${host}|${firstPort}`;
   const cached = viewerCache.get(rootKey);
 
   if (cached && await viewerMatchesRoot(cached.baseUrl, rootPath, { requiredCapabilities })) {
+    await stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort: cached.port });
     return { ...cached, started: false };
   }
 
@@ -26,6 +30,7 @@ export async function ensureViewer(root, options = {}) {
     if (viewerHealthMatchesRoot(health, rootPath, { requiredCapabilities })) {
       const info = { baseUrl, port, started: false };
       viewerCache.set(rootKey, info);
+      await stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort: port });
       return info;
     }
 
@@ -40,8 +45,9 @@ export async function ensureViewer(root, options = {}) {
       }
     }
 
+    let child;
     try {
-      const child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
+      child = spawn(process.execPath, [path.join(__dirname, 'server.js')], {
         cwd: __dirname,
         detached: true,
         windowsHide: true,
@@ -58,18 +64,21 @@ export async function ensureViewer(root, options = {}) {
       continue;
     }
 
-    if (await waitForViewer(baseUrl, rootPath, { requiredCapabilities })) {
+    if (await waitForViewer(baseUrl, rootPath, { requiredCapabilities, timeoutMs: startTimeoutMs })) {
       const info = { baseUrl, port, started: true };
       viewerCache.set(rootKey, info);
+      await stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort: port });
       return info;
     }
+
+    await stopStartingChild(child, baseUrl, rootPath);
   }
 
   throw new Error(`No se pudo iniciar el visor Fastify desde el puerto ${firstPort}.`);
 }
 
 export async function stopViewer(root, options = {}) {
-  const rootPath = path.resolve(root);
+  const rootPath = normalizeRootPath(root);
   const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
   const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
   const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
@@ -164,8 +173,19 @@ export function viewerPortCandidates({ firstPort, attempts }) {
 }
 
 export function rootIdentity(value) {
-  const resolved = path.resolve(String(value || ''));
+  const resolved = normalizeRootPath(value);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+async function stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort }) {
+  for (const port of viewerPortCandidates({ firstPort, attempts })) {
+    if (port === keepPort) continue;
+    const baseUrl = viewerBaseUrl(host, port);
+    const health = await fetchViewerHealth(baseUrl);
+    if (health?.service !== 'proguide-test-viewer') continue;
+    if (rootIdentity(health.root) !== rootIdentity(rootPath)) continue;
+    await shutdownViewer(baseUrl, rootPath, health);
+  }
 }
 
 async function shutdownViewer(baseUrl, root, health) {
@@ -201,13 +221,38 @@ async function shutdownViewer(baseUrl, root, health) {
   }
 }
 
+async function stopStartingChild(child, baseUrl, root) {
+  if (!child?.pid) return;
+  const health = await fetchViewerHealth(baseUrl);
+  if (health?.service === 'proguide-test-viewer' && rootIdentity(health.root) === rootIdentity(root)) {
+    await shutdownViewer(baseUrl, root, health);
+    return;
+  }
+  try {
+    child.kill();
+    await sleep(300);
+  } catch {
+    // The process may have already exited after a failed bind.
+  }
+}
+
 async function waitForViewer(baseUrl, root, options = {}) {
-  const deadline = Date.now() + 5000;
+  const timeoutMs = positiveNumber(options.timeoutMs, process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS, DEFAULT_VIEWER_START_TIMEOUT_MS);
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await viewerMatchesRoot(baseUrl, root, options)) return true;
     await sleep(200);
   }
   return false;
+}
+
+function normalizeRootPath(value) {
+  const resolved = path.resolve(String(value || ''));
+  try {
+    return fs.realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function positiveNumber(...values) {

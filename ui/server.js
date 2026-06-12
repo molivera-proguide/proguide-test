@@ -18,8 +18,26 @@ const VIEWER_CAPABILITIES = ['usage'];
 const ROOT = path.resolve(process.env.PROGUIDE_UI_ROOT || path.join(__dirname, '..'));
 const HOST = process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const PORT = Number(process.env.PROGUIDE_UI_PORT || 8787);
+const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const IDLE_TIMEOUT_MS = nonNegativeNumber(process.env.PROGUIDE_VIEWER_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS);
 
 const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
+let activeRequests = 0;
+let idleTimer = null;
+
+app.addHook('onRequest', async () => {
+  activeRequests += 1;
+  clearIdleTimer();
+});
+
+app.addHook('onResponse', async () => {
+  activeRequests = Math.max(0, activeRequests - 1);
+  scheduleIdleShutdown();
+});
+
+app.addHook('onClose', async () => {
+  clearIdleTimer();
+});
 
 app.get('/', async (_request, reply) => {
   return reply.redirect('/runs');
@@ -100,7 +118,8 @@ app.get('/api/health', async () => ({
   root: ROOT,
   host: HOST,
   port: PORT,
-  pid: process.pid
+  pid: process.pid,
+  idle_timeout_ms: IDLE_TIMEOUT_MS
 }));
 
 app.post('/api/shutdown', async (request, reply) => {
@@ -173,7 +192,25 @@ app.get('/artifacts/:runId/*', async (request, reply) => {
 app.listen({ host: HOST, port: PORT }).then((address) => {
   console.log(`ProGuide Test Cases UI: ${address}`);
   console.log(`Workspace root: ${ROOT}`);
+  scheduleIdleShutdown();
 });
+
+function scheduleIdleShutdown() {
+  if (!IDLE_TIMEOUT_MS || activeRequests > 0) return;
+  clearIdleTimer();
+  idleTimer = setTimeout(() => {
+    app.close()
+      .catch(() => {})
+      .finally(() => process.exit(0));
+  }, IDLE_TIMEOUT_MS);
+  idleTimer.unref?.();
+}
+
+function clearIdleTimer() {
+  if (!idleTimer) return;
+  clearTimeout(idleTimer);
+  idleTimer = null;
+}
 
 async function readStepLog(runId, caseId) {
   const logsDir = path.join(ROOT, 'proguide_tests', 'runs', runId, 'step_logs');
@@ -405,6 +442,7 @@ function renderRunDetail(run, cases, summary, usage) {
       </div>
     </section>
     ${renderUsageStrip(usage, { href: `/runs/${encodeURIComponent(run.id)}/usage` })}
+    ${renderRunProgress(run, cases, summary)}
     <main class="grid detail">
       <section class="panel cases-panel reveal" style="--delay:.05s">
         <header class="panel-head"><h2>Casos</h2><p class="panel-sub">${cases.length} ${cases.length === 1 ? 'caso' : 'casos'}</p></header>
@@ -412,7 +450,7 @@ function renderRunDetail(run, cases, summary, usage) {
         <table id="casesTable">
           <thead><tr><th class="col-n">N</th><th>Test</th><th>Estado</th><th>Resultado</th><th>Evidencia</th><th>Codigo</th></tr></thead>
           <tbody>
-            ${cases.map((testCase) => renderCaseRow(testCase, summary, run.id)).join('')}
+            ${cases.map((testCase) => renderCaseRow(testCase, summary, run)).join('')}
           </tbody>
         </table>
         </div>
@@ -424,23 +462,172 @@ function renderRunDetail(run, cases, summary, usage) {
     </script>`;
 }
 
-function renderCaseRow(testCase, summary, runId) {
-  const result = findCaseResult(summary, testCase.id);
-  const status = result?.status || testCase.automation_state || 'pending';
-  const detailHref = `/runs/${encodeURIComponent(runId)}/cases/${encodeURIComponent(testCase.id)}`;
-  const evidence = renderEvidenceLinks(result, runId);
+function renderRunProgress(run, cases, summary) {
+  const state = initialRunProgress(run, summary);
   return `
-    <tr class="case-row" data-case-id="${attr(testCase.id)}" data-href="${attr(detailHref)}" tabindex="0" aria-label="Abrir detalle de ${attr(cleanCaseTitle(testCase.title))}">
+    <section id="runProgress" class="run-progress reveal ${state.active ? 'is-active' : ''} ${state.done ? 'is-done' : ''} ${state.error ? 'is-error' : ''}" style="--delay:.04s; --progress:${state.percent}%;" data-stage="${attr(state.stage)}" data-status="${attr(state.status)}">
+      <div class="run-progress-main">
+        <div class="run-progress-kicker">
+          <span class="eyebrow">Live run</span>
+          <span id="runProgressBadge">${renderBadge(state.status)}</span>
+        </div>
+        <h2 id="runProgressTitle">${escapeHtml(state.title)}</h2>
+        <p id="runProgressMessage" class="muted">${escapeHtml(state.message)}</p>
+      </div>
+      <div class="run-progress-track" aria-hidden="true"><span></span></div>
+      <div class="run-progress-steps" aria-label="Progreso de ejecucion">
+        ${progressStepsMarkup(state.stage, state)}
+      </div>
+      <div class="run-progress-counts mono" aria-label="Resumen de casos">
+        ${escapeHtml(progressCounts(cases, summary))}
+      </div>
+    </section>`;
+}
+
+function renderCaseRow(testCase, summary, run) {
+  const result = findCaseResult(summary, testCase.id);
+  const runnable = isRunnableCase(testCase);
+  const status = initialCaseStatus(testCase, result, run);
+  const message = initialCaseMessage(testCase, result, run);
+  const detailHref = `/runs/${encodeURIComponent(run.id)}/cases/${encodeURIComponent(testCase.id)}`;
+  const evidence = renderEvidenceLinks(result, run.id);
+  return `
+    <tr class="case-row ${isActiveStatus(status) ? 'is-live' : ''}" data-case-id="${attr(testCase.id)}" data-runnable="${runnable ? '1' : '0'}" data-status="${attr(status)}" data-href="${attr(detailHref)}" tabindex="0" aria-label="Abrir detalle de ${attr(cleanCaseTitle(testCase.title))}">
       <td class="col-n mono">${testCase.number}</td>
       <td class="case-title"><a class="case-title-link" href="${attr(detailHref)}">${escapeHtml(cleanCaseTitle(testCase.title))}</a></td>
       <td class="status-cell">${renderBadge(status)}</td>
-      <td class="message-cell">${escapeHtml(result?.message || testCase.state_reason || '')}</td>
+      <td class="message-cell">${escapeHtml(message)}</td>
       <td class="evidence-cell">${evidence || '<span class="muted">-</span>'}</td>
       <td class="code-cell">
         <a class="chip-link" href="${attr(detailHref)}#codigo-python">Python</a>
         <a class="chip-link" href="${attr(detailHref)}#codigo-typescript">TS</a>
       </td>
     </tr>`;
+}
+
+function initialCaseStatus(testCase, result, run) {
+  if (result?.status) return result.status;
+  if (isRunnableCase(testCase) && isExecutionActive(run.status)) return 'queued';
+  return testCase.automation_state || 'pending';
+}
+
+function initialCaseMessage(testCase, result, run) {
+  if (result?.message) return result.message;
+  if (isRunnableCase(testCase) && isExecutionActive(run.status)) return 'Esperando worker disponible...';
+  return testCase.state_reason || '';
+}
+
+function isRunnableCase(testCase) {
+  return testCase.automation_state === 'listo' && !testCase.excluded;
+}
+
+function isExecutionActive(status) {
+  return ['running', 'executing', 'ejecutando', 'queued', 'started'].includes(statusClass(status));
+}
+
+const PROGRESS_STEPS = [
+  ['plan', 'Plan'],
+  ['dom', 'Browser'],
+  ['code', 'Codigo'],
+  ['tests', 'Tests'],
+  ['report', 'Reporte']
+];
+
+function initialRunProgress(run, summary) {
+  const status = statusClass(run.status);
+  const counts = countSummary(summary);
+  if (['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)) {
+    return {
+      stage: 'report',
+      status: run.status || 'finished',
+      title: 'Run finalizado',
+      message: progressFinishedMessage(counts, run),
+      percent: 100,
+      done: true,
+      active: false,
+      error: status === 'setup_failed'
+    };
+  }
+  if (status === 'error') {
+    return {
+      stage: 'report',
+      status: 'error',
+      title: 'Run detenido',
+      message: 'Se produjo un error durante la ejecucion.',
+      percent: 100,
+      done: false,
+      active: false,
+      error: true
+    };
+  }
+  if (status === 'running') {
+    return {
+      stage: 'tests',
+      status: 'running',
+      title: 'Ejecutando tests en browser',
+      message: 'Los casos listos se estan distribuyendo entre workers.',
+      percent: 78,
+      active: true
+    };
+  }
+  if (status === 'generating') {
+    return {
+      stage: 'code',
+      status: 'generating',
+      title: 'Preparando automatizacion',
+      message: 'ProGuide esta recolectando contexto y generando codigo Playwright.',
+      percent: 48,
+      active: true
+    };
+  }
+  return {
+    stage: 'plan',
+    status: run.status || 'ready',
+    title: 'Run listo para ejecutar',
+    message: 'El visor se actualizara automaticamente cuando empiece la ejecucion.',
+    percent: 8,
+    active: false
+  };
+}
+
+function progressStepsMarkup(activeStage, state) {
+  const activeIndex = PROGRESS_STEPS.findIndex(([key]) => key === activeStage);
+  return PROGRESS_STEPS.map(([key, label], index) => {
+    const className = [
+      'run-progress-step',
+      index < activeIndex || state.done ? 'is-done' : '',
+      index === activeIndex && state.active ? 'is-active' : '',
+      index === activeIndex && state.error ? 'is-error' : ''
+    ].filter(Boolean).join(' ');
+    return `<span class="${className}" data-progress-step="${attr(key)}"><i></i>${escapeHtml(label)}</span>`;
+  }).join('');
+}
+
+function progressCounts(cases, summary) {
+  const counts = countSummary(summary);
+  const total = cases.length || counts.total || 0;
+  const done = counts.passed + counts.failed + counts.inconclusive + counts.setup_failed;
+  return `${done}/${total} casos con resultado`;
+}
+
+function progressFinishedMessage(counts, run) {
+  const total = Number(run.total_cases || counts.total || 0);
+  const passed = Number(run.passed ?? counts.passed ?? 0);
+  const failed = Number(run.failed ?? counts.failed ?? 0);
+  const inconclusive = Number(run.inconclusive ?? counts.inconclusive ?? 0);
+  const setupFailed = Number(run.setup_failed ?? counts.setup_failed ?? 0);
+  return `Resultados: ${passed} passed, ${failed} failed, ${inconclusive} inconclusive, ${setupFailed} setup_failed de ${total}.`;
+}
+
+function countSummary(summary) {
+  return (summary?.results || []).reduce((acc, result) => {
+    acc.total += 1;
+    if (result.status === 'passed') acc.passed += 1;
+    else if (result.status === 'failed') acc.failed += 1;
+    else if (result.status === 'setup_failed') acc.setup_failed += 1;
+    else acc.inconclusive += 1;
+    return acc;
+  }, { total: 0, passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 });
 }
 
 function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
@@ -1152,6 +1339,26 @@ function codeTabsScript() {
 function clientRunScript() {
   return `
       const pageLoadedAt = Date.now();
+      const progressOrder = ['plan', 'dom', 'code', 'tests', 'report'];
+      const terminalStatuses = new Set(['passed', 'failed', 'blocked', 'setup_failed', 'inconclusive', 'no_automatizable_aun']);
+      const progressEvents = new Set([
+        'plan_generated',
+        'dom_context_started',
+        'dom_context_collected',
+        'dom_context_unavailable',
+        'code_generation_started',
+        'code_generation_progress',
+        'tests_generated',
+        'run_started',
+        'case_started',
+        'step_started',
+        'case_finished',
+        'error_global',
+        'pdf_generated',
+        'pdf_skipped',
+        'run_finished'
+      ]);
+      let refreshTimer = null;
       bindCaseRows();
       const executeButton = document.getElementById('executeRunBtn');
       if (executeButton) {
@@ -1159,7 +1366,7 @@ function clientRunScript() {
           executeButton.disabled = true;
           executeButton.classList.add('is-loading');
           executeButton.textContent = 'Ejecutando...';
-          markRunnableRowsRunning();
+          markRunnableRowsQueued('Esperando inicio de ejecucion...');
           const response = await fetch('/api/runs/' + encodeURIComponent(runId) + '/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1175,8 +1382,9 @@ function clientRunScript() {
       const source = new EventSource('/runs/' + encodeURIComponent(runId) + '/events');
       source.onmessage = (event) => {
         const item = JSON.parse(event.data);
+        applyRunEvent(item);
         applyCaseEvent(item);
-        refreshRun();
+        if (progressEvents.has(item.type)) scheduleRefresh();
         const eventTime = Date.parse(item.timestamp || '');
         const isFreshTerminalEvent = Number.isFinite(eventTime) && eventTime >= pageLoadedAt - 1000;
         if (isFreshTerminalEvent && ['pdf_generated', 'pdf_skipped', 'run_finished'].includes(item.type)) {
@@ -1184,9 +1392,10 @@ function clientRunScript() {
           setTimeout(() => location.reload(), 900);
         }
       };
-      function markRunnableRowsRunning() {
-        document.querySelectorAll('#casesTable tbody tr').forEach((row) => {
-          setRowStatus(row, 'running', 'Ejecutando...');
+      function markRunnableRowsQueued(message) {
+        document.querySelectorAll('#casesTable tbody tr[data-runnable="1"]').forEach((row) => {
+          if (isRowTerminal(row)) return;
+          setRowStatus(row, 'queued', message || 'Esperando worker disponible...');
         });
       }
       function bindCaseRows() {
@@ -1201,6 +1410,38 @@ function clientRunScript() {
             window.location.href = row.dataset.href;
           });
         });
+      }
+      function applyRunEvent(item) {
+        if (!item || !item.type) return;
+        if (item.type === 'plan_generated') {
+          setProgress('plan', item.status || 'generating', 'Plan ejecutable preparado', item.message || 'Casos listos para convertir en codigo.', 22, true);
+        } else if (item.type === 'dom_context_started') {
+          setProgress('dom', 'generating', 'Leyendo la app en browser', item.message || 'ProGuide esta tomando contexto visible antes de generar codigo.', 36, true);
+        } else if (item.type === 'dom_context_collected') {
+          setProgress('dom', 'generating', 'Contexto del browser listo', item.message || 'Se recolectaron roles, textos y selectores visibles.', 46, true);
+        } else if (item.type === 'dom_context_unavailable') {
+          setProgress('dom', 'generating', 'Contexto del browser no disponible', item.message || 'La generacion seguira con los casos normalizados.', 46, true, false, true);
+        } else if (item.type === 'code_generation_started') {
+          setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Creando tests Python Playwright para este run.', 55, true);
+        } else if (item.type === 'code_generation_progress') {
+          setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Codigo generado parcialmente.', progressFromPayload(item.payload, 55), true);
+        } else if (item.type === 'tests_generated') {
+          setProgress('tests', 'queued', 'Codigo generado', item.message || 'Preparando ejecucion de tests.', 68, true);
+          markRunnableRowsQueued('Esperando inicio de ejecucion...');
+        } else if (item.type === 'run_started') {
+          setProgress('tests', item.status || 'running', 'Ejecutando tests en browser', item.message || 'Los casos listos se estan distribuyendo entre workers.', 78, true);
+          markRunnableRowsQueued('Esperando worker disponible...');
+        } else if (['case_started', 'step_started'].includes(item.type)) {
+          setProgress('tests', 'running', 'Ejecutando tests en browser', item.message || 'Hay casos corriendo en paralelo.', 82, true);
+        } else if (item.type === 'case_finished') {
+          setProgress('tests', 'running', 'Ejecutando tests en browser', item.message || 'Un caso termino y se esperan los restantes.', 88, true);
+        } else if (item.type === 'error_global') {
+          setProgress('report', 'error', 'Run detenido', item.message || 'Se produjo un error durante la ejecucion.', 100, false, true);
+        } else if (item.type === 'pdf_generated' || item.type === 'pdf_skipped') {
+          setProgress('report', item.status || 'running', 'Armando evidencia', item.message || 'Preparando reporte del run.', 96, true);
+        } else if (item.type === 'run_finished') {
+          setProgress('report', item.status || 'finished', 'Run finalizado', item.message || 'Resultados y evidencia disponibles.', 100, false);
+        }
       }
       function applyCaseEvent(item) {
         if (!item.case_id) return;
@@ -1219,6 +1460,8 @@ function clientRunScript() {
         const messageCell = row.querySelector('.message-cell');
         if (statusCell) statusCell.innerHTML = badgeMarkup(status);
         if (messageCell) messageCell.textContent = message || '';
+        row.dataset.status = status || '';
+        row.classList.toggle('is-live', isActiveStatus(status));
       }
       function badgeMarkup(status) {
         const label = String(status || '-').replace(/_/g, ' ');
@@ -1231,6 +1474,44 @@ function clientRunScript() {
       function isActiveStatus(status) {
         return ['running', 'executing', 'ejecutando', 'queued', 'started', 'generating', 'interpreting'].includes(statusClass(status));
       }
+      function isRowTerminal(row) {
+        const badge = row.querySelector('.badge');
+        return terminalStatuses.has(statusClass(row.dataset.status || badge?.textContent || ''));
+      }
+      function setProgress(stage, status, title, message, percent, active, error, warning) {
+        const container = document.getElementById('runProgress');
+        if (!container) return;
+        container.dataset.stage = stage;
+        container.dataset.status = status || '';
+        container.style.setProperty('--progress', Math.max(0, Math.min(100, Number(percent) || 0)) + '%');
+        container.classList.toggle('is-active', Boolean(active));
+        container.classList.toggle('is-error', Boolean(error));
+        container.classList.toggle('is-warning', Boolean(warning));
+        container.classList.toggle('is-done', stage === 'report' && !active && !error);
+        const badge = document.getElementById('runProgressBadge');
+        const titleNode = document.getElementById('runProgressTitle');
+        const messageNode = document.getElementById('runProgressMessage');
+        if (badge) badge.innerHTML = badgeMarkup(status || 'pending');
+        if (titleNode) titleNode.textContent = title || '';
+        if (messageNode) messageNode.textContent = message || '';
+        updateProgressSteps(stage, active, error);
+      }
+      function updateProgressSteps(activeStage, active, error) {
+        const activeIndex = progressOrder.indexOf(activeStage);
+        document.querySelectorAll('[data-progress-step]').forEach((node) => {
+          const index = progressOrder.indexOf(node.dataset.progressStep);
+          const isActive = index === activeIndex && Boolean(active);
+          node.classList.toggle('is-done', activeStage === 'report' || (activeIndex >= 0 && index < activeIndex));
+          node.classList.toggle('is-active', isActive);
+          node.classList.toggle('is-error', index === activeIndex && Boolean(error));
+        });
+      }
+      function progressFromPayload(payload, fallback) {
+        const current = Number(payload?.batch_index || payload?.index || 0);
+        const total = Number(payload?.batch_count || payload?.total || 0);
+        if (!current || !total) return fallback;
+        return 55 + Math.round((current / total) * 10);
+      }
       function escapeText(value) {
         return String(value ?? '')
           .replace(/&/g, '&amp;')
@@ -1239,10 +1520,18 @@ function clientRunScript() {
           .replace(/"/g, '&quot;')
           .replace(/'/g, '&#039;');
       }
+      function scheduleRefresh() {
+        if (refreshTimer) return;
+        refreshTimer = setTimeout(() => {
+          refreshTimer = null;
+          refreshRun();
+        }, 350);
+      }
       async function refreshRun() {
         const response = await fetch('/api/runs/' + encodeURIComponent(runId));
         if (!response.ok) return;
         const payload = await response.json();
+        applyRunPayload(payload);
         const results = payload.summary?.results || [];
         for (const result of results) {
           const row = document.querySelector('[data-case-id="' + CSS.escape(result.id) + '"]');
@@ -1250,6 +1539,24 @@ function clientRunScript() {
           setRowStatus(row, result.status || 'pending', result.message || '');
         }
       }
+      function applyRunPayload(payload) {
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        const lastProgressEvent = events.filter((item) => progressEvents.has(item.type)).at(-1);
+        if (lastProgressEvent) {
+          applyRunEvent(lastProgressEvent);
+          return;
+        }
+        const status = statusClass(payload.run?.status || '');
+        if (status === 'running') {
+          setProgress('tests', 'running', 'Ejecutando tests en browser', 'Los casos listos se estan distribuyendo entre workers.', 78, true);
+          markRunnableRowsQueued('Esperando worker disponible...');
+        } else if (status === 'generating') {
+          setProgress('code', 'generating', 'Preparando automatizacion', 'ProGuide esta recolectando contexto y generando codigo Playwright.', 48, true);
+        } else if (['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)) {
+          setProgress('report', payload.run?.status || 'finished', 'Run finalizado', 'Resultados y evidencia disponibles.', 100, false);
+        }
+      }
+      refreshRun();
       setInterval(refreshRun, 2500);
   `;
 }
@@ -1490,6 +1797,93 @@ function styles() {
     .run-meta .mono { font-size: 13px; color: var(--muted); }
     .meta-sep { color: var(--faint); }
 
+    /* Live run progress */
+    .run-progress {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 0.58fr);
+      gap: 16px 22px;
+      align-items: center;
+      margin-top: 20px;
+      padding: 18px 20px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.026)),
+        rgba(0,0,0,0.16);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .run-progress-main { min-width: 0; display: grid; gap: 8px; }
+    .run-progress-kicker { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .run-progress h2 { font-size: clamp(18px, 2.2vw, 26px); display: block; letter-spacing: 0; }
+    .run-progress p { margin: 0; max-width: 82ch; }
+    .run-progress-track {
+      grid-column: 1 / -1;
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.07);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .run-progress-track span {
+      display: block;
+      width: var(--progress, 0%);
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width .35s ease;
+    }
+    .run-progress.is-active .run-progress-track span {
+      background:
+        linear-gradient(90deg, rgba(52,224,176,0.72), rgba(43,208,214,0.92), rgba(130,184,255,0.72));
+      background-size: 180% 100%;
+      animation: progressFlow 1.2s linear infinite;
+    }
+    .run-progress.is-error .run-progress-track span { background: linear-gradient(90deg, #ff637a, #c4a6ff); }
+    .run-progress-steps {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .run-progress-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: var(--faint);
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.025);
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .run-progress-step i {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.55;
+    }
+    .run-progress-step.is-done { color: var(--accent); border-color: rgba(52,224,176,0.28); background: var(--accent-soft); }
+    .run-progress-step.is-active { color: #82b8ff; border-color: rgba(78,158,255,0.36); background: rgba(78,158,255,0.12); }
+    .run-progress-step.is-active i {
+      width: 11px;
+      height: 11px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      background: transparent;
+      opacity: 1;
+      animation: spin .7s linear infinite;
+    }
+    .run-progress-step.is-error { color: #ff8298; border-color: rgba(255,99,122,0.34); background: rgba(255,99,122,0.1); }
+    .run-progress-counts { justify-self: end; color: var(--faint); font-size: 11.5px; }
+    @keyframes progressFlow { to { background-position: -180% 0; } }
+
     /* Usage dashboard */
     .usage-page { display: grid; gap: 20px; margin-top: 28px; min-width: 0; }
     .usage-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; min-width: 0; }
@@ -1570,6 +1964,8 @@ function styles() {
     tbody tr:hover { background: var(--surface-2); }
     tbody tr:last-child td { border-bottom: none; }
     .case-row { cursor: pointer; outline: none; }
+    .case-row.is-live { background: rgba(78, 158, 255, 0.055); box-shadow: inset 3px 0 0 rgba(78, 158, 255, 0.65); }
+    .case-row.is-live:hover { background: rgba(78, 158, 255, 0.09); }
     .case-row:focus-visible { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
     .col-n { width: 46px; color: var(--faint); }
     .case-title { font-weight: 600; color: var(--text); }
@@ -1600,9 +1996,10 @@ function styles() {
     }
     .passed, .listo { background: rgba(52, 224, 176, 0.13); color: #57e9bf; border-color: rgba(52, 224, 176, 0.3); }
     .failed { background: rgba(255, 99, 122, 0.13); color: #ff8298; border-color: rgba(255, 99, 122, 0.3); }
+    .ready, .pending { background: rgba(255,255,255,0.045); color: var(--muted); border-color: var(--border); }
     .running, .queued, .started, .executing, .ejecutando, .generating, .interpreting { background: rgba(78, 158, 255, 0.14); color: #82b8ff; border-color: rgba(78, 158, 255, 0.32); }
     .inconclusive, .necesita_revision { background: rgba(255, 191, 73, 0.14); color: #ffce7a; border-color: rgba(255, 191, 73, 0.3); }
-    .blocked, .no_automatizable_aun, .error { background: rgba(178, 132, 255, 0.14); color: #c4a6ff; border-color: rgba(178, 132, 255, 0.32); }
+    .blocked, .no_automatizable_aun, .setup_failed, .error { background: rgba(178, 132, 255, 0.14); color: #c4a6ff; border-color: rgba(178, 132, 255, 0.32); }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
     @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -1819,7 +2216,7 @@ function styles() {
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } html { scroll-behavior: auto; } }
 
     @media (max-width: 900px) {
-      .two, .detail, .case-detail-grid, .form-grid, .usage-grid, .usage-stats, .usage-strip { grid-template-columns: 1fr; }
+      .two, .detail, .case-detail-grid, .form-grid, .usage-grid, .usage-stats, .usage-strip, .run-progress { grid-template-columns: 1fr; }
       .field.span-2 { grid-column: auto; }
       .tool-band { align-items: flex-start; }
       .actions { justify-content: flex-start; }
@@ -1828,6 +2225,8 @@ function styles() {
       .timeline-status { justify-content: flex-start; width: max-content; }
       .usage-strip { align-items: start; }
       .usage-strip-kv { flex-wrap: wrap; }
+      .run-progress-steps { justify-content: flex-start; }
+      .run-progress-counts { justify-self: start; }
     }
   `;
 }
@@ -1855,6 +2254,11 @@ function cleanCaseTitle(value) {
 function rootIdentity(value) {
   const resolved = path.resolve(String(value || ''));
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function nonNegativeNumber(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function scriptJson(value) {

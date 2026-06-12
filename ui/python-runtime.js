@@ -65,11 +65,12 @@ export async function ensurePythonRuntime(root, options = {}) {
   }
 
   if (!commandOk({ command: python, args: [] }, ['-m', 'pytest', '--version']) ||
+      !commandOk({ command: python, args: [] }, ['-c', 'import xdist; print("installed")']) ||
       !commandOk({ command: python, args: [] }, ['-c', 'import playwright; print("installed")']) ||
       !commandOk({ command: python, args: [] }, ['-c', 'import pydantic; print("installed")'])) {
-    runChecked({ command: python, args: [] }, ['-m', 'pip', 'install', 'pytest', 'playwright', 'pydantic'], {
+    runChecked({ command: python, args: [] }, ['-m', 'pip', 'install', 'pytest', 'pytest-xdist', 'playwright', 'pydantic'], {
       timeout: INSTALL_TIMEOUT_MS,
-      label: 'instalar pytest/playwright/pydantic en runtime ProGuide'
+      label: 'instalar pytest/pytest-xdist/playwright/pydantic en runtime ProGuide'
     });
     actions.push('installed_python_packages');
   }
@@ -176,6 +177,7 @@ function validatePythonRuntime(runtime, root, options = {}) {
   const env = runnerEnv(root);
   const checks = [
     { name: 'pytest', args: ['-c', 'import pytest; print("pytest")'] },
+    { name: 'pytest-xdist', args: ['-c', 'import xdist; print("xdist")'] },
     { name: 'playwright', args: ['-c', 'import playwright; print("playwright")'] },
     { name: 'pydantic', args: ['-c', 'import pydantic; print("pydantic")'] },
     { name: 'proguide.pytest_plugin', args: ['-c', 'import proguide.pytest_plugin; print("proguide")'] }
@@ -185,7 +187,7 @@ function validatePythonRuntime(runtime, root, options = {}) {
     .map((check) => check.name);
   if (!missing.length) return;
 
-  const installable = missing.filter((name) => ['pytest', 'playwright', 'pydantic'].includes(name));
+  const installable = missing.filter((name) => ['pytest', 'pytest-xdist', 'playwright', 'pydantic'].includes(name));
   if (options.fix && installable.length) {
     runChecked({ command: runtime.python, args: [], env }, ['-m', 'pip', 'install', ...installable], {
       timeout: INSTALL_TIMEOUT_MS,
@@ -199,7 +201,7 @@ function validatePythonRuntime(runtime, root, options = {}) {
 
   const envPath = path.join(root, '.env');
   const userEnvPath = path.join(os.homedir(), '.proguide', '.env');
-  const installCommand = `${quote(runtime.python)} -m pip install pytest playwright pydantic`;
+  const installCommand = `${quote(runtime.python)} -m pip install pytest pytest-xdist playwright pydantic`;
   const browserCommand = `${quote(runtime.python)} -m playwright install chromium`;
   throw new Error(
     [

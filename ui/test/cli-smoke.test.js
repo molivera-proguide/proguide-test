@@ -5,8 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadUsageSummary, parsePytestResults, prepareCasesRun, recordLlmUsage } from '../proguide-service.js';
-import { viewerHasCapabilities, viewerHealthMatchesRoot, viewerPortCandidates } from '../viewer.js';
+import { loadUsageSummary, parsePytestResults, prepareCasesRun, pytestWorkerArgs, recordLlmUsage } from '../proguide-service.js';
+import { rootIdentity, viewerHasCapabilities, viewerHealthMatchesRoot, viewerPortCandidates } from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -332,6 +332,16 @@ test('parsePytestResults keeps self-closing testcase results aligned', async () 
   }
 });
 
+test('pytest worker args enable parallel run execution by default', () => {
+  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: 'auto' } }), ['-n', 'auto']);
+  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: 3 } }), ['-n', '3']);
+  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: '1' } }), []);
+  assert.throws(
+    () => pytestWorkerArgs({ runner: { parallel_workers: 'many' } }),
+    /parallel_workers invalido/
+  );
+});
+
 test('viewer discovery includes the default port range for reuse', () => {
   assert.deepEqual(viewerPortCandidates({ firstPort: 8789, attempts: 3 }), [
     8789,
@@ -355,6 +365,21 @@ test('viewer health requires usage capability before reuse', () => {
       root
     }, root), false);
     assert.equal(viewerHasCapabilities({ capabilities: ['runs'] }), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('stop-viewer reports no active viewer for an empty workspace', () => {
+  const root = makeTempRoot();
+  try {
+    const result = runCli(['stop-viewer', '--json', '--root', root]);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseJson(result.stdout);
+    assert.equal(rootIdentity(payload.root), rootIdentity(root));
+    assert.equal(payload.stopped_count, 0);
+    assert.equal(payload.stopped, 0);
+    assert.deepEqual(payload.viewers, []);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

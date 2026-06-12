@@ -11,7 +11,7 @@ Use this section if you only want to install and run ProGuide against an applica
 - Node.js 20 or newer.
 - Python 3.12 or compatible available on the machine.
 
-ProGuide creates and maintains its own Python runtime under the user profile. QA users do not install `pytest`, `playwright`, or browsers manually.
+ProGuide creates and maintains its own Python runtime under the user profile. QA users do not install `pytest`, `pytest-xdist`, `playwright`, or browsers manually.
 
 ### Install From GitHub Release
 
@@ -66,7 +66,7 @@ proguide doctor --json
 proguide doctor --fix --json
 ```
 
-The first `doctor`, `run`, or MCP execution can take a few minutes because ProGuide creates its managed Python runtime, installs `pytest`/`playwright`, and installs Chromium. After that, QA only needs the API key.
+The first `doctor`, `run`, or MCP execution can take a few minutes because ProGuide creates its managed Python runtime, installs `pytest`/`pytest-xdist`/`playwright`, and installs Chromium. After that, QA only needs the API key.
 
 `proguide doctor --json` should return actionable checks for Node, the managed Python runtime, API key, viewer port, and run storage.
 
@@ -132,6 +132,8 @@ proguide viewer --json
 By default `execute` regenerates `test_plan.json` from `normalized_cases.json`. Use `--from-plan` only when you intentionally edited the existing `test_plan.json` and want execution to respect it.
 
 The JSON response includes `run_url`. Open it to inspect status, generated Python code, evidence, and results.
+
+Run execution uses pytest-xdist in parallel by default (`runner.parallel_workers: auto`). Set `runner.parallel_workers: 1` in `proguide_tests/config.yaml` when a target app or case set must run sequentially.
 
 ### Use With Claude Code
 
@@ -201,8 +203,11 @@ Available MCP tools:
 | `get_generated_code` | Reads generated Python code for a case. |
 | `list_runs` | Lists local runs. |
 | `start_viewer` | Starts or reuses the local Fastify result viewer and opens it in the local browser. Pass `run_id` to get a direct run URL. |
+| `stop_viewer` | Stops ProGuide viewers for the current workspace without affecting viewers from other roots. |
 
-The result viewer defaults to `http://127.0.0.1:8787/runs`. MCP tools open the viewer URL in the local browser by default; pass `open_browser: false` or set `PROGUIDE_OPEN_BROWSER=0` for headless environments. If that port is occupied, ProGuide automatically tries the following ports. Use `PROGUIDE_VIEWER_PORT` only when you need to force a specific port.
+The result viewer defaults to `http://127.0.0.1:8787/runs`. MCP tools open the viewer URL in the local browser by default; pass `open_browser: false` or set `PROGUIDE_OPEN_BROWSER=0` for headless environments. If that port is occupied, ProGuide automatically tries the following ports and reuses an existing healthy viewer for the same workspace root. Use `PROGUIDE_VIEWER_PORT` only when you need to force a specific port.
+
+Viewer processes shut down after 30 minutes of inactivity by default. Set `PROGUIDE_VIEWER_IDLE_TIMEOUT_MS=0` to keep them alive indefinitely, or use `proguide stop-viewer` / MCP `stop_viewer` to close them explicitly.
 
 ## Developer Guide
 
@@ -268,6 +273,7 @@ npm --prefix ui run proguide -- create --stdin --base-url http://localhost:3000 
 npm --prefix ui run proguide -- execute <run_id> --json
 npm --prefix ui run proguide -- get-run <run_id> --json
 npm --prefix ui run proguide -- viewer --json
+npm --prefix ui run proguide -- stop-viewer --json
 ```
 
 Start MCP from the source checkout:
