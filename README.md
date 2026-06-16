@@ -98,6 +98,50 @@ Crea `.cursor/mcp.json` en el workspace de la app bajo prueba:
 
 Si Cursor o tu cliente MCP tiene un secret store, usa ese mecanismo en lugar de guardar la key en el repositorio.
 
+## Skill Y Template QA
+
+Este repositorio incluye instrucciones reutilizables para agentes:
+
+- `skills/SKILL.md`: define el flujo QA para explorar la app, escribir casos, hacer dry-run, ejecutar e iterar con evidencia.
+- `skills/TEMPLATE.md`: contiene la plantilla, checklist y ejemplo de caso Markdown compatible con ProGuide.
+
+### Usarlo En Claude Code
+
+Para instalarlo como project skill en el workspace de la app bajo prueba:
+
+```powershell
+$proguideRepo = "C:\ruta\a\proguide-test"
+New-Item -ItemType Directory -Force .claude\skills\qa-test-cases | Out-Null
+Copy-Item "$proguideRepo\skills\SKILL.md" .claude\skills\qa-test-cases\SKILL.md
+Copy-Item "$proguideRepo\skills\TEMPLATE.md" .claude\skills\qa-test-cases\TEMPLATE.md
+```
+
+Luego invocalo desde Claude Code:
+
+```text
+/qa-test-cases
+Genera casos E2E para http://localhost:3000, validalos con dry-run y ejecutalos con ProGuide.
+```
+
+Claude Code tambien puede activar la skill automaticamente cuando el pedido coincide con su descripcion, por ejemplo al pedir crear o ejecutar casos QA/E2E.
+
+### Usarlo En Cursor
+
+Cursor no carga `SKILL.md` como skill de Claude Code. Para usar las mismas reglas, copialas como Project Rule:
+
+```powershell
+$proguideRepo = "C:\ruta\a\proguide-test"
+New-Item -ItemType Directory -Force .cursor\rules | Out-Null
+Copy-Item "$proguideRepo\skills\SKILL.md" .cursor\rules\proguide-qa-test-cases.mdc
+Copy-Item "$proguideRepo\skills\TEMPLATE.md" .cursor\rules\TEMPLATE.md
+```
+
+En Cursor, pedi explicitamente que use esa rule y el MCP:
+
+```text
+Usa la rule proguide-qa-test-cases y el MCP proguide-test para generar casos con TEMPLATE.md, hacer dry-run, ejecutar contra http://localhost:3000 y devolverme el run_url.
+```
+
 ## Herramientas MCP Principales
 
 - `run_cases`: crea y ejecuta un run desde casos estructurados o Markdown.
