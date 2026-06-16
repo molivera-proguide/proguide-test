@@ -13,7 +13,7 @@ import {
   prepareMarkdownRun,
   previewMarkdownRun
 } from './proguide-service.js';
-import { ensurePythonRuntime, playwrightBrowserProbe, pythonCommand } from './python-runtime.js';
+import { ensurePlaywrightRuntime, playwrightBrowserProbe, playwrightImportProbe, runtimeEnv } from './playwright-runtime.js';
 import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUrl, viewerLinks } from './viewer.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
@@ -24,7 +24,7 @@ const DEFAULT_CONFIG = {
     browser: 'chromium',
     parallel_workers: 'auto',
     video: 'on',
-    screenshots: 'on_failure',
+    screenshots: 'on',
     traces: 'retain_on_failure'
   },
   identity: {
@@ -199,13 +199,12 @@ async function commandRun(parsed) {
   }
 
   const viewer = await attachViewer(root, prepared.run.id, parsed.options);
-  const runtime = await ensurePythonRuntime(root);
+  await ensurePlaywrightRuntime(root);
   await executePreparedRun({
     root,
     runId: prepared.run.id,
     baseUrl,
     credentials: credentialsFromOptions(parsed.options),
-    python: runtime.python,
     fromPlan: Boolean(parsed.options['from-plan'])
   });
   const bundle = await loadRunBundle(root, prepared.run.id);
@@ -218,13 +217,12 @@ async function commandExecute(parsed) {
   const root = resolveRoot(parsed.options);
   const runId = requiredHandle(parsed.positionals[0], 'run_id');
   const viewer = await attachViewer(root, runId, parsed.options);
-  const runtime = await ensurePythonRuntime(root);
+  await ensurePlaywrightRuntime(root);
   await executePreparedRun({
     root,
     runId,
     baseUrl: option(parsed.options, 'base-url') || '',
     credentials: credentialsFromOptions(parsed.options),
-    python: runtime.python,
     fromPlan: Boolean(parsed.options['from-plan'])
   });
   const bundle = await loadRunBundle(root, runId);
@@ -315,7 +313,6 @@ async function commandDoctor(parsed) {
   const root = resolveRoot(parsed.options);
   const fix = Boolean(parsed.options.fix);
   await loadDotEnv(root);
-  const config = await readConfig(root);
   const checks = [];
 
   checks.push({
@@ -324,61 +321,45 @@ async function commandDoctor(parsed) {
     version: process.version,
     message: 'Node disponible.'
   });
-  let python = process.env.PROGUIDE_PYTHON || 'python';
   try {
-    const runtime = await ensurePythonRuntime(root, { fix });
-    python = runtime.python;
+    const runtime = await ensurePlaywrightRuntime(root, { fix });
     checks.push({
-      name: 'python_runtime',
+      name: 'playwright_runtime',
       ok: true,
-      path: runtime.python,
+      node: runtime.node,
+      cli: runtime.cli,
       source: runtime.source,
       managed: runtime.managed,
-      runtime_dir: runtime.runtime_dir,
+      require_anchor: runtime.require_anchor,
       actions: runtime.actions,
       message: runtime.message
     });
   } catch (error) {
-    python = pythonCommand(root);
     checks.push({
-      name: 'python_runtime',
+      name: 'playwright_runtime',
       ok: false,
-      path: python,
       message: error.message || String(error),
       suggestion: fix
-        ? 'No se pudo reparar automaticamente. Instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
-        : 'Ejecuta proguide doctor --fix, instala Python 3.12+ o define PROGUIDE_BOOTSTRAP_PYTHON/PROGUIDE_PYTHON.'
+        ? 'No se pudo reparar automaticamente. Reinstala el paquete npm o revisa permisos/red para instalar Chromium.'
+        : 'Ejecuta proguide doctor --fix o reinstala el paquete npm si falta @playwright/test.'
     });
   }
-  checks.push(checkCommand('python', python, ['--version'], 'Instala Python 3.12+; ProGuide lo usa para crear su runtime administrado.'));
-  checks.push(checkCommand('pytest', python, ['-m', 'pytest', '--version'], 'ProGuide instala pytest automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'));
   checks.push(checkCommand(
-    'pytest_xdist',
-    python,
-    ['-c', 'import xdist; print("installed")'],
-    'ProGuide instala pytest-xdist automaticamente; ejecuta proguide doctor --fix o revisa PROGUIDE_RUNTIME_DIR si falla.'
-  ));
-  checks.push(checkCommand(
-    'pydantic',
-    python,
-    ['-c', 'import pydantic; print(pydantic.__version__)'],
-    'Ejecuta proguide doctor --fix o instala pydantic en el runtime Python usado por ProGuide.'
-  ));
-  checks.push(checkCommand(
-    'playwright_python',
-    python,
-    ['-c', 'import playwright; print("installed")'],
-    'ProGuide instala Playwright automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'
+    'playwright_test',
+    process.execPath,
+    ['-e', playwrightImportProbe()],
+    'Reinstala el paquete npm de ProGuide; @playwright/test debe venir como dependencia.',
+    runtimeEnv()
   ));
   checks.push(checkCommand(
     'playwright_browsers',
-    python,
-    ['-c', playwrightBrowserProbe()],
-    'ProGuide instala Chromium automaticamente; revisa permisos, red o PROGUIDE_RUNTIME_DIR si falla.'
+    process.execPath,
+    ['-e', playwrightBrowserProbe()],
+    'Ejecuta proguide doctor --fix para instalar Chromium de Playwright.',
+    runtimeEnv()
   ));
   checks.push(await checkRunsWritable(root));
   checks.push(await checkViewerPort(root));
-  checks.push(checkLlm(config));
 
   const ok = checks.every((check) => check.ok || check.required === false);
   const payload = {
@@ -445,7 +426,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.1.14' }, parsed.options, '0.1.14');
+    emit({ version: '0.2.0-ts.0' }, parsed.options, '0.2.0-ts.0');
   }
 }
 
@@ -578,11 +559,12 @@ function exitCodeForRun(run) {
   return EXIT.ok;
 }
 
-function checkCommand(name, command, args, suggestion) {
+function checkCommand(name, command, args, suggestion, env = process.env) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     timeout: 10000,
-    windowsHide: true
+    windowsHide: true,
+    env
   });
   const output = firstLine(result.stdout) || firstLine(result.stderr);
   return {
@@ -670,60 +652,6 @@ async function checkViewerPort(root) {
     message: `No hay puertos libres para el visor entre ${firstPort} y ${firstPort + attempts - 1}.`,
     suggestion: 'Define PROGUIDE_VIEWER_PORT con otro puerto o cierra un visor existente.'
   };
-}
-
-function checkLlm(config) {
-  const provider = String(config.llm?.provider || 'disabled').toLowerCase();
-  if (provider === 'openai') {
-    const apiKey = providerApiKey(provider);
-    return {
-      name: 'llm',
-      ok: Boolean(apiKey.value),
-      provider,
-      model: config.llm?.model || '',
-      env_var: apiKey.name,
-      message: apiKey.value ? `${apiKey.name} configurada.` : 'Falta OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY.',
-      suggestion: 'Configura OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY, o cambia llm.provider.'
-    };
-  }
-  if (provider === 'anthropic') {
-    const apiKey = providerApiKey(provider);
-    return {
-      name: 'llm',
-      ok: Boolean(apiKey.value),
-      provider,
-      model: config.llm?.model || '',
-      env_var: apiKey.name,
-      message: apiKey.value ? `${apiKey.name} configurada.` : 'Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY.',
-      suggestion: 'Configura API_KEY o ANTHROPIC_API_KEY.'
-    };
-  }
-  if (provider === 'disabled') {
-    return {
-      name: 'llm',
-      ok: false,
-      provider,
-      model: config.llm?.model || '',
-      message: 'El proveedor LLM esta deshabilitado; run/execute no pueden generar codigo.',
-      suggestion: 'Usa proguide config set llm.provider anthropic y configura ANTHROPIC_API_KEY o API_KEY.'
-    };
-  }
-  return {
-    name: 'llm',
-    ok: false,
-    provider,
-    model: config.llm?.model || '',
-    message: `Proveedor LLM no soportado: ${provider}`,
-    suggestion: 'Usa openai, anthropic o disabled.'
-  };
-}
-
-function providerApiKey(provider) {
-  const names = provider === 'anthropic'
-    ? ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY']
-    : ['OPENAI_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY'];
-  const name = names.find((item) => process.env[item]);
-  return { name: name || names[0], value: name ? process.env[name] : '' };
 }
 
 function tcpOpen(host, port) {
@@ -990,7 +918,7 @@ function agentSetupPayload() {
         command: 'proguide',
         args: ['mcp'],
         env: {
-          API_KEY: 'your_api_key'
+          ANTHROPIC_API_KEY: 'your_api_key'
         }
       }
     }
@@ -1000,9 +928,9 @@ function agentSetupPayload() {
     transport: 'stdio',
     command: 'proguide mcp',
     qa_required_configuration: {
-      required: ['API_KEY passed with claude mcp add --env API_KEY=...'],
-      optional: ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'PROGUIDE_ENV_FILE'],
-      managed_by_proguide: ['llm.provider', 'llm.model', 'python_runtime', 'viewer_port']
+      required: ['ANTHROPIC_API_KEY passed with claude mcp add --env ANTHROPIC_API_KEY=...'],
+      optional: ['PROGUIDE_LLM_API_KEY', 'API_KEY', 'PROGUIDE_ENV_FILE'],
+      managed_by_proguide: ['llm.provider', 'llm.model', 'playwright_runtime', 'viewer_port']
     },
     root_resolution_order: [
       'tool argument root',
@@ -1019,11 +947,11 @@ function agentSetupPayload() {
     ],
     clients: {
       claude_code: {
-        install_command: 'claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp',
-        npx_command: 'claude mcp add proguide-test --env API_KEY=your_api_key -- npx @proguide/test@latest mcp',
+        install_command: 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp',
+        npx_command: 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- npx @proguide/test@latest mcp',
         notes: [
           'Run the command from the QA workspace/app under test.',
-          'Pass API_KEY with --env so the secret belongs to the MCP server configuration, not to the app repo.',
+          'Pass ANTHROPIC_API_KEY with --env so the secret belongs to the MCP server configuration, not to the app repo.',
           'Claude Code sets CLAUDE_PROJECT_DIR for MCP servers; ProGuide uses it automatically.'
         ]
       },
@@ -1049,7 +977,7 @@ function agentSetupPayload() {
         command: 'proguide',
         args: ['mcp'],
         env: {
-          API_KEY: 'your_api_key'
+          ANTHROPIC_API_KEY: 'your_api_key'
         },
         notes: [
           'Start the process from the QA workspace/app under test.',
@@ -1177,10 +1105,10 @@ function classifyError(error) {
   if (message.includes('source_path') || message.includes('stdin') || message.includes('obligatorio') || message.includes('invalido')) {
     return EXIT.invalidInput;
   }
-  if (message.includes('openai') || message.includes('anthropic') || message.includes('llm') || message.includes('codigo')) {
+  if (message.includes('anthropic') || message.includes('llm') || message.includes('codigo')) {
     return EXIT.generation;
   }
-  if (message.includes('pytest') || message.includes('playwright') || message.includes('browser') || message.includes('runtime')) {
+  if (message.includes('playwright') || message.includes('browser') || message.includes('runtime')) {
     return EXIT.execution;
   }
   return EXIT.config;

@@ -11,7 +11,7 @@ import {
   prepareCasesRun,
   prepareMarkdownRun
 } from './proguide-service.js';
-import { ensurePythonRuntime } from './python-runtime.js';
+import { ensurePlaywrightRuntime } from './playwright-runtime.js';
 import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -105,7 +105,7 @@ const tools = [
   },
   {
     name: 'run_markdown_cases',
-    description: 'Importa casos QA desde Markdown, genera codigo Python Playwright con el agente configurado y ejecuta pytest/Playwright.',
+    description: 'Importa casos QA desde Markdown, genera codigo TypeScript Playwright con el agente configurado y ejecuta Playwright Test.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -151,7 +151,7 @@ const tools = [
   },
   {
     name: 'execute_run',
-    description: 'Genera codigo Python Playwright y ejecuta un run existente. Si no se pasa run_id, puede crear uno desde cases o Markdown.',
+    description: 'Genera codigo TypeScript Playwright y ejecuta un run existente. Si no se pasa run_id, puede crear uno desde cases o Markdown.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -184,7 +184,7 @@ const tools = [
   },
   {
     name: 'get_generated_code',
-    description: 'Devuelve el codigo Python generado para un caso concreto.',
+    description: 'Devuelve el codigo TypeScript generado para un caso concreto.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -309,7 +309,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.1.14' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.0' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -346,13 +346,12 @@ async function callTool(name, args) {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
     const viewer = await attachViewer(root, prepared.run.id, args);
-    const runtime = await ensurePythonRuntime(root);
+    await ensurePlaywrightRuntime(root);
     const summary = await executePreparedRun({
       root,
       runId: prepared.run.id,
       baseUrl: args.base_url || prepared.run.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: runtime.python,
       fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, prepared.run.id);
@@ -388,13 +387,12 @@ async function callTool(name, args) {
       runId = prepared.run.id;
     }
     const viewer = await attachViewer(root, runId, args);
-    const runtime = await ensurePythonRuntime(root);
+    await ensurePlaywrightRuntime(root);
     const summary = await executePreparedRun({
       root,
       runId,
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
-      python: runtime.python,
       fromPlan: Boolean(args.from_plan)
     });
     const bundle = await loadRunBundle(root, runId);

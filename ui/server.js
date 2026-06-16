@@ -519,8 +519,7 @@ function renderCaseRow(testCase, summary, run) {
       <td class="message-cell">${escapeHtml(message)}</td>
       <td class="evidence-cell">${evidence || '<span class="muted">-</span>'}</td>
       <td class="code-cell">
-        <a class="chip-link" href="${attr(detailHref)}#codigo-python">Python</a>
-        <a class="chip-link" href="${attr(detailHref)}#codigo-typescript">TS</a>
+        <a class="chip-link" href="${attr(detailHref)}#codigo-playwright">TS</a>
       </td>
     </tr>`;
 }
@@ -753,20 +752,14 @@ function renderCodeTabs(generatedCode, testCase, run) {
     code: buildTypeScriptCode(testCase, run),
     path: `generated/${safeName(testCase.id || 'case')}.spec.ts`
   };
+  const codeData = generatedCode?.code ? generatedCode : typeScriptCode;
   return `
     <div class="code-section-head">
       <h3>Codigo Playwright</h3>
-      <div class="code-tabs" role="tablist" aria-label="Lenguaje del codigo generado" data-code-tabs>
-        <button class="code-tab is-active" type="button" role="tab" id="tab-codigo-python" aria-selected="true" aria-controls="codigo-python" data-tab-target="codigo-python">Python</button>
-        <button class="code-tab" type="button" role="tab" id="tab-codigo-typescript" aria-selected="false" aria-controls="codigo-typescript" data-tab-target="codigo-typescript">TypeScript</button>
-      </div>
     </div>
     <div class="code-panels">
-      <div class="code-panel is-active" id="codigo-python" role="tabpanel" aria-labelledby="tab-codigo-python">
-        ${renderCodeBlock(generatedCode, 'El codigo Python se genera cuando ejecutas el run.', 'generated/test_markdown_cases.py', 'python')}
-      </div>
-      <div class="code-panel" id="codigo-typescript" role="tabpanel" aria-labelledby="tab-codigo-typescript" hidden>
-        ${renderCodeBlock(typeScriptCode, 'No hay datos suficientes para generar el ejemplo TypeScript.', `generated/${safeName(testCase.id || 'case')}.spec.ts`, 'typescript')}
+      <div class="code-panel is-active" id="codigo-typescript" role="tabpanel">
+        ${renderCodeBlock(codeData, 'El codigo TypeScript se genera cuando ejecutas el run.', `generated/${safeName(testCase.id || 'case')}.spec.ts`, 'typescript')}
       </div>
     </div>`;
 }
@@ -782,7 +775,7 @@ function renderCodeBlock(codeData, emptyText, fallbackPath, language) {
     <div class="code-block">
       <div class="code-block-head">
         <span class="mono">${escapeHtml(codeData.path || fallbackPath)}</span>
-        <span class="code-lang">${escapeHtml(language === 'typescript' ? 'TypeScript' : 'Python')}</span>
+        <span class="code-lang">${escapeHtml(language === 'typescript' ? 'TypeScript' : 'Code')}</span>
       </div>
       <pre class="code-editor language-${escapeHtml(language)}"><code>${highlightCode(codeData.code, language)}</code></pre>
     </div>`;
@@ -802,10 +795,6 @@ function highlightCodeLine(line, language) {
   let index = 0;
   while (index < line.length) {
     const rest = line.slice(index);
-    if (language === 'python' && rest.startsWith('#')) {
-      tokens.push(token('comment', rest));
-      break;
-    }
     if (language === 'typescript' && rest.startsWith('//')) {
       tokens.push(token('comment', rest));
       break;
@@ -881,14 +870,6 @@ function token(kind, value) {
 }
 
 function codeKeywords(language) {
-  if (language === 'python') {
-    return new Set([
-      'False', 'None', 'True', 'and', 'as', 'assert', 'async', 'await', 'break', 'class',
-      'continue', 'def', 'del', 'elif', 'else', 'except', 'finally', 'for', 'from',
-      'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass',
-      'raise', 'return', 'try', 'while', 'with', 'yield'
-    ]);
-  }
   return new Set([
     'as', 'async', 'await', 'break', 'catch', 'class', 'const', 'continue', 'default',
     'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if',
@@ -906,9 +887,9 @@ function buildTypeScriptCode(testCase, run) {
   const baseUrl = run.base_url || 'http://localhost:3000';
   const user = testCase.data?.user || {};
   const lines = [
-    "import { test, expect, type Locator, type Page } from '@playwright/test';",
+    "import { test, expect } from './proguide-test-runtime.mjs';",
     '',
-    `test(${jsString(cleanCaseTitle(testCase.title) || testCase.id || 'ProGuide case')}, async ({ page }) => {`,
+    `test(${jsString(`[${testCase.id}] ${cleanCaseTitle(testCase.title) || testCase.id || 'ProGuide case'}`)}, async ({ page }) => {`,
     `  const baseUrl = process.env.PROGUIDE_BASE_URL ?? ${jsString(baseUrl)};`,
     '  const user = {',
     `    email: process.env.PROGUIDE_USER_EMAIL ?? ${jsString(user.email || 'test@example.com')},`,
@@ -1332,7 +1313,7 @@ function codeTabsScript() {
         const buttons = Array.from(tabs.querySelectorAll('[data-tab-target]'));
         const panels = Array.from(document.querySelectorAll('.code-panel'));
         const activate = (targetId, updateHash = false) => {
-          const target = panels.find((panel) => panel.id === targetId) ? targetId : 'codigo-python';
+          const target = panels.find((panel) => panel.id === targetId) ? targetId : 'codigo-typescript';
           for (const button of buttons) {
             const selected = button.dataset.tabTarget === target;
             button.classList.toggle('is-active', selected);
@@ -1348,9 +1329,9 @@ function codeTabsScript() {
         for (const button of buttons) {
           button.addEventListener('click', () => activate(button.dataset.tabTarget, true));
         }
-        activate(location.hash === '#codigo-typescript' ? 'codigo-typescript' : 'codigo-python', false);
+        activate('codigo-typescript', false);
         window.addEventListener('hashchange', () => {
-          activate(location.hash === '#codigo-typescript' ? 'codigo-typescript' : 'codigo-python', false);
+          activate('codigo-typescript', false);
         });
       })();
     `;
@@ -1442,7 +1423,7 @@ function clientRunScript() {
         } else if (item.type === 'dom_context_unavailable') {
           setProgress('dom', 'generating', 'Contexto del browser no disponible', item.message || 'La generacion seguira con los casos normalizados.', 46, true, false, true);
         } else if (item.type === 'code_generation_started') {
-          setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Creando tests Python Playwright para este run.', 55, true);
+          setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Creando tests TypeScript Playwright para este run.', 55, true);
         } else if (item.type === 'code_generation_progress') {
           setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Codigo generado parcialmente.', progressFromPayload(item.payload, 55), true);
         } else if (item.type === 'tests_generated') {

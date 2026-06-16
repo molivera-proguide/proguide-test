@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadUsageSummary, parsePytestResults, prepareCasesRun, pytestWorkerArgs, recordLlmUsage } from '../proguide-service.js';
+import { loadUsageSummary, parsePlaywrightResults, prepareCasesRun, playwrightWorkerArgs, recordLlmUsage } from '../proguide-service.js';
 import { rootIdentity, viewerHasCapabilities, viewerHealthMatchesRoot, viewerPortCandidates } from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -328,23 +328,41 @@ test('prepareCasesRun records project and run user identity', async () => {
   }
 });
 
-test('parsePytestResults keeps self-closing testcase results aligned', async () => {
+test('parsePlaywrightResults keeps spec results aligned by case id prefix', async () => {
   const root = makeTempRoot();
   try {
     const runDir = path.join(root, 'run');
     fs.mkdirSync(runDir, { recursive: true });
-    fs.writeFileSync(path.join(runDir, 'junit.xml'), `
-<testsuite tests="2" failures="1">
-  <testcase classname="generated.test_markdown_cases" name="test_tc_003" time="4.578" />
-  <testcase classname="generated.test_markdown_cases" name="test_tc_004" time="11.648">
-    <failure message="expected admin dashboard">trace</failure>
-  </testcase>
-</testsuite>
-`, 'utf8');
+    fs.writeFileSync(path.join(runDir, 'playwright-report.json'), JSON.stringify({
+      suites: [{
+        specs: [{
+          title: '[tc_003] Agregar producto al carrito',
+          tests: [{
+            results: [{
+              status: 'passed',
+              duration: 4578,
+              steps: [{ title: 'go to /' }],
+              attachments: []
+            }]
+          }]
+        }, {
+          title: '[tc_004] Login admin',
+          tests: [{
+            results: [{
+              status: 'failed',
+              duration: 11648,
+              error: { message: 'expected admin dashboard' },
+              steps: [{ title: 'dashboard visible' }],
+              attachments: []
+            }]
+          }]
+        }]
+      }]
+    }), 'utf8');
 
-    const results = await parsePytestResults({
+    const results = await parsePlaywrightResults({
       runDir,
-      junitPath: path.join(runDir, 'junit.xml'),
+      reportPath: path.join(runDir, 'playwright-report.json'),
       plan: {
         cases: [{
           id: 'tc_003',
@@ -369,14 +387,70 @@ test('parsePytestResults keeps self-closing testcase results aligned', async () 
   }
 });
 
-test('pytest worker args enable parallel run execution by default', () => {
-  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: 'auto' } }), ['-n', 'auto']);
-  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: 3 } }), ['-n', '3']);
-  assert.deepEqual(pytestWorkerArgs({ runner: { parallel_workers: '1' } }), []);
+test('playwright worker args enable parallel run execution by default', () => {
+  assert.deepEqual(playwrightWorkerArgs({ runner: { parallel_workers: 'auto' } }), []);
+  assert.deepEqual(playwrightWorkerArgs({ runner: { parallel_workers: 3 } }), ['--workers=3']);
+  assert.deepEqual(playwrightWorkerArgs({ runner: { parallel_workers: '1' } }), ['--workers=1']);
   assert.throws(
-    () => pytestWorkerArgs({ runner: { parallel_workers: 'many' } }),
+    () => playwrightWorkerArgs({ runner: { parallel_workers: 'many' } }),
     /parallel_workers invalido/
   );
+});
+
+test('generated ESM runtime shim works in type module workspaces', () => {
+  const root = makeTempRoot();
+  try {
+    const generatedDir = path.join(root, 'generated');
+    fs.mkdirSync(generatedDir, { recursive: true });
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
+    fs.writeFileSync(path.join(generatedDir, 'proguide-test-runtime.mjs'), [
+      "import { createRequire } from 'node:module';",
+      `const req = createRequire(${JSON.stringify(path.join(UI_ROOT, 'package.json'))});`,
+      "const runtime = req('@playwright/test');",
+      'export const test = runtime.test;',
+      'export const expect = runtime.expect;',
+      ''
+    ].join('\n'), 'utf8');
+    fs.writeFileSync(path.join(generatedDir, 'test_markdown_cases.spec.ts'), [
+      "import { test, expect } from './proguide-test-runtime.mjs';",
+      "test('[tc_001] smoke', async () => {",
+      '  expect(1 + 1).toBe(2);',
+      '});',
+      ''
+    ].join('\n'), 'utf8');
+    const reportPath = path.join(root, 'playwright-report.json');
+    fs.writeFileSync(path.join(root, 'playwright.config.cjs'), [
+      'module.exports = {',
+      `  testDir: ${JSON.stringify(generatedDir)},`,
+      `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
+      '  use: { browserName: "chromium" }',
+      '};',
+      ''
+    ].join('\n'), 'utf8');
+
+    const result = spawnSync(process.execPath, [
+      path.join(UI_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
+      'test',
+      '--config',
+      path.join(root, 'playwright.config.cjs'),
+      '--workers=1'
+    ], {
+      cwd: root,
+      env: {
+        ...process.env,
+        PROGUIDE_PLAYWRIGHT_REQUIRE: path.join(UI_ROOT, 'package.json')
+      },
+      encoding: 'utf8',
+      windowsHide: true
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    assert.equal(report.stats.expected, 1);
+    assert.equal(report.stats.unexpected, 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('viewer discovery includes the default port range for reuse', () => {
@@ -441,7 +515,7 @@ test('config get/set reads and writes proguide_tests/config.yaml', () => {
   }
 });
 
-test('new workspaces default to Anthropic Haiku without QA configuration', () => {
+test('new workspaces default to Anthropic Haiku and screenshot evidence', () => {
   const root = makeTempRoot();
   try {
     const provider = runCli(['config', 'get', 'llm.provider', '--json', '--root', root]);
@@ -451,9 +525,38 @@ test('new workspaces default to Anthropic Haiku without QA configuration', () =>
     const model = runCli(['config', 'get', 'llm.model', '--json', '--root', root]);
     assert.equal(model.status, 0, model.stderr);
     assert.deepEqual(parseJson(model.stdout), { key: 'llm.model', value: 'claude-haiku-4-5-20251001' });
+
+    const screenshots = runCli(['config', 'get', 'runner.screenshots', '--json', '--root', root]);
+    assert.equal(screenshots.status, 0, screenshots.stderr);
+    assert.deepEqual(parseJson(screenshots.stdout), { key: 'runner.screenshots', value: 'on' });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('doctor does not require an API key in the shell', () => {
+  const root = makeTempRoot();
+  try {
+    const result = runCli(['doctor', '--json', '--root', root], {
+      env: {
+        API_KEY: '',
+        ANTHROPIC_API_KEY: '',
+        PROGUIDE_LLM_API_KEY: ''
+      }
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseJson(result.stdout);
+    assert.equal(payload.status, 'ok');
+    const llm = payload.checks.find((check) => check.name === 'llm');
+    assert.equal(llm, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Anthropic SDK dependency is available', async () => {
+  const module = await import('@anthropic-ai/sdk');
+  assert.equal(typeof module.default, 'function');
 });
 
 test('LLM usage is recorded with Anthropic cost estimate and exposed by CLI', async () => {
@@ -467,7 +570,7 @@ test('LLM usage is recorded with Anthropic cost estimate and exposed by CLI', as
       runDir,
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',
-      purpose: 'generar codigo Python Playwright',
+      purpose: 'generar codigo TypeScript Playwright',
       usage: {
         input_tokens: 1000,
         output_tokens: 2000,
@@ -510,10 +613,10 @@ test('agent-setup exposes Claude Code, Cursor, and generic MCP snippets', () => 
   assert.equal(result.status, 0, result.stderr);
   const payload = parseJson(result.stdout);
   assert.equal(payload.command, 'proguide mcp');
-  assert.equal(payload.clients.claude_code.install_command, 'claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp');
+  assert.equal(payload.clients.claude_code.install_command, 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp');
   assert.match(payload.clients.claude_code.npx_command, /npx @proguide\/test@latest mcp/);
   assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].command, 'proguide');
-  assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].env.API_KEY, 'your_api_key');
+  assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].env.ANTHROPIC_API_KEY, 'your_api_key');
   assert.deepEqual(payload.clients.generic.args, ['mcp']);
 });
 
@@ -561,10 +664,17 @@ test('mcp exposes the full tool surface', () => {
 });
 
 function runCli(args, options = {}) {
+  const env = {
+    ...process.env,
+    ...(options.env || {})
+  };
+  for (const [key, value] of Object.entries(options.env || {})) {
+    if (value === '') delete env[key];
+  }
   return spawnSync(process.execPath, [CLI, ...args], {
     cwd: UI_ROOT,
     env: {
-      ...process.env,
+      ...env,
       PROGUIDE_VIEWER_PORT: '18787'
     },
     input: options.input || '',

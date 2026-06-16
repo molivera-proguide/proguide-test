@@ -42,6 +42,7 @@ jobs:
           node --check ui/mcp-server.js
           node --check ui/viewer.js
           node --check ui/server.js
+          node --check ui/playwright-runtime.js
           node --check ui/proguide-service.js
 
       - name: Run tests

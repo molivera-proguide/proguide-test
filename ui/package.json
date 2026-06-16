@@ -1,6 +1,6 @@
 {
   "name": "@proguide/test",
-  "version": "0.1.14",
+  "version": "0.2.0-ts.0",
   "private": false,
   "type": "module",
   "bin": {
@@ -9,24 +9,23 @@
   "files": [
     "cli.js",
     "mcp-server.js",
-    "python-runtime.js",
+    "playwright-runtime.js",
     "proguide-service.js",
     "server.js",
-    "viewer.js",
-    "python/"
+    "viewer.js"
   ],
   "scripts": {
     "start": "node server.js",
     "mcp": "node mcp-server.js",
     "proguide": "node cli.js",
-    "test": "node --test",
-    "prepare": "node scripts/sync-python-runtime.js",
-    "prepack": "node scripts/sync-python-runtime.js"
+    "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.2",
+    "@playwright/test": "^1.61.0",
     "fastify": "^5.2.1"
   }
 }

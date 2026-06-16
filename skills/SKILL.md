@@ -59,6 +59,14 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - **Si conoces el `data-testid` o `id`, inclúyelo en el paso**:
   preferir `click [data-testid="quick-login-admin"]` o `click [id="quick-login-admin"]`
   sobre lenguaje natural. Es la forma más robusta para la normalización.
+- **Nunca uses el selector de clase con punto (`.btn-primary`, `.success-btn`) en pasos
+  `click`.** El normalizador lo reescribe a `[data-testid="btn-primary"]`; si la app no
+  tiene ese `data-testid` (muy común), el clic hace timeout de 30s y el caso falla. Esto
+  **no** se detecta en el dry-run: el paso aparece con confianza alta porque la sintaxis
+  es válida; el fallo solo se ve al ejecutar. Para botones usa **texto literal**
+  (`Click the "Next" button`, verificado: pasa aunque el dry-run lo marque en 0.7) o un
+  `data-testid`/`id` que exista de verdad. Los atributos reales con corchetes
+  (`[placeholder="..."]`, `[name="..."]`, `[id="..."]`) sí funcionan en `fill`/`expect`/`click`.
 - **Verificaciones con texto único en la página.** Verificar nombres/títulos, no precios
   ni números (un precio puede aparecer en item, subtotal y total a la vez → strict mode
   violation de Playwright).
@@ -89,6 +97,12 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
    divídelo en pasos atómicos.
 5. Repite hasta que los pasos críticos tengan confianza alta. Los pasos de navegación
    tipo `/ruta` o `Ir a /ruta` pueden quedar en 0.85; está bien si la ruta es concreta.
+6. **La confianza del dry-run no predice el resultado de la ejecución.** Los clics por
+   texto (`Click the "Next" button`) y los `select "Opción" in select` se quedan en 0.7
+   pero **ejecutan bien** si el texto es literal y único. El dry-run valida sintaxis y
+   ambigüedad, no si el selector existe en el DOM. Un `.clase` en `click` puede mostrar
+   confianza 0.95 y aun así fallar (ver la regla de selectores de clase en el Paso 1).
+   Por eso la ejecución real (Paso 4) es la que manda.
 
 ### Paso 3 — Ejecutar
 Llama a `mcp__proguide-test__run_cases` con `open_browser: true` para que el usuario
@@ -119,6 +133,7 @@ visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real 
 |---|---|---|
 | `strict mode violation: resolved to N elements` | Texto/rol ambiguo | Usar data-testid o contexto posicional ("in the X row...") |
 | `Timeout waiting for get_by_placeholder("...")` | El placeholder real es otro | Mirar el árbol del error o el código; usar el placeholder/label exacto |
+| `click` hace timeout 30s y el dry-run se veía en 0.95 | Selector de clase `.btn` reescrito a `[data-testid="btn"]` inexistente | Usar texto literal del botón (`Click the "X" button`) o un `data-testid`/`id` real |
 | Falla un paso compuesto | Varias acciones en un paso | Dividir en pasos atómicos |
 | Verificación de precio/número falla | El valor aparece varias veces | Verificar por texto único (nombre/título) |
 | Caso pasa solo / falla en suite | Dependencia entre casos | Hacer cada caso autocontenido |

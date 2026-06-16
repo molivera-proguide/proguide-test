@@ -1,14 +1,13 @@
 # ProGuide Test
 
-ProGuide Test es una herramienta local-first para QA E2E. Recibe casos de prueba en Markdown desde CLI o MCP, genera tests con pytest + Playwright, los ejecuta contra una app real y muestra resultados, evidencias y codigo generado en un viewer local.
+ProGuide Test es una herramienta local-first para QA E2E. Recibe casos de prueba en Markdown desde CLI o MCP, genera tests TypeScript con Playwright Test, los ejecuta contra una app real y muestra resultados, evidencias y codigo generado en un viewer local.
 
 ## Requisitos
 
 - Node.js 20 o superior.
-- Python 3.12 o compatible disponible en la maquina.
-- Una API key para el proveedor LLM configurado por ProGuide.
+- Una API key de Anthropic/Claude para generar los tests.
 
-ProGuide crea y mantiene su propio runtime Python en el perfil del usuario. No hace falta instalar manualmente `pytest`, `pytest-xdist`, `playwright` ni browsers.
+ProGuide trae `@playwright/test` como dependencia npm. En la primera validacion o ejecucion puede instalar Chromium de Playwright automaticamente.
 
 ## Instalacion
 
@@ -21,7 +20,7 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.1.14.tgz
+npm install -g ./proguide-test-0.2.0-ts.0.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -63,13 +62,13 @@ La respuesta incluye `run_url` para abrir el viewer local con estado, resultados
 Registra ProGuide como MCP server desde el workspace de la app que vas a testear:
 
 ```bash
-claude mcp add proguide-test --env API_KEY=your_api_key -- proguide mcp
+claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp
 ```
 
 Si no queres instalarlo globalmente y el paquete esta disponible en npm:
 
 ```bash
-claude mcp add proguide-test --env API_KEY=your_api_key -- npx @proguide/test@latest mcp
+claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- npx @proguide/test@latest mcp
 ```
 
 Luego podes pedirle a Claude Code algo como:
@@ -89,7 +88,7 @@ Crea `.cursor/mcp.json` en el workspace de la app bajo prueba:
       "command": "proguide",
       "args": ["mcp"],
       "env": {
-        "API_KEY": "your_api_key"
+        "ANTHROPIC_API_KEY": "your_api_key"
       }
     }
   }
