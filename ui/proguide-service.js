@@ -1,8 +1,10 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
+import { playwrightCommand, proguideRequireAnchor, runtimeEnv } from './playwright-runtime.js';
 
 const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
@@ -109,18 +111,17 @@ Rules:
 - Use priority values baja, media, alta, critica.`;
 
 const PLAYWRIGHT_CODE_AGENT_PROMPT = `You are a senior QA automation engineer.
-Generate production-ready Python pytest + Playwright code from already-approved QA test cases.
+Generate production-ready TypeScript Playwright Test code from already-approved QA test cases.
 
 Rules:
 - Do not create, remove, merge, split, or rename test cases.
-- Generate one pytest function per input test case.
-- Each function name must be exactly the provided function_name.
-- Each test must include @pytest.mark.proguide_case("<case id>").
-- Use the existing fixtures: page, proguide_base_url, proguide_steps.
-- Use Python Playwright sync API style.
-- Use proguide_steps.set_case(case_id, title) at the start of each test.
-- Use proguide_steps.log(step, "started"|"passed"|"failed", message) around meaningful actions/assertions.
-- Use robust locators: get_by_role, get_by_label, get_by_placeholder, get_by_text, locator with semantic attributes.
+- Generate one Playwright test(...) per input test case.
+- Each test title must start with the exact provided test_title_prefix.
+- Import Playwright from the generated runtime shim with:
+  import { test, expect } from './proguide-test-runtime.mjs';
+- Use TypeScript/JavaScript Playwright Test async API style.
+- Use test.step for meaningful actions/assertions so evidence keeps readable steps.
+- Use robust locators: getByRole, getByLabel, getByPlaceholder, getByText, locator with semantic attributes.
 - When dom_context is available, prefer its real roles, labels, placeholders, text, data-testid, id, and name attributes over guessed selectors.
 - Treat normalized steps as authoritative DSL:
   - fill [selector] with value -> page.locator(selector).fill(value)
@@ -134,24 +135,21 @@ Rules:
 - Exact strings in expected and expected_results override shorter or older strings in original_steps.
 - Never invent data-testid/id selectors. Use only selectors present in normalized steps or dom_context.snapshot.controls[].selector_hint. If no selector exists, assert real headings or visible text from dom_context instead.
 - Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.
-- Keep assertions explicit with playwright.sync_api.expect.
+- Keep assertions explicit with Playwright expect.
 - Include imports and any helper functions in the generated file.
 - Return only valid JSON with this shape:
-  {"files":[{"path":"test_markdown_cases.py","content":"...python code..."}]}
+  {"files":[{"path":"test_markdown_cases.spec.ts","content":"...typescript code..."}]}
 - Do not include markdown fences.`;
 
 const DOM_CONTEXT_PROBE_SCRIPT = String.raw`
-from __future__ import annotations
+const fs = require('node:fs');
+const { createRequire } = require('node:module');
+const { URL } = require('node:url');
 
-import json
-import sys
-from urllib.parse import urljoin
+const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || __filename);
+const playwright = req('playwright');
 
-from playwright.sync_api import sync_playwright
-
-
-DOM_SNAPSHOT_JS = r"""
-(maxControls) => {
+const DOM_SNAPSHOT_JS = (maxControls) => {
   const visible = (el) => {
     const style = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
@@ -223,65 +221,66 @@ DOM_SNAPSHOT_JS = r"""
     controls,
     visible_text
   };
+};
+
+function targetUrl(baseUrl, route) {
+  const value = String(route || '/');
+  if (/^https?:\/\//i.test(value)) return value;
+  const base = String(baseUrl || '').replace(/\/+$/, '') + '/';
+  return new URL(value.replace(/^\/+/, ''), base).href;
 }
-"""
 
+async function main() {
+  const [inputPath, outputPath] = process.argv.slice(2);
+  const payload = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
+  const timeout = Number(payload.timeout_ms || 6000);
+  const maxControls = Number(payload.max_controls || 80);
+  const browserName = payload.browser || 'chromium';
+  const browserType = playwright[browserName] || playwright.chromium;
+  const byCaseId = {};
 
-def target_url(base_url: str, route: str) -> str:
-    if route.startswith("http://") or route.startswith("https://"):
-        return route
-    return urljoin(base_url.rstrip("/") + "/", route.lstrip("/") or "")
-
-
-def main() -> int:
-    input_path, output_path = sys.argv[1], sys.argv[2]
-    payload = json.loads(open(input_path, encoding="utf-8").read())
-    timeout = int(payload.get("timeout_ms") or 6000)
-    max_controls = int(payload.get("max_controls") or 80)
-    browser_name = payload.get("browser") or "chromium"
-    by_case_id = {}
-
-    with sync_playwright() as playwright:
-      browser_type = getattr(playwright, browser_name, playwright.chromium)
-      browser = browser_type.launch(headless=True)
-      context = browser.new_context()
-      for case in payload.get("cases", []):
-        case_id = case.get("id") or ""
-        route = case.get("route") or "/"
-        page = context.new_page()
-        try:
-          page.goto(target_url(payload.get("base_url") or "", route), wait_until="domcontentloaded", timeout=timeout)
-          try:
-            page.wait_for_load_state("networkidle", timeout=2000)
-          except Exception:
-            pass
-          by_case_id[case_id] = {
-            "available": True,
-            "route": route,
-            "snapshot": page.evaluate(DOM_SNAPSHOT_JS, max_controls),
-          }
-        except Exception as exc:
-          by_case_id[case_id] = {
-            "available": False,
-            "route": route,
-            "error": str(exc)[:500],
-          }
-        finally:
-          page.close()
-      context.close()
-      browser.close()
-
-    output = {
-      "available": any(item.get("available") for item in by_case_id.values()),
-      "by_case_id": by_case_id,
+  const browser = await browserType.launch({ headless: true });
+  const context = await browser.newContext();
+  for (const testCase of payload.cases || []) {
+    const caseId = testCase.id || '';
+    const route = testCase.route || '/';
+    const page = await context.newPage();
+    try {
+      await page.goto(targetUrl(payload.base_url || '', route), { waitUntil: 'domcontentloaded', timeout });
+      try {
+        await page.waitForLoadState('networkidle', { timeout: 2000 });
+      } catch {
+        // Network-idle is only a best-effort stabilizer for SPAs.
+      }
+      byCaseId[caseId] = {
+        available: true,
+        route,
+        snapshot: await page.evaluate(DOM_SNAPSHOT_JS, maxControls)
+      };
+    } catch (error) {
+      byCaseId[caseId] = {
+        available: false,
+        route,
+        error: String(error.message || error).slice(0, 500)
+      };
+    } finally {
+      await page.close();
     }
-    with open(output_path, "w", encoding="utf-8") as handle:
-      handle.write(json.dumps(output, ensure_ascii=False, indent=2))
-    return 0
+  }
+  await context.close();
+  await browser.close();
 
+  const output = {
+    available: Object.values(byCaseId).some((item) => item.available),
+    by_case_id: byCaseId
+  };
+  fs.writeFileSync(outputPath, JSON.stringify(output, null, 2), 'utf8');
+}
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+main().catch((error) => {
+  console.error(error.stack || error.message || String(error));
+  process.exit(1);
+});
 `;
 
 export async function listRunRecords(root) {
@@ -327,7 +326,8 @@ export async function loadGeneratedCaseCode(root, runId, caseId) {
   if (!(await exists(generatedDir))) return null;
   let found = null;
   await walk(generatedDir, async (filePath) => {
-    if (found || path.extname(filePath).toLowerCase() !== '.py') return;
+    if (found || !['.ts', '.js', '.cjs', '.mjs'].includes(path.extname(filePath).toLowerCase())) return;
+    if (['proguide-test-runtime.cjs', 'proguide-test-runtime.mjs'].includes(path.basename(filePath))) return;
     const code = extractCaseCode(await fs.readFile(filePath, 'utf8'), caseId);
     if (code) {
       found = {
@@ -623,7 +623,7 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
   return { cases };
 }
 
-export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, python = 'python', fromPlan = false }) {
+export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, fromPlan = false }) {
   await loadDotEnv(root);
   const runDir = runPath(root, runId);
   const run = await loadRunRecord(runDir);
@@ -678,7 +678,6 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
       message: 'Abriendo browser para leer contexto visible de la app.'
     });
     const domContext = await collectDomContext({
-      python,
       root,
       runDir,
       plan,
@@ -697,7 +696,7 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
       run_id: run.id,
       type: 'code_generation_started',
       status: run.status,
-      message: 'Agente generando codigo Python Playwright.'
+      message: 'Agente generando codigo TypeScript Playwright.'
     });
     await generateTestsWithAgent({
       root,
@@ -708,7 +707,7 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
       domContext,
       usageContext: { runId: run.id, runDir }
     });
-    await appendEvent(runDir, { run_id: run.id, type: 'tests_generated', status: 'running', message: 'Codigo Python Playwright generado.' });
+    await appendEvent(runDir, { run_id: run.id, type: 'tests_generated', status: 'running', message: 'Codigo TypeScript Playwright generado.' });
 
     run.status = 'running';
     await saveRun(runDir, run);
@@ -716,12 +715,11 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
       run_id: run.id,
       type: 'run_started',
       status: run.status,
-      message: 'Ejecucion iniciada en pytest.',
+      message: 'Ejecucion iniciada en Playwright Test.',
       payload: { parallel_workers: config.runner.parallel_workers || 'auto' }
     });
 
-    summary = await runPytest({
-      python,
+    summary = await runPlaywrightTests({
       testsDir: generatedDir,
       runDir,
       plan,
@@ -763,46 +761,45 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
   return summary;
 }
 
-async function runPytest({ python, testsDir, runDir, plan, baseUrl, config, projectRoot, credentials }) {
+async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, projectRoot, credentials }) {
   await fs.mkdir(runDir, { recursive: true });
   const startedAt = nowIso();
-  const junitPath = path.join(runDir, 'junit.xml');
-  const pytestLogPath = path.join(runDir, 'pytest.log');
-  const command = [
-    python,
-    '-m',
-    'pytest',
-    testsDir,
-    '--junitxml',
-    junitPath,
-    ...pytestWorkerArgs(config)
-  ];
+  const reportPath = path.join(runDir, 'playwright-report.json');
+  const playwrightLogPath = path.join(runDir, 'playwright.log');
+  const outputDir = path.join(runDir, 'artifacts', 'playwright');
+  const configPath = path.join(runDir, 'playwright.config.cjs');
   const runnerConfig = {
     browser: config.runner.browser || 'chromium',
     video: config.runner.video || 'on',
-    screenshots: config.runner.screenshots === 'on_failure' ? 'on' : (config.runner.screenshots || 'on'),
+    screenshots: config.runner.screenshots || 'on',
     traces: config.runner.traces || 'retain_on_failure'
   };
+  await writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig });
+  const command = playwrightCommand([
+    'test',
+    '--config',
+    configPath,
+    ...playwrightWorkerArgs(config)
+  ]);
   const env = {
-    ...process.env,
+    ...runtimeEnv(),
     PROGUIDE_BASE_URL: baseUrl,
     PROGUIDE_RUN_DIR: runDir,
     PROGUIDE_BROWSER: runnerConfig.browser,
-    PROGUIDE_VIDEO: runnerConfig.video,
-    PROGUIDE_SCREENSHOTS: runnerConfig.screenshots,
-    PROGUIDE_TRACES: runnerConfig.traces,
-    PYTHONPATH: pythonPathForRunner(projectRoot)
+    PROGUIDE_VIDEO: normalizePlaywrightVideo(runnerConfig.video),
+    PROGUIDE_SCREENSHOTS: normalizePlaywrightScreenshot(runnerConfig.screenshots),
+    PROGUIDE_TRACES: normalizePlaywrightTrace(runnerConfig.traces)
   };
   if (credentials.email) env.PROGUIDE_USER_EMAIL = credentials.email;
   if (credentials.username) env.PROGUIDE_USER_USERNAME = credentials.username;
   if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;
 
-  await fs.writeFile(pytestLogPath, `$ ${command.join(' ')}\n`, 'utf8');
-  const completed = await runProcess(command, { cwd: projectRoot, env, logPath: pytestLogPath });
-  let results = await parsePytestResults({ plan, junitPath, runDir });
-  if (completed.code !== 0 && !(await exists(junitPath))) {
-    const logText = await fs.readFile(pytestLogPath, 'utf8').catch(() => '');
-    const setupMessage = setupFailureMessage(completed.code, logText, relativePath(pytestLogPath, projectRoot));
+  await fs.writeFile(playwrightLogPath, `$ ${command.join(' ')}\n`, 'utf8');
+  const completed = await runProcess(command, { cwd: projectRoot, env, logPath: playwrightLogPath });
+  let results = await parsePlaywrightResults({ plan, reportPath, runDir });
+  if (completed.code !== 0 && !(await exists(reportPath))) {
+    const logText = await fs.readFile(playwrightLogPath, 'utf8').catch(() => '');
+    const setupMessage = setupFailureMessage(completed.code, logText, relativePath(playwrightLogPath, projectRoot));
     results = plan.cases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -825,28 +822,61 @@ async function runPytest({ python, testsDir, runDir, plan, baseUrl, config, proj
   };
 }
 
-export function pytestWorkerArgs(config = {}) {
+async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig }) {
+  await fs.mkdir(path.dirname(configPath), { recursive: true });
+  const configSource = [
+    "const path = require('node:path');",
+    '',
+    'module.exports = {',
+    `  testDir: ${JSON.stringify(testsDir)},`,
+    `  outputDir: ${JSON.stringify(outputDir)},`,
+    `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
+    '  fullyParallel: true,',
+    '  use: {',
+    `    baseURL: process.env.PROGUIDE_BASE_URL || ${JSON.stringify('')},`,
+    `    browserName: process.env.PROGUIDE_BROWSER || ${JSON.stringify(runnerConfig.browser || 'chromium')},`,
+    `    screenshot: process.env.PROGUIDE_SCREENSHOTS || ${JSON.stringify(normalizePlaywrightScreenshot(runnerConfig.screenshots))},`,
+    `    video: process.env.PROGUIDE_VIDEO || ${JSON.stringify(normalizePlaywrightVideo(runnerConfig.video))},`,
+    `    trace: process.env.PROGUIDE_TRACES || ${JSON.stringify(normalizePlaywrightTrace(runnerConfig.traces))}`,
+    '  }',
+    '};',
+    ''
+  ].join('\n');
+  await fs.writeFile(configPath, configSource, 'utf8');
+}
+
+export function playwrightWorkerArgs(config = {}) {
   const rawWorkers = config?.runner?.parallel_workers ?? 'auto';
   const workers = String(rawWorkers ?? '').trim().toLowerCase();
-  if (!workers || ['1', '0', 'false', 'off', 'none'].includes(workers)) return [];
-  if (workers === 'auto') return ['-n', 'auto'];
+  if (!workers || workers === 'auto') return [];
+  if (['1', '0', 'false', 'off', 'none'].includes(workers)) return ['--workers=1'];
 
   const count = Number(rawWorkers);
-  if (Number.isInteger(count) && count > 1) return ['-n', String(count)];
+  if (Number.isInteger(count) && count > 1) return [`--workers=${count}`];
 
   throw new Error(`runner.parallel_workers invalido: ${rawWorkers}. Usa "auto", 1 o un entero mayor que 1.`);
 }
 
-function pythonPathForRunner(projectRoot) {
-  return [
-    packagedPythonRoot(),
-    projectRoot,
-    process.env.PYTHONPATH || ''
-  ].filter(Boolean).join(path.delimiter);
+function normalizePlaywrightScreenshot(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (['on', 'off', 'only-on-failure'].includes(normalized)) return normalized;
+  if (['on-failure', 'failure', 'failed'].includes(normalized)) return 'only-on-failure';
+  return 'only-on-failure';
 }
 
-function packagedPythonRoot() {
-  return path.join(__dirname, 'python');
+function normalizePlaywrightTrace(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (['on', 'off', 'retain-on-failure', 'on-first-retry', 'on-all-retries'].includes(normalized)) return normalized;
+  if (['retain-on-fail', 'retain-on-failed', 'retain-failure'].includes(normalized)) return 'retain-on-failure';
+  return 'retain-on-failure';
+}
+
+function normalizePlaywrightVideo(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+  if (['on', 'off', 'retain-on-failure', 'on-first-retry'].includes(normalized)) return normalized;
+  if (['true', 'yes'].includes(normalized)) return 'on';
+  if (['false', 'no', 'none'].includes(normalized)) return 'off';
+  return 'on';
 }
 
 function runProcess(command, { cwd, env, logPath }) {
@@ -860,45 +890,27 @@ function runProcess(command, { cwd, env, logPath }) {
   });
 }
 
-export async function parsePytestResults({ plan, junitPath, runDir }) {
+export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
+  const caseById = new Map(plan.cases.map((testCase) => [String(testCase.id), testCase]));
   const caseBySafeId = new Map(plan.cases.map((testCase) => [safeId(testCase.id), testCase]));
   const parsed = new Map();
-  if (await exists(junitPath)) {
-    const xml = await fs.readFile(junitPath, 'utf8');
-    const testcaseRe = /<testcase\b([^>]*?)\/>|<testcase\b([^>]*?)>([\s\S]*?)<\/testcase>/g;
-    let match;
-    while ((match = testcaseRe.exec(xml))) {
-      const attrs = parseXmlAttrs(match[1] || match[2] || '');
-      const inner = match[3] || '';
-      const safeCaseId = safeId(String(attrs.name || '').replace(/^test_/, ''));
-      const testCase = caseBySafeId.get(safeCaseId);
+  if (await exists(reportPath)) {
+    const report = await readJson(reportPath, null);
+    for (const spec of collectPlaywrightSpecs(report)) {
+      const testCase = caseFromPlaywrightSpec(spec, caseById, caseBySafeId);
       if (!testCase) continue;
-      let status = 'passed';
-      let message = '';
-      const failure = inner.match(/<failure\b([^>]*)>([\s\S]*?)<\/failure>/);
-      const error = inner.match(/<error\b([^>]*)>([\s\S]*?)<\/error>/);
-      const skipped = inner.match(/<skipped\b([^>]*)>([\s\S]*?)<\/skipped>/);
-      if (failure) {
-        status = 'failed';
-        message = parseXmlAttrs(failure[1]).message || stripXml(failure[2]);
-      } else if (error) {
-        status = 'inconclusive';
-        message = parseXmlAttrs(error[1]).message || stripXml(error[2]);
-      } else if (skipped) {
-        status = 'inconclusive';
-        message = parseXmlAttrs(skipped[1]).message || 'Skipped';
-      }
+      const normalized = normalizePlaywrightSpecResult(spec);
       parsed.set(testCase.id, {
         id: testCase.id,
         title: testCase.title,
-        status,
-        duration_seconds: Number(attrs.time || 0) || 0,
-        message: decodeXml(message),
-        steps: await loadLoggedSteps(runDir, testCase.id) || testCase.steps,
+        status: normalized.status,
+        duration_seconds: normalized.duration_seconds,
+        message: normalized.message,
+        steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,
-        videos: await collectArtifacts(path.join(runDir, 'videos', safeId(testCase.id)), runDir, new Set(['.webm'])),
-        screenshots: await collectArtifacts(path.join(runDir, 'screenshots'), runDir, new Set(['.png']), safeId(testCase.id)),
-        traces: await collectArtifacts(path.join(runDir, 'traces'), runDir, new Set(['.zip']), safeId(testCase.id))
+        videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
+        screenshots: await artifactPaths(runDir, normalized.attachments, new Set(['.png']), safeId(testCase.id)),
+        traces: await artifactPaths(runDir, normalized.attachments, new Set(['.zip']), safeId(testCase.id))
       });
     }
   }
@@ -910,24 +922,123 @@ export async function parsePytestResults({ plan, junitPath, runDir }) {
       title: testCase.title,
       status: 'inconclusive',
       duration_seconds: 0,
-      message: 'No pytest result was found for this case.',
+      message: 'No Playwright result was found for this case.',
       steps: testCase.steps,
       expected: testCase.expected,
-      videos: await collectArtifacts(path.join(runDir, 'videos', safeId(testCase.id)), runDir, new Set(['.webm'])),
-      screenshots: await collectArtifacts(path.join(runDir, 'screenshots'), runDir, new Set(['.png']), safeId(testCase.id)),
-      traces: await collectArtifacts(path.join(runDir, 'traces'), runDir, new Set(['.zip']), safeId(testCase.id))
+      videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
+      screenshots: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.png']), safeId(testCase.id)),
+      traces: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.zip']), safeId(testCase.id))
     });
   }
   return results;
 }
 
-async function collectDomContext({ python, root, runDir, plan, baseUrl, config }) {
+function collectPlaywrightSpecs(report) {
+  const specs = [];
+  const visitSuite = (suite) => {
+    for (const spec of suite?.specs || []) specs.push(spec);
+    for (const child of suite?.suites || []) visitSuite(child);
+  };
+  for (const suite of report?.suites || []) visitSuite(suite);
+  return specs;
+}
+
+function caseFromPlaywrightSpec(spec, caseById, caseBySafeId) {
+  const candidates = [
+    caseIdFromTitle(spec?.title),
+    caseIdFromAnnotations(spec),
+    caseIdFromTitle(spec?.tests?.[0]?.title)
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (caseById.has(candidate)) return caseById.get(candidate);
+    const safe = safeId(candidate);
+    if (caseBySafeId.has(safe)) return caseBySafeId.get(safe);
+  }
+  return null;
+}
+
+function caseIdFromTitle(title) {
+  const text = String(title || '').trim();
+  const bracket = text.match(/^\[([^\]]+)]/);
+  if (bracket) return bracket[1].trim();
+  const prefix = text.match(/^([A-Za-z0-9_.-]+)\s*[:|-]/);
+  return prefix ? prefix[1].trim() : '';
+}
+
+function caseIdFromAnnotations(spec) {
+  const annotations = [
+    ...(spec?.annotations || []),
+    ...((spec?.tests || []).flatMap((test) => test.annotations || []))
+  ];
+  const annotation = annotations.find((item) => item?.type === 'proguide_case' || item?.type === 'case_id');
+  return annotation?.description || '';
+}
+
+function normalizePlaywrightSpecResult(spec) {
+  const test = spec?.tests?.[0] || {};
+  const results = Array.isArray(test.results) ? test.results : [];
+  const result = results.at(-1) || {};
+  const status = playwrightStatus(result.status || test.outcome || spec.ok);
+  const message = playwrightMessage(result);
+  const steps = flattenPlaywrightSteps(result.steps || []);
+  const attachments = results.flatMap((item) => item.attachments || []);
+  const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
+  return {
+    status,
+    duration_seconds: Math.round((duration / 1000) * 1000) / 1000,
+    message,
+    steps,
+    attachments
+  };
+}
+
+function playwrightStatus(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'passed' || normalized === 'expected' || normalized === 'true') return 'passed';
+  if (['failed', 'timedout', 'timedout', 'interrupted', 'unexpected'].includes(normalized)) return 'failed';
+  if (normalized === 'skipped') return 'inconclusive';
+  return normalized ? 'failed' : 'inconclusive';
+}
+
+function playwrightMessage(result) {
+  const errors = [
+    ...(result?.errors || []),
+    result?.error
+  ].filter(Boolean);
+  const first = errors[0];
+  if (!first) return '';
+  return String(first.message || first.value || first.stack || first).trim();
+}
+
+function flattenPlaywrightSteps(steps, prefix = '') {
+  const lines = [];
+  for (const step of steps || []) {
+    const title = String(step.title || '').trim();
+    const label = prefix && title ? `${prefix} > ${title}` : (title || prefix);
+    if (label) lines.push(label);
+    lines.push(...flattenPlaywrightSteps(step.steps || [], label));
+  }
+  return [...new Set(lines)];
+}
+
+async function artifactPaths(runDir, attachments, suffixes, stem) {
+  const direct = [];
+  for (const attachment of attachments || []) {
+    const filePath = attachment.path ? path.resolve(String(attachment.path)) : '';
+    if (!filePath || !suffixes.has(path.extname(filePath).toLowerCase()) || !(await exists(filePath))) continue;
+    direct.push(relativePath(filePath, runDir));
+  }
+  const collected = await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, suffixes, stem);
+  return [...new Set([...direct, ...collected])].sort();
+}
+
+async function collectDomContext({ root, runDir, plan, baseUrl, config }) {
   const cases = (plan.cases || []).slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
   if (!cases.length) return { available: false, error: 'no_plan_cases', by_case_id: {} };
 
   const inputPath = path.join(runDir, 'dom_context_input.json');
   const outputPath = path.join(runDir, 'dom_context.json');
-  const scriptPath = path.join(runDir, 'dom_context_probe.py');
+  const scriptPath = path.join(runDir, 'dom_context_probe.cjs');
   const logPath = path.join(runDir, 'dom_context.log');
   const payload = {
     base_url: baseUrl,
@@ -943,15 +1054,12 @@ async function collectDomContext({ python, root, runDir, plan, baseUrl, config }
 
   await writeJson(inputPath, payload);
   await fs.writeFile(scriptPath, DOM_CONTEXT_PROBE_SCRIPT, 'utf8');
-  await fs.writeFile(logPath, `$ ${python} ${scriptPath} ${inputPath} ${outputPath}\n`, 'utf8');
+  await fs.writeFile(logPath, `$ ${process.execPath} ${scriptPath} ${inputPath} ${outputPath}\n`, 'utf8');
 
   try {
-    const completed = await runProcess([python, scriptPath, inputPath, outputPath], {
+    const completed = await runProcess([process.execPath, scriptPath, inputPath, outputPath], {
       cwd: root,
-      env: {
-        ...process.env,
-        PYTHONPATH: pythonPathForRunner(root)
-      },
+      env: runtimeEnv(),
       logPath
     });
     if (completed.code !== 0 && !(await exists(outputPath))) {
@@ -974,7 +1082,7 @@ async function collectDomContext({ python, root, runDir, plan, baseUrl, config }
 
 async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {}, usageContext = null }) {
   await fs.mkdir(outputDir, { recursive: true });
-  await fs.writeFile(path.join(outputDir, 'conftest.py'), 'pytest_plugins = ["proguide.pytest_plugin"]\n', 'utf8');
+  await writePlaywrightRuntimeShim(outputDir);
 
   const batchSize = positiveInteger(config.llm.max_cases, 12);
   const batches = chunkArray(plan.cases, batchSize);
@@ -992,12 +1100,12 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config, do
       root,
       system: PLAYWRIGHT_CODE_AGENT_PROMPT,
       payload,
-      purpose: `generar codigo Python Playwright (lote ${batchIndex + 1}/${batches.length})`,
+      purpose: `generar codigo TypeScript Playwright (lote ${batchIndex + 1}/${batches.length})`,
       usageContext
     });
     const files = normalizeGeneratedFiles(data);
     if (!files.length) {
-      throw new Error(`El agente no devolvio archivos Python para ejecutar en el lote ${batchIndex + 1}.`);
+      throw new Error(`El agente no devolvio archivos TypeScript para ejecutar en el lote ${batchIndex + 1}.`);
     }
     for (const file of files) {
       const relative = targetGeneratedPath(file.path, batchIndex, batches.length, usedPaths);
@@ -1020,22 +1128,36 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config, do
   await validateGeneratedCode(outputDir, plan);
 }
 
+async function writePlaywrightRuntimeShim(outputDir) {
+  const source = [
+    "import { createRequire } from 'node:module';",
+    `const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || ${JSON.stringify(proguideRequireAnchor())});`,
+    "const runtime = req('@playwright/test');",
+    'export const test = runtime.test;',
+    'export const expect = runtime.expect;',
+    'export default runtime;',
+    ''
+  ].join('\n');
+  await fs.writeFile(path.join(outputDir, 'proguide-test-runtime.mjs'), source, 'utf8');
+}
+
 function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, batchIndex, batchCount }) {
   const outputPath = batchCount > 1
-    ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.py`
-    : 'test_markdown_cases.py';
+    ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`
+    : 'test_markdown_cases.spec.ts';
   return {
     project: {
-      base_url_is_available_as_fixture: 'proguide_base_url',
-      test_runner: 'pytest',
-      browser_library: 'python-playwright-sync',
-      evidence_fixture: 'proguide_steps'
+      base_url_is_available_as_playwright_base_url: true,
+      test_runner: '@playwright/test',
+      browser_library: 'playwright-test-typescript',
+      runtime_shim: './proguide-test-runtime.mjs',
+      required_import: "import { test, expect } from './proguide-test-runtime.mjs';"
     },
     required_output: {
       files: [
         {
           path: outputPath,
-          content: 'complete python source'
+          content: 'complete TypeScript Playwright spec'
         }
       ]
     },
@@ -1047,7 +1169,7 @@ function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, b
       const sourceCase = sourceCases.find((item) => item.id === testCase.id) || {};
       return {
         id: testCase.id,
-        function_name: `test_${safeId(testCase.id)}`,
+        test_title_prefix: `[${testCase.id}]`,
         title: testCase.title,
         description: testCase.description,
         route: testCase.route,
@@ -1079,63 +1201,49 @@ async function loadExistingTestPlan(runDir, cases, run) {
 
 function extractCaseCode(moduleText, caseId) {
   const lines = moduleText.split(/\r?\n/);
-  const start = lines.findIndex((line) => {
-    if (!line.includes('@pytest.mark.proguide_case')) return false;
-    return line.includes(JSON.stringify(caseId)) || line.includes(`'${String(caseId).replace(/'/g, "\\'")}'`);
+  const testLineIndex = lines.findIndex((line) => {
+    const text = String(line);
+    return /\btest\s*\(/.test(text) &&
+      (text.includes(`[${caseId}]`) || text.includes(JSON.stringify(`[${caseId}]`)) || text.includes(String(caseId)));
   });
-  if (start >= 0) {
-    let end = lines.length;
-    for (let index = start + 1; index < lines.length; index += 1) {
-      if (lines[index].startsWith('@pytest.mark.proguide_case')) {
-        end = index;
+  if (testLineIndex >= 0) {
+    let blockEnd = lines.length;
+    for (let index = testLineIndex + 1; index < lines.length; index += 1) {
+      if (/^\s*test\s*\(/.test(lines[index])) {
+        blockEnd = index;
         break;
       }
     }
-    return lines.slice(start, end).join('\n').trim();
+    return lines.slice(testLineIndex, blockEnd).join('\n').trim();
   }
-
-  const functionName = `test_${safeId(caseId)}`;
-  const defIndex = lines.findIndex((line) => line.startsWith(`def ${functionName}(`));
-  if (defIndex < 0) return '';
-  let blockStart = defIndex;
-  while (blockStart > 0 && lines[blockStart - 1].startsWith('@')) {
-    blockStart -= 1;
-  }
-  let blockEnd = lines.length;
-  for (let index = defIndex + 1; index < lines.length; index += 1) {
-    if (lines[index].startsWith('@pytest.mark.proguide_case') || lines[index].startsWith('def test_')) {
-      blockEnd = index;
-      break;
-    }
-  }
-  return lines.slice(blockStart, blockEnd).join('\n').trim();
+  return '';
 }
 
 function normalizeGeneratedFiles(data) {
   const files = Array.isArray(data.files) ? data.files : [];
   return files
     .map((file, index) => ({
-      path: file.path || (index === 0 ? 'test_markdown_cases.py' : `test_generated_${index + 1}.py`),
+      path: file.path || (index === 0 ? 'test_markdown_cases.spec.ts' : `test_generated_${index + 1}.spec.ts`),
       content: file.content || file.code || ''
     }))
     .filter((file) => String(file.content || '').trim());
 }
 
 function safeGeneratedPath(value) {
-  const normalized = String(value || 'test_markdown_cases.py').replace(/\\/g, '/').split('/').filter(Boolean).join('/');
+  const normalized = String(value || 'test_markdown_cases.spec.ts').replace(/\\/g, '/').split('/').filter(Boolean).join('/');
   if (!normalized || normalized.startsWith('..') || path.isAbsolute(normalized)) {
     throw new Error(`Ruta de codigo generada no permitida: ${value}`);
   }
-  if (!normalized.endsWith('.py')) {
-    throw new Error(`El agente genero un archivo no Python: ${normalized}`);
+  if (!/\.spec\.(?:ts|js)$/i.test(normalized)) {
+    throw new Error(`El agente genero un archivo que no es spec TypeScript/JavaScript ejecutable por Playwright: ${normalized}`);
   }
   return normalized;
 }
 
 function targetGeneratedPath(value, batchIndex, batchCount, usedPaths) {
   let relative = safeGeneratedPath(value);
-  if (batchCount > 1 && path.basename(relative) === 'test_markdown_cases.py') {
-    relative = path.posix.join(path.posix.dirname(relative), `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.py`);
+  if (batchCount > 1 && path.basename(relative) === 'test_markdown_cases.spec.ts') {
+    relative = path.posix.join(path.posix.dirname(relative), `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`);
   }
   if (!usedPaths.has(relative)) {
     usedPaths.add(relative);
@@ -1153,22 +1261,22 @@ function targetGeneratedPath(value, batchIndex, batchCount, usedPaths) {
 }
 
 async function validateGeneratedCode(outputDir, plan) {
-  const pythonFiles = [];
+  const specFiles = [];
   await walk(outputDir, async (filePath) => {
-    if (path.extname(filePath).toLowerCase() === '.py' && path.basename(filePath) !== 'conftest.py') {
-      pythonFiles.push(filePath);
+    if (/\.spec\.(?:ts|js)$/i.test(path.basename(filePath))) {
+      specFiles.push(filePath);
     }
   });
-  if (!pythonFiles.length) {
-    throw new Error('No se genero ningun archivo de test Python.');
+  if (!specFiles.length) {
+    throw new Error('No se genero ningun archivo de test TypeScript.');
   }
-  const combined = (await Promise.all(pythonFiles.map((filePath) => fs.readFile(filePath, 'utf8')))).join('\n');
+  const combined = (await Promise.all(specFiles.map((filePath) => fs.readFile(filePath, 'utf8')))).join('\n');
+  if (!combined.includes("from './proguide-test-runtime.mjs'") && !combined.includes('from "./proguide-test-runtime.mjs"')) {
+    throw new Error('El codigo generado no importa el runtime shim de ProGuide.');
+  }
   for (const testCase of plan.cases) {
-    if (!combined.includes(`proguide_case(${JSON.stringify(testCase.id)})`) && !combined.includes(`proguide_case('${String(testCase.id).replace(/'/g, "\\'")}')`)) {
-      throw new Error(`El codigo generado no incluye el marcador proguide_case para ${testCase.id}.`);
-    }
-    if (!combined.includes(`def test_${safeId(testCase.id)}(`)) {
-      throw new Error(`El codigo generado no incluye la funcion test_${safeId(testCase.id)}.`);
+    if (!combined.includes(`[${testCase.id}]`)) {
+      throw new Error(`El codigo generado no incluye el prefijo de test [${testCase.id}].`);
     }
   }
 }
@@ -1756,57 +1864,13 @@ async function callJsonModel(config, { root, system, payload, purpose, usageCont
   if (provider === 'disabled') {
     throw new Error(`El agente LLM esta deshabilitado; no se puede ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
   }
-  if (provider === 'openai') {
-    const apiKey = providerApiKey('openai');
-    if (!apiKey.value) throw new Error(`Falta OPENAI_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey.value}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: config.llm.model,
-        temperature: Number(config.llm.temperature ?? 0.2),
-        max_tokens: maxOutputTokens,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: JSON.stringify(payload) }
-        ]
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`OpenAI fallo al ${purpose} (${response.status}): ${await response.text()}`);
-    }
-    const data = await response.json();
-    await recordLlmUsage({
-      root,
-      runId: usageContext?.runId || null,
-      runDir: usageContext?.runDir || null,
-      provider,
-      model: config.llm.model,
-      purpose,
-      usage: data.usage,
-      request: { max_output_tokens: maxOutputTokens }
-    }).catch(() => {});
-    const choice = data.choices?.[0] || {};
-    if (choice.finish_reason === 'length') {
-      throw new Error(`OpenAI trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`);
-    }
-    return extractJson(choice.message?.content || '', { purpose, provider, maxOutputTokens, configPath });
-  }
   if (provider === 'anthropic') {
-    const apiKey = providerApiKey('anthropic');
+    const apiKey = anthropicApiKey();
     if (!apiKey.value) throw new Error(`Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey.value,
-        'anthropic-version': '2023-06-01',
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    const client = new Anthropic({ apiKey: apiKey.value });
+    let data;
+    try {
+      data = await client.messages.create({
         model: config.llm.model,
         max_tokens: maxOutputTokens,
         temperature: Number(config.llm.temperature ?? 0.2),
@@ -1814,12 +1878,10 @@ async function callJsonModel(config, { root, system, payload, purpose, usageCont
         messages: [
           { role: 'user', content: JSON.stringify(payload) }
         ]
-      })
-    });
-    if (!response.ok) {
-      throw new Error(`Anthropic fallo al ${purpose} (${response.status}): ${await response.text()}`);
+      });
+    } catch (error) {
+      throw new Error(`Anthropic fallo al ${purpose}${anthropicErrorDetails(error)}`);
     }
-    const data = await response.json();
     await recordLlmUsage({
       root,
       runId: usageContext?.runId || null,
@@ -1838,13 +1900,20 @@ async function callJsonModel(config, { root, system, payload, purpose, usageCont
     }
     return extractJson(text, { purpose, provider, maxOutputTokens, configPath });
   }
-  throw new Error(`Proveedor LLM no soportado: ${provider}. Root efectivo: ${root}. Config: ${configPath}.`);
+  throw new Error(`Proveedor LLM no soportado: ${provider}. ProGuide solo soporta anthropic. Root efectivo: ${root}. Config: ${configPath}.`);
 }
 
-function providerApiKey(provider) {
-  const names = provider === 'anthropic'
-    ? ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY']
-    : ['OPENAI_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY'];
+function anthropicErrorDetails(error) {
+  if (error instanceof Anthropic.APIError) {
+    const status = error.status ? ` (${error.status})` : '';
+    const message = error.message || error.name || 'sin detalle';
+    return `${status}: ${message}`;
+  }
+  return `: ${error?.message || String(error)}`;
+}
+
+function anthropicApiKey() {
+  const names = ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY'];
   const name = names.find((item) => process.env[item]);
   return { name: name || names[0], value: name ? process.env[name] : '' };
 }
@@ -1915,7 +1984,7 @@ async function loadUiConfig(root) {
       browser: 'chromium',
       parallel_workers: 'auto',
       video: 'on',
-      screenshots: 'on_failure',
+      screenshots: 'on',
       traces: 'retain_on_failure'
     },
     identity: {
@@ -2756,27 +2825,6 @@ async function walk(directory, onFile) {
   }
 }
 
-function parseXmlAttrs(text) {
-  const attrs = {};
-  const attrRe = /([A-Za-z_:][-A-Za-z0-9_:.]*)="([^"]*)"/g;
-  let match;
-  while ((match = attrRe.exec(text))) attrs[match[1]] = decodeXml(match[2]);
-  return attrs;
-}
-
-function stripXml(text) {
-  return decodeXml(String(text || '').replace(/<[^>]+>/g, '').trim());
-}
-
-function decodeXml(text) {
-  return String(text || '')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
-}
-
 function countSummary(summary) {
   const counts = { passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 };
   for (const result of summary.results || []) {
@@ -2800,7 +2848,7 @@ function statusFromSummary(counts, blocked) {
 
 function setupFailureMessage(exitCode, logText, relativeLogPath) {
   const firstUseful = firstUsefulLogLine(logText);
-  const reason = firstUseful || `pytest exited with code ${exitCode}`;
+  const reason = firstUseful || `playwright test exited with code ${exitCode}`;
   return `setup_failed: ${reason}. See ${relativeLogPath}. Run proguide doctor --fix.`;
 }
 
@@ -2808,7 +2856,7 @@ function firstUsefulLogLine(logText) {
   return String(logText || '')
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .find((line) => /ModuleNotFoundError|ImportError|No module named|Error|Traceback|pytest: error|Target page|Timeout|ERR_/i.test(line)) || '';
+    .find((line) => /Cannot find module|Error|Traceback|Target page|Timeout|ERR_|playwright/i.test(line)) || '';
 }
 
 function chunkArray(items, size) {
