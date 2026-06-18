@@ -34,10 +34,29 @@ const casesInputSchema = {
     additionalProperties: true,
     properties: {
       id: { type: 'string' },
+      type: { type: 'string', description: 'ui o api. Usa api para casos REST/HTTP.' },
       title: { type: 'string' },
       description: { type: 'string' },
       priority: { type: 'string' },
       route: { type: 'string' },
+      request: {
+        type: 'object',
+        additionalProperties: true,
+        description: 'Request REST para type=api.',
+        properties: {
+          method: { type: 'string' },
+          path: { type: 'string' },
+          headers: { type: 'object', additionalProperties: true },
+          query: { type: 'object', additionalProperties: true },
+          body: {},
+          expected_status: { type: 'number' }
+        }
+      },
+      assertions: {
+        type: 'array',
+        description: 'Aserciones REST, por ejemplo {path:"id", equals:123} o {status:201}.',
+        items: { type: 'object', additionalProperties: true }
+      },
       preconditions: { type: 'array', items: { type: 'string' } },
       data_used: { type: 'array', items: { type: 'string' } },
       data: { type: 'object', additionalProperties: true },
@@ -346,7 +365,7 @@ async function callTool(name, args) {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
     const viewer = await attachViewer(root, prepared.run.id, args);
-    await ensurePlaywrightRuntime(root);
+    await ensurePlaywrightRuntime(root, { requireBrowser: casesRequireBrowser(prepared.cases) });
     const summary = await executePreparedRun({
       root,
       runId: prepared.run.id,
@@ -382,12 +401,15 @@ async function callTool(name, args) {
   if (name === 'execute_run') {
     const root = resolveRoot(args.root);
     let runId = args.run_id ? cleanHandle(args.run_id, 'run_id') : '';
+    let preparedCases = null;
     if (!runId) {
       const prepared = await prepareRunFromArgs(root, args);
       runId = prepared.run.id;
+      preparedCases = prepared.cases;
     }
     const viewer = await attachViewer(root, runId, args);
-    await ensurePlaywrightRuntime(root);
+    const cases = preparedCases || (await loadRunBundle(root, runId)).cases;
+    await ensurePlaywrightRuntime(root, { requireBrowser: casesRequireBrowser(cases) });
     const summary = await executePreparedRun({
       root,
       runId,
@@ -568,6 +590,11 @@ function credentialsFromArgs(args) {
     username: args.username || '',
     password: args.password || ''
   };
+}
+
+function casesRequireBrowser(cases = []) {
+  if (!Array.isArray(cases) || !cases.length) return true;
+  return cases.some((testCase) => String(testCase.type || '').toLowerCase() !== 'api' && !(testCase.request?.method && testCase.request?.path));
 }
 
 function cleanHandle(value, label) {

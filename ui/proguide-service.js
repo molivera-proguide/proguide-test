@@ -85,6 +85,33 @@ const FIELD_ALIASES = {
   dev: 'dev_owner',
   ticket: 'ticket',
   requerimiento: 'ticket',
+  tipo: 'test_type',
+  type: 'test_type',
+  kind: 'test_type',
+  clase: 'test_type',
+  metodo: 'request_method',
+  method: 'request_method',
+  verbo: 'request_method',
+  endpoint: 'request_path',
+  path: 'request_path',
+  url_api: 'request_path',
+  'api url': 'request_path',
+  header: 'request_headers',
+  headers: 'request_headers',
+  cabecera: 'request_headers',
+  cabeceras: 'request_headers',
+  query: 'request_query',
+  params: 'request_query',
+  parametros: 'request_query',
+  body: 'request_body',
+  payload: 'request_body',
+  cuerpo: 'request_body',
+  'request body': 'request_body',
+  status: 'expected_status',
+  'status esperado': 'expected_status',
+  'estado http': 'expected_status',
+  'codigo http': 'expected_status',
+  'codigo de estado': 'expected_status',
   ruta: 'route',
   route: 'route',
   url: 'route'
@@ -95,6 +122,8 @@ const NOT_AUTOMATABLE_RE = /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono
 const REVIEW_STEP_RE = /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
 const BULLET_CHARS = '\u2022\u25e6\u2043\u2219\u00b7\u2014\u2013\ufffd';
 const NAVIGATION_RE = /\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b/i;
+const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
+const API_CASE_TYPES = new Set(['api', 'rest', 'restful', 'http', 'api rest', 'api restful']);
 
 const MARKDOWN_AGENT_PROMPT = `You are a senior QA analyst converting Markdown test cases into structured cases.
 Return only valid JSON. No markdown.
@@ -129,6 +158,7 @@ Rules:
   - expect [selector] to contain text "value" -> assert that exact text
   - expect [selector] to be visible -> assert visibility
   - expect text "value" -> assert visible text containing value
+- API/REST cases are normally generated deterministically by ProGuide. If a case with type "api" appears, use Playwright request fixtures, not browser page locators.
 - Do not use PROGUIDE_USER_* environment credentials when the step contains a literal email, username, password, or value.
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
 - If a test case includes data.user.email or data.user.password, prefer those per-case values for inputs over global defaults.
@@ -671,27 +701,41 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
 
   let summary;
   try {
-    await appendEvent(runDir, {
-      run_id: run.id,
-      type: 'dom_context_started',
-      status: run.status,
-      message: 'Abriendo browser para leer contexto visible de la app.'
-    });
-    const domContext = await collectDomContext({
-      root,
-      runDir,
-      plan,
-      baseUrl: actualBaseUrl,
-      config
-    });
-    await appendEvent(runDir, {
-      run_id: run.id,
-      type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',
-      status: run.status,
-      message: domContext.available
-        ? `Contexto DOM recolectado para ${Object.keys(domContext.by_case_id || {}).length} caso(s).`
-        : `Contexto DOM no disponible: ${domContext.error || 'sin datos'}.`
-    });
+    let domContext = {
+      available: false,
+      error: 'api_cases_do_not_require_dom_context',
+      by_case_id: {}
+    };
+    if (plan.cases.some((testCase) => !isApiPlanCase(testCase))) {
+      await appendEvent(runDir, {
+        run_id: run.id,
+        type: 'dom_context_started',
+        status: run.status,
+        message: 'Abriendo browser para leer contexto visible de la app.'
+      });
+      domContext = await collectDomContext({
+        root,
+        runDir,
+        plan,
+        baseUrl: actualBaseUrl,
+        config
+      });
+      await appendEvent(runDir, {
+        run_id: run.id,
+        type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',
+        status: run.status,
+        message: domContext.available
+          ? `Contexto DOM recolectado para ${Object.keys(domContext.by_case_id || {}).length} caso(s).`
+          : `Contexto DOM no disponible: ${domContext.error || 'sin datos'}.`
+      });
+    } else {
+      await appendEvent(runDir, {
+        run_id: run.id,
+        type: 'dom_context_skipped',
+        status: run.status,
+        message: 'Contexto DOM omitido: el run contiene solo casos REST API.'
+      });
+    }
     await appendEvent(runDir, {
       run_id: run.id,
       type: 'code_generation_started',
@@ -1033,7 +1077,9 @@ async function artifactPaths(runDir, attachments, suffixes, stem) {
 }
 
 async function collectDomContext({ root, runDir, plan, baseUrl, config }) {
-  const cases = (plan.cases || []).slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
+  const cases = (plan.cases || [])
+    .filter((testCase) => !isApiPlanCase(testCase))
+    .slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
   if (!cases.length) return { available: false, error: 'no_plan_cases', by_case_id: {} };
 
   const inputPath = path.join(runDir, 'dom_context_input.json');
@@ -1084,9 +1130,27 @@ async function generateTestsWithAgent({ root, plan, cases, outputDir, config, do
   await fs.mkdir(outputDir, { recursive: true });
   await writePlaywrightRuntimeShim(outputDir);
 
+  const apiCases = (plan.cases || []).filter(isApiPlanCase);
+  const uiCases = (plan.cases || []).filter((testCase) => !isApiPlanCase(testCase));
+  if (apiCases.length) {
+    await fs.writeFile(path.join(outputDir, 'test_api_cases.spec.ts'), generateApiTestSpec(apiCases), 'utf8');
+    if (usageContext?.runDir) {
+      await appendEvent(usageContext.runDir, {
+        run_id: usageContext.runId,
+        type: 'code_generation_progress',
+        status: 'generating',
+        message: `Codigo REST generado sin LLM para ${apiCases.length} caso(s).`,
+        payload: {
+          cases: apiCases.map((testCase) => testCase.id)
+        }
+      });
+    }
+  }
+
   const batchSize = positiveInteger(config.llm.max_cases, 12);
-  const batches = chunkArray(plan.cases, batchSize);
+  const batches = chunkArray(uiCases, batchSize);
   const usedPaths = new Set();
+  if (apiCases.length) usedPaths.add('test_api_cases.spec.ts');
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     const batchCases = batches[batchIndex];
     const payload = buildCodeGenerationPayload({
@@ -1170,9 +1234,12 @@ function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, b
       return {
         id: testCase.id,
         test_title_prefix: `[${testCase.id}]`,
+        type: testCase.type || 'ui',
         title: testCase.title,
         description: testCase.description,
         route: testCase.route,
+        request: testCase.request || null,
+        assertions: testCase.assertions || [],
         priority: testCase.priority,
         steps: testCase.steps,
         expected: testCase.expected,
@@ -1281,24 +1348,188 @@ async function validateGeneratedCode(outputDir, plan) {
   }
 }
 
+function isApiPlanCase(testCase) {
+  return String(testCase?.type || '').toLowerCase() === 'api' ||
+    Boolean(testCase?.request?.method && testCase?.request?.path);
+}
+
+function generateApiTestSpec(planCases) {
+  const cases = planCases.map((testCase) => {
+    const request = normalizeApiRequest({
+      ...(testCase.request || {}),
+      route: testCase.route,
+      steps: testCase.steps || [],
+      expected: testCase.expected || []
+    });
+    return {
+      id: testCase.id,
+      title: testCase.title,
+      request,
+      assertions: normalizeApiAssertions({
+        assertions: testCase.assertions || [],
+        expected: testCase.expected || [],
+        expectedStatus: request.expected_status
+      })
+    };
+  });
+  const markers = cases.map((testCase) => `// [${testCase.id}] ${testCase.title}`).join('\n');
+  const declarations = cases.map((testCase) => {
+    const caseSource = JSON.stringify(testCase, null, 2)
+      .split('\n')
+      .map((line, index) => index === 0 ? line : `  ${line}`)
+      .join('\n');
+    return [
+      `test(${JSON.stringify(`[${testCase.id}] ${testCase.title}`)}, async ({ request }) => {`,
+      `  const testCase = ${caseSource};`,
+      '  await runApiCase(request, testCase);',
+      '});'
+    ].join('\n');
+  }).join('\n\n');
+  return [
+    "import { test, expect } from './proguide-test-runtime.mjs';",
+    '',
+    markers,
+    declarations,
+    '',
+    'async function runApiCase(request, testCase) {',
+    '    const response = await test.step(`${testCase.request.method} ${testCase.request.path}`, async () => {',
+    '      return request.fetch(testCase.request.path, requestOptions(testCase.request));',
+    '    });',
+    '',
+    '    let responseBody = null;',
+    '    if (needsResponseBody(testCase.assertions)) {',
+    "      responseBody = await test.step('read response body', async () => readResponseBody(response));",
+    '    }',
+    '',
+    '    for (const assertion of testCase.assertions) {',
+    '      await test.step(assertionTitle(assertion), async () => {',
+    '        await applyAssertion({ assertion, response, responseBody });',
+    '      });',
+    '    }',
+    '}',
+    '',
+    'function requestOptions(apiRequest) {',
+    '  const options = { method: apiRequest.method };',
+    '  if (apiRequest.headers && Object.keys(apiRequest.headers).length) options.headers = apiRequest.headers;',
+    '  if (apiRequest.query && Object.keys(apiRequest.query).length) options.params = apiRequest.query;',
+    '  if (apiRequest.body !== undefined && apiRequest.body !== null) options.data = apiRequest.body;',
+    '  return options;',
+    '}',
+    '',
+    'function needsResponseBody(assertions) {',
+    "  return assertions.some((assertion) => ['body_path', 'body_contains'].includes(assertion.type));",
+    '}',
+    '',
+    'async function readResponseBody(response) {',
+    '  const text = await response.text();',
+    "  if (!text) return null;",
+    "  const contentType = response.headers()['content-type'] || '';",
+    "  if (contentType.includes('json') || /^[\\s]*[\\[{]/.test(text)) {",
+    '    try {',
+    '      return JSON.parse(text);',
+    '    } catch {',
+    '      return text;',
+    '    }',
+    '  }',
+    '  return text;',
+    '}',
+    '',
+    'async function applyAssertion({ assertion, response, responseBody }) {',
+    "  if (assertion.type === 'status') {",
+    '    expect(response.status()).toBe(assertion.expected);',
+    '    return;',
+    '  }',
+    "  if (assertion.type === 'ok') {",
+    '    expect(response.ok()).toBeTruthy();',
+    '    return;',
+    '  }',
+    "  if (assertion.type === 'header') {",
+    "    const actual = response.headers()[String(assertion.name || '').toLowerCase()] || '';",
+    "    if (assertion.operator === 'contains') expect(actual).toContain(String(assertion.expected));",
+    '    else expect(actual).toBe(String(assertion.expected));',
+    '    return;',
+    '  }',
+    "  if (assertion.type === 'body_contains') {",
+    "    const text = typeof responseBody === 'string' ? responseBody : JSON.stringify(responseBody);",
+    '    expect(text).toContain(String(assertion.expected));',
+    '    return;',
+    '  }',
+    "  if (assertion.type === 'body_path') {",
+    '    const actual = valueAtPath(responseBody, assertion.path);',
+    "    if (assertion.operator === 'exists') {",
+    '      expect(actual).not.toBeUndefined();',
+    '      return;',
+    '    }',
+    "    if (assertion.operator === 'contains') {",
+    '      if (Array.isArray(actual)) expect(actual).toContain(assertion.expected);',
+    '      else expect(String(actual)).toContain(String(assertion.expected));',
+    '      return;',
+    '    }',
+    '    expect(actual).toEqual(assertion.expected);',
+    '  }',
+    '}',
+    '',
+    'function valueAtPath(source, path) {',
+    '  if (source === null || source === undefined) return undefined;',
+    "  const parts = String(path || '').replace(/\\[(\\d+)\\]/g, '.$1').split('.').filter(Boolean);",
+    '  let current = source;',
+    '  for (const part of parts) {',
+    '    if (current === null || current === undefined) return undefined;',
+    '    current = current[part];',
+    '  }',
+    '  return current;',
+    '}',
+    '',
+    'function assertionTitle(assertion) {',
+    "  if (assertion.type === 'status') return `status is ${assertion.expected}`;",
+    "  if (assertion.type === 'ok') return 'response is successful';",
+    "  if (assertion.type === 'header') return `header ${assertion.name} ${assertion.operator || 'equals'} ${assertion.expected}`;",
+    "  if (assertion.type === 'body_contains') return `body contains ${assertion.expected}`;",
+    "  if (assertion.type === 'body_path') return `body.${assertion.path} ${assertion.operator || 'equals'} ${assertion.expected ?? ''}`;",
+    "  return 'api assertion';",
+    '}',
+    ''
+  ].join('\n');
+}
+
 function casesToTestPlan(cases, { sourceMd, appName }) {
   const plannedCases = [];
   for (const testCase of cases) {
     if (testCase.excluded) continue;
     if (testCase.automation_state !== 'listo') continue;
+    const type = testCase.type === 'api' ? 'api' : 'ui';
+    const request = type === 'api'
+      ? normalizeApiRequest({
+        ...(testCase.request || {}),
+        route: testCase.route,
+        steps: testCase.original_steps || [],
+        expected: testCase.expected_results || []
+      })
+      : null;
     const steps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
     const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
-    const route = inferCaseRoute(testCase.route, testCase.original_steps, testCase.executable_steps);
+    const route = type === 'api'
+      ? (request.path || testCase.route || '/')
+      : inferCaseRoute(testCase.route, testCase.original_steps, testCase.executable_steps);
     plannedCases.push({
       id: testCase.id,
       feature_id: 'markdown_cases',
       scenario_id: testCase.id,
+      type,
       title: testCase.title,
       description: testCase.description || testCase.title,
       route,
+      request,
+      assertions: type === 'api' ? normalizeApiAssertions({
+        assertions: testCase.assertions || [],
+        expected: testCase.expected_results || [],
+        expectedStatus: request?.expected_status
+      }) : [],
       priority: priorityForPlan(testCase.priority),
-      steps: steps.length ? steps : ['go to /'],
-      expected: (testCase.expected_results || []).length ? testCase.expected_results : ['page is visible'],
+      steps: steps.length ? steps : (type === 'api' ? [`api ${request.method} ${request.path}`] : ['go to /']),
+      expected: (testCase.expected_results || []).length
+        ? testCase.expected_results
+        : (type === 'api' ? [`status ${request.expected_status ?? 200}`] : ['page is visible']),
       data: {
         ...caseData,
         preconditions: testCase.preconditions || [],
@@ -1408,7 +1639,14 @@ function parseBlock(block, number) {
     original_steps: [],
     expected_results: [],
     tags: [],
-    route: '/'
+    route: '/',
+    test_type: '',
+    request_method: '',
+    request_path: '',
+    request_headers: [],
+    request_query: [],
+    request_body: [],
+    expected_status: ''
   };
   let currentField = null;
   const originalLines = [`## ${block.heading}`, ...block.lines];
@@ -1445,12 +1683,32 @@ function parseBlock(block, number) {
   fields.original_steps = cleanList(fields.original_steps);
   fields.expected_results = cleanList(fields.expected_results);
   fields.route = inferCaseRoute(fields.route, fields.original_steps);
+  const request = normalizeApiRequest({
+    type: fields.test_type,
+    route: fields.route,
+    method: fields.request_method,
+    path: fields.request_path,
+    headers: fields.request_headers,
+    query: fields.request_query,
+    body: fields.request_body,
+    expected_status: fields.expected_status,
+    steps: fields.original_steps,
+    expected: fields.expected_results
+  });
+  const type = inferCaseType({
+    type: fields.test_type,
+    request,
+    steps: fields.original_steps,
+    expected: fields.expected_results
+  });
+  const executableSteps = buildSteps(fields.original_steps);
 
   const title = String(fields.title || `Caso ${number}`).trim();
-  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results);
+  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, { type, request });
   return {
     id: safeId(`caso_${number}_${title}`),
     number,
+    type,
     title,
     description: String(fields.description || '').trim(),
     priority: fields.priority,
@@ -1458,8 +1716,13 @@ function parseBlock(block, number) {
     preconditions: fields.preconditions,
     data_used: maskSecretLines(fields.data_used),
     data: fields.data,
+    request: type === 'api' ? request : null,
+    assertions: type === 'api' ? normalizeApiAssertions({
+      expected: fields.expected_results,
+      expectedStatus: request.expected_status
+    }) : [],
     original_steps: fields.original_steps,
-    executable_steps: buildSteps(fields.original_steps),
+    executable_steps: executableSteps,
     expected_results: fields.expected_results,
     confidence,
     automation_state: automationState,
@@ -1498,10 +1761,327 @@ function buildSteps(originalSteps) {
   }));
 }
 
+function inferCaseType({ type, request, steps = [] } = {}) {
+  const explicitType = norm(type).replace(/[_-]+/g, ' ');
+  if (API_CASE_TYPES.has(explicitType)) return 'api';
+  if (request?.method && request?.path) return 'api';
+  if (cleanList(steps).some((step) => normalizeApiStep(step))) return 'api';
+  return 'ui';
+}
+
+function normalizeApiStep(step) {
+  const request = apiRequestFromStep(step);
+  if (!request) return null;
+  const body = request.body === undefined ? '' : ` body ${stringifyInlineValue(request.body)}`;
+  return `api ${request.method} ${request.path}${body}`;
+}
+
+function apiRequestFromStep(step) {
+  const text = String(step || '').trim();
+  const match = text.match(/^(?:(?:api|rest|http|request|llamar|invocar)\s+)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)(.*)$/i);
+  if (!match) return null;
+  const method = normalizeHttpMethod(match[1]);
+  const requestPath = normalizeApiPath(match[2]);
+  if (!method || !requestPath) return null;
+  const tail = String(match[3] || '').trim();
+  const bodyMatch = tail.match(/(?:body|payload|cuerpo)\s*[:=]\s*(.+)$/i);
+  const body = bodyMatch ? parseLooseValue(bodyMatch[1]) : undefined;
+  return { method, path: requestPath, body };
+}
+
+function normalizeApiRequest(input = {}) {
+  const stepRequest = cleanList(input.steps || [])
+    .map(apiRequestFromStep)
+    .find(Boolean) || {};
+  const method = normalizeHttpMethod(
+    input.method ||
+    input.request_method ||
+    input.http_method ||
+    stepRequest.method ||
+    ''
+  );
+  const requestPath = normalizeApiPath(
+    input.path ||
+    input.endpoint ||
+    input.request_path ||
+    input.url ||
+    input.route ||
+    stepRequest.path ||
+    ''
+  );
+  const body = normalizeRequestBody(
+    input.body ??
+    input.payload ??
+    input.request_body ??
+    stepRequest.body
+  );
+  const expectedStatus = normalizeExpectedStatus(
+    input.expected_status ??
+    input.status_code ??
+    input.status ??
+    parseExpectedStatus(cleanList(input.expected || []).join('\n'))
+  );
+  const request = {
+    method: method || (requestPath ? 'GET' : ''),
+    path: requestPath,
+    headers: normalizeKeyValueObject(input.headers || input.request_headers),
+    query: normalizeKeyValueObject(input.query || input.params || input.request_query),
+    expected_status: expectedStatus
+  };
+  if (body !== undefined) request.body = body;
+  return request;
+}
+
+function normalizeHttpMethod(value) {
+  const method = String(value || '').trim().toUpperCase();
+  return HTTP_METHODS.has(method) ? method : '';
+}
+
+function normalizeApiPath(value) {
+  const text = String(value || '').trim().replace(/[.,;]+$/, '');
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text;
+  return text.startsWith('/') ? text : `/${text}`;
+}
+
+function normalizeApiAssertions({ assertions = [], expected = [], expectedStatus = null } = {}) {
+  const normalized = [];
+  const status = normalizeExpectedStatus(expectedStatus) ?? parseExpectedStatus(cleanList(expected).join('\n'));
+  if (status !== null) normalized.push({ type: 'status', expected: status });
+  for (const assertion of assertions || []) {
+    const parsed = normalizeApiAssertion(assertion);
+    if (parsed) normalized.push(parsed);
+  }
+  for (const line of cleanList(expected)) {
+    const parsed = parseExpectedApiAssertion(line);
+    if (parsed && !(parsed.type === 'status' && normalized.some((item) => item.type === 'status'))) {
+      normalized.push(parsed);
+    }
+  }
+  if (!normalized.length) normalized.push({ type: 'ok' });
+  return normalized;
+}
+
+function normalizeApiAssertion(assertion) {
+  if (!assertion) return null;
+  if (typeof assertion === 'string') return parseExpectedApiAssertion(assertion);
+  if (!isPlainObject(assertion)) return null;
+  if (assertion.type === 'status') {
+    const expected = normalizeExpectedStatus(assertion.expected ?? assertion.status ?? assertion.status_code);
+    return expected === null ? null : { type: 'status', expected };
+  }
+  if (assertion.type === 'ok') return { type: 'ok' };
+  if (assertion.type === 'header') {
+    return {
+      type: 'header',
+      name: String(assertion.name || assertion.header || '').toLowerCase(),
+      operator: assertion.operator === 'contains' ? 'contains' : 'equals',
+      expected: parseLooseValue(assertion.expected ?? assertion.value ?? '')
+    };
+  }
+  if (assertion.type === 'body_contains') {
+    return {
+      type: 'body_contains',
+      expected: parseLooseValue(assertion.expected ?? assertion.value ?? '')
+    };
+  }
+  if (assertion.type === 'body_path') {
+    const operator = ['exists', 'contains'].includes(assertion.operator) ? assertion.operator : 'equals';
+    const normalized = {
+      type: 'body_path',
+      path: String(assertion.path || assertion.field || assertion.json_path || ''),
+      operator
+    };
+    if (operator !== 'exists') normalized.expected = parseLooseValue(assertion.expected ?? assertion.value ?? assertion.equals ?? assertion.contains);
+    return normalized.path ? normalized : null;
+  }
+  const status = normalizeExpectedStatus(assertion.status ?? assertion.status_code ?? assertion.expected_status);
+  if (status !== null) return { type: 'status', expected: status };
+  const header = assertion.header || assertion.header_name;
+  if (header) {
+    return {
+      type: 'header',
+      name: String(header).toLowerCase(),
+      operator: assertion.contains !== undefined ? 'contains' : 'equals',
+      expected: parseLooseValue(assertion.contains ?? assertion.equals ?? assertion.expected ?? assertion.value ?? '')
+    };
+  }
+  const pathValue = assertion.path || assertion.json_path || assertion.field || assertion.body_path;
+  if (pathValue) {
+    if (assertion.exists === true) {
+      return { type: 'body_path', path: String(pathValue), operator: 'exists' };
+    }
+    if (assertion.contains !== undefined) {
+      return {
+        type: 'body_path',
+        path: String(pathValue),
+        operator: 'contains',
+        expected: parseLooseValue(assertion.contains)
+      };
+    }
+    return {
+      type: 'body_path',
+      path: String(pathValue),
+      operator: 'equals',
+      expected: parseLooseValue(assertion.equals ?? assertion.expected ?? assertion.value)
+    };
+  }
+  if (assertion.body_contains !== undefined || assertion.contains !== undefined) {
+    return {
+      type: 'body_contains',
+      expected: parseLooseValue(assertion.body_contains ?? assertion.contains)
+    };
+  }
+  return null;
+}
+
+function parseExpectedApiAssertion(line) {
+  const text = stripMarkdownEmphasis(stripListMarker(String(line || '').trim()));
+  if (!text) return null;
+  const status = parseExpectedStatus(text);
+  if (status !== null) return { type: 'status', expected: status };
+
+  const ascii = stripAccents(text);
+  let match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s*(?:=|==|equals?|es|sea)\s*(.+)$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: match[1],
+      operator: 'equals',
+      expected: parseLooseValue(match[2])
+    };
+  }
+  match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s+(?:exists?|existe|presente)$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: match[1],
+      operator: 'exists'
+    };
+  }
+  match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s+(?:contains?|contiene)\s+(.+)$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: match[1],
+      operator: 'contains',
+      expected: parseLooseValue(match[2])
+    };
+  }
+  match = ascii.match(/^headers?\s+([A-Za-z0-9_-]+)\s+(?:contains?|contiene)\s+(.+)$/i);
+  if (match) {
+    return {
+      type: 'header',
+      name: match[1].toLowerCase(),
+      operator: 'contains',
+      expected: parseLooseValue(match[2])
+    };
+  }
+  match = ascii.match(/^headers?\s+([A-Za-z0-9_-]+)\s*(?:=|==|equals?|es)\s*(.+)$/i);
+  if (match) {
+    return {
+      type: 'header',
+      name: match[1].toLowerCase(),
+      operator: 'equals',
+      expected: parseLooseValue(match[2])
+    };
+  }
+  match = ascii.match(/^(?:body|response|json)\s+(?:contains?|contiene)\s+(.+)$/i);
+  if (match) {
+    return {
+      type: 'body_contains',
+      expected: parseLooseValue(match[1])
+    };
+  }
+  return null;
+}
+
+function parseExpectedStatus(value) {
+  const text = String(value || '');
+  const normalized = norm(text);
+  if (!/\b(status|estado|codigo|http)\b/.test(normalized) && !/^\s*[1-5][0-9]{2}\s*$/.test(text)) {
+    return null;
+  }
+  const match = text.match(/\b([1-5][0-9]{2})\b/);
+  return match ? normalizeExpectedStatus(match[1]) : null;
+}
+
+function normalizeExpectedStatus(value) {
+  const number = Number(String(value ?? '').match(/[1-5][0-9]{2}/)?.[0] ?? NaN);
+  return Number.isInteger(number) && number >= 100 && number <= 599 ? number : null;
+}
+
+function normalizeKeyValueObject(value) {
+  if (value === undefined || value === null || value === '') return {};
+  if (isPlainObject(value)) {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key, entry]) => key && entry !== undefined && !isSecretKey(key))
+      .map(([key, entry]) => [String(key), parseLooseValue(entry)]));
+  }
+  const parsed = parseJsonObject(value);
+  if (parsed) return normalizeKeyValueObject(parsed);
+  const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
+  const entries = {};
+  for (const line of cleanList(lines)) {
+    const match = String(line).match(/^([^:=]{1,80})\s*[:=]\s*(.+)$/);
+    if (!match) continue;
+    const key = match[1].trim();
+    if (!key || isSecretKey(key)) continue;
+    entries[key] = parseLooseValue(match[2]);
+  }
+  return entries;
+}
+
+function normalizeRequestBody(value) {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (isPlainObject(value)) return sanitizeCaseData(value);
+  if (Array.isArray(value) && value.some((item) => typeof item !== 'string')) return sanitizeCaseData(value);
+  const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
+  const joined = cleanList(lines).join('\n').trim();
+  if (!joined) return undefined;
+  const parsed = parseJsonObject(joined);
+  if (parsed) return sanitizeCaseData(parsed);
+  const entries = normalizeKeyValueObject(lines);
+  return Object.keys(entries).length ? entries : parseLooseValue(joined);
+}
+
+function parseJsonObject(value) {
+  if (isPlainObject(value)) return value;
+  const text = Array.isArray(value) ? cleanList(value).join('\n') : String(value || '').trim();
+  if (!/^[\[{]/.test(text)) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return isPlainObject(parsed) || Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseLooseValue(value) {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (typeof value !== 'string') return value;
+  const text = value.trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
+  if (!text) return '';
+  const parsed = parseJsonObject(text);
+  if (parsed) return parsed;
+  if (/^(true|false)$/i.test(text)) return text.toLowerCase() === 'true';
+  if (/^null$/i.test(text)) return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
+  return text;
+}
+
+function stringifyInlineValue(value) {
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
+}
+
 function normalizeStep(step) {
   const normalized = norm(step);
   const explicit = explicitStep(step);
   if (explicit) return explicit;
+  const apiStep = normalizeApiStep(step);
+  if (apiStep) return apiStep;
   const isAssertion = /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(normalized);
   const route = extractRoute(step);
   const clickTarget = extractClickTarget(step);
@@ -1520,9 +2100,18 @@ function normalizeStep(step) {
   return step;
 }
 
-function assessAutomation(steps, expected) {
+function assessAutomation(steps, expected, options = {}) {
   const joinedSteps = steps.join('\n');
   const joinedExpected = expected.join('\n');
+  if (options.type === 'api') {
+    if (!options.request?.method || !options.request?.path) {
+      return ['necesita_revision', 'Falta metodo o endpoint para ejecutar el caso REST.', 0.55];
+    }
+    if (!expected.length && options.request?.expected_status === null) {
+      return ['necesita_revision', 'Falta resultado esperado verificable para la API REST.', 0.6];
+    }
+    return ['listo', 'Caso REST listo para automatizar con Playwright request.', 0.92];
+  }
   if (!steps.length) return ['no_automatizable_aun', 'El caso no tiene pasos ejecutables.', 0.2];
   if (NOT_AUTOMATABLE_RE.test(joinedSteps)) return ['no_automatizable_aun', 'El caso requiere acciones fuera del navegador o controles no automatizables.', 0.35];
   if (!expected.length) return ['necesita_revision', 'Falta resultado esperado verificable.', 0.55];
@@ -1532,11 +2121,12 @@ function assessAutomation(steps, expected) {
 }
 
 function hasConcreteExpected(expected) {
-  return expected.some((item) => /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error)\b/i.test(item));
+  return expected.some((item) => /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error|status|codigo|http|body|response|json|header)\b/i.test(item));
 }
 
 function stepConfidence(step) {
   if (explicitStep(step)) return 0.95;
+  if (normalizeApiStep(step)) return 0.95;
   if (NOT_AUTOMATABLE_RE.test(step)) return 0.2;
   if (REVIEW_STEP_RE.test(step)) return 0.45;
   return normalizeStep(step) !== step ? 0.85 : 0.7;
@@ -1764,6 +2354,28 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
   const title = String(item.title || fallback.title || `Caso ${number}`).trim();
   const originalSteps = cleanList(item.original_steps || item.steps || fallback.original_steps || fallback.steps || []);
   const expectedResults = cleanList(item.expected_results || item.expected || fallback.expected_results || fallback.expected || []);
+  const request = normalizeApiRequest({
+    ...((fallback && fallback.request) || {}),
+    ...((fallback && fallback.api) || {}),
+    ...((item && item.request) || {}),
+    ...((item && item.api) || {}),
+    type: item.type || item.kind || item.test_type || fallback.type || fallback.kind || fallback.test_type,
+    route: item.route || fallback.route,
+    method: item.method || item.request_method || item.http_method || item.request?.method || item.api?.method || fallback.request?.method,
+    path: item.path || item.endpoint || item.request_path || item.url || item.request?.path || item.request?.endpoint || item.api?.path || item.api?.endpoint || fallback.request?.path,
+    headers: item.headers || item.request_headers || item.request?.headers || item.api?.headers || fallback.request?.headers,
+    query: item.query || item.params || item.request_query || item.request?.query || item.request?.params || item.api?.query || item.api?.params || fallback.request?.query,
+    body: item.body ?? item.payload ?? item.request_body ?? item.request?.body ?? item.api?.body ?? fallback.request?.body,
+    expected_status: item.expected_status || item.status_code || item.status || item.request?.expected_status || item.api?.expected_status || fallback.expected_status || fallback.request?.expected_status,
+    steps: originalSteps,
+    expected: expectedResults
+  });
+  const type = inferCaseType({
+    type: item.type || item.kind || item.test_type || fallback.type || fallback.kind || fallback.test_type,
+    request,
+    steps: originalSteps,
+    expected: expectedResults
+  });
   const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
@@ -1781,10 +2393,13 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
       review_reason: String(step.review_reason || '')
     }))
     : buildSteps(originalSteps);
-  const route = inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
+  const route = type === 'api'
+    ? (request.path || inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps))
+    : inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
   return {
     id: safeId(item.id || fallback.id || `caso_${number}_${title}`),
     number: Number(item.number || fallback.number || number),
+    type,
     title,
     description: String(item.description ?? fallback.description ?? ''),
     priority: normalizePriority(item.priority || fallback.priority || 'media'),
@@ -1792,6 +2407,12 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     preconditions: cleanList(item.preconditions || fallback.preconditions || []),
     data_used: maskSecretLines(cleanList(item.data_used || fallback.data_used || [])),
     data: sanitizeCaseData(mergeCaseData(item.data || {}, fallback.data || {})),
+    request: type === 'api' ? request : null,
+    assertions: type === 'api' ? normalizeApiAssertions({
+      assertions: item.assertions || item.api_assertions || fallback.assertions || [],
+      expected: expectedResults,
+      expectedStatus: request.expected_status
+    }) : [],
     original_steps: originalSteps,
     executable_steps: executableSteps,
     expected_results: expectedResults,
@@ -1819,12 +2440,22 @@ function markdownAgentSchema() {
     cases: [{
       id: 'caso_1_login_valido',
       number: 1,
+      type: 'ui|api',
       title: 'Login valido',
       description: 'string',
       priority: 'baja|media|alta|critica',
       tags: ['string'],
       preconditions: ['string'],
       data_used: ['Password: ******'],
+      request: {
+        method: 'GET|POST|PUT|PATCH|DELETE',
+        path: '/api/resource',
+        headers: {},
+        query: {},
+        body: {},
+        expected_status: 200
+      },
+      assertions: [{ type: 'status', expected: 200 }],
       original_steps: ['string'],
       executable_steps: [{
         number: 1,
@@ -2260,10 +2891,10 @@ function fieldFromHeading(line) {
 function appendField(fields, label, value) {
   const cleanValue = stripListMarker(value).trim();
   if (!cleanValue) return;
-  if (['preconditions', 'data_used', 'original_steps', 'expected_results', 'tags'].includes(label)) {
+  if (['preconditions', 'data_used', 'original_steps', 'expected_results', 'tags', 'request_headers', 'request_query', 'request_body'].includes(label)) {
     fields[label] = fields[label] || [];
     fields[label].push(cleanValue);
-  } else if (['qa_owner', 'dev_owner', 'ticket', 'route', 'priority', 'title'].includes(label)) {
+  } else if (['qa_owner', 'dev_owner', 'ticket', 'route', 'priority', 'title', 'test_type', 'request_method', 'request_path', 'expected_status'].includes(label)) {
     fields[label] = cleanValue;
   } else if (label === 'description') {
     fields[label] = joinText(String(fields[label] || ''), cleanValue);
@@ -2271,7 +2902,7 @@ function appendField(fields, label, value) {
 }
 
 function looksLikeStep(line) {
-  return /^(?:\d+[\).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line));
+  return /^(?:\d+[\).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line)) || Boolean(normalizeApiStep(line));
 }
 
 function stripListMarker(line) {

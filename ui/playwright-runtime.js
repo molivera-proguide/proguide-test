@@ -17,12 +17,13 @@ export async function ensurePlaywrightRuntime(root, options = {}) {
 
   const runtime = playwrightRuntime();
   const actions = [];
+  const requireBrowser = options.requireBrowser !== false;
 
   if (!commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, ['-e', playwrightImportProbe()])) {
     throw new Error('No se pudo importar @playwright/test desde el paquete ProGuide. Reinstala el paquete npm.');
   }
 
-  if (!commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, ['-e', playwrightBrowserProbe()])) {
+  if (requireBrowser && !commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, ['-e', playwrightBrowserProbe()])) {
     runChecked({ command: process.execPath, args: [runtime.cli], env: runtimeEnv() }, ['install', 'chromium'], {
       timeout: INSTALL_TIMEOUT_MS,
       label: 'instalar Chromium de Playwright'

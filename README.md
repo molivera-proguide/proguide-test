@@ -63,6 +63,41 @@ proguide viewer --json
 
 La respuesta incluye `run_url` para abrir el viewer local con estado, resultados, evidencias y codigo generado.
 
+## Casos E2E Para API REST
+
+Ademas de casos UI, ProGuide puede ejecutar casos REST con Playwright `request`.
+En Markdown:
+
+```markdown
+## TC-API-001 Crear usuario
+
+Tipo: API
+Metodo: POST
+Endpoint: /users
+Headers:
+- content-type: application/json
+Body:
+- name: Mario
+
+Resultado esperado:
+- Status 201
+- body.name = Mario
+- body.id existe
+```
+
+O como casos estructurados por MCP/CLI:
+
+```json
+{
+  "type": "api",
+  "title": "Health",
+  "request": { "method": "GET", "path": "/health", "expected_status": 200 },
+  "assertions": [{ "path": "service", "equals": "sample-api" }]
+}
+```
+
+Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
+
 ## MCP En Claude Code
 
 Registra ProGuide como MCP server desde el workspace de la app que vas a testear:

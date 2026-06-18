@@ -199,7 +199,7 @@ async function commandRun(parsed) {
   }
 
   const viewer = await attachViewer(root, prepared.run.id, parsed.options);
-  await ensurePlaywrightRuntime(root);
+  await ensurePlaywrightRuntime(root, { requireBrowser: casesRequireBrowser(prepared.cases) });
   await executePreparedRun({
     root,
     runId: prepared.run.id,
@@ -217,7 +217,8 @@ async function commandExecute(parsed) {
   const root = resolveRoot(parsed.options);
   const runId = requiredHandle(parsed.positionals[0], 'run_id');
   const viewer = await attachViewer(root, runId, parsed.options);
-  await ensurePlaywrightRuntime(root);
+  const existingBundle = await loadRunBundle(root, runId);
+  await ensurePlaywrightRuntime(root, { requireBrowser: casesRequireBrowser(existingBundle.cases) });
   await executePreparedRun({
     root,
     runId,
@@ -875,6 +876,11 @@ function credentialsFromOptions(options) {
     username: option(options, 'username') || '',
     password: option(options, 'password') || ''
   };
+}
+
+function casesRequireBrowser(cases = []) {
+  if (!Array.isArray(cases) || !cases.length) return true;
+  return cases.some((testCase) => String(testCase.type || '').toLowerCase() !== 'api' && !(testCase.request?.method && testCase.request?.path));
 }
 
 function requiredHandle(value, label) {
