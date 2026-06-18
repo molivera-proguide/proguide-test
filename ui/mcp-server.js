@@ -54,7 +54,7 @@ const casesInputSchema = {
       },
       assertions: {
         type: 'array',
-        description: 'Aserciones REST, por ejemplo {path:"id", equals:123} o {status:201}.',
+        description: 'Aserciones REST, por ejemplo {path:"id", equals:123}, {path:"items", isArray:true} o {status:201}.',
         items: { type: 'object', additionalProperties: true }
       },
       preconditions: { type: 'array', items: { type: 'string' } },

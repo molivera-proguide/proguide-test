@@ -121,6 +121,149 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
   }
 });
 
+test('API cases keep assertions unique and preserve request secrets for execution', async () => {
+  const root = makeTempRoot();
+  const api = await startSampleApi();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: api.baseUrl,
+      cases: [{
+        id: 'api_login',
+        type: 'api',
+        title: 'Login API',
+        request: {
+          method: 'POST',
+          path: '/login',
+          body: {
+            email: 'qa@example.test',
+            password: 'secret-test-password'
+          },
+          expected_status: 200
+        },
+        assertions: [
+          { status: 200 },
+          { path: 'access_token', exists: true }
+        ],
+        expected: ['Status 200']
+      }]
+    });
+
+    assert.deepEqual(
+      prepared.cases[0].assertions.filter((item) => item.type === 'status'),
+      [{ type: 'status', expected: 200 }]
+    );
+    assert.deepEqual(prepared.cases[0].request.body, {
+      email: 'qa@example.test',
+      password: 'secret-test-password'
+    });
+
+    const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.deepEqual(
+      plan.cases[0].assertions.filter((item) => item.type === 'status'),
+      [{ type: 'status', expected: 200 }]
+    );
+    assert.deepEqual(plan.cases[0].request.body, {
+      email: 'qa@example.test',
+      password: 'secret-test-password'
+    });
+
+    const summary = await executePreparedRun({
+      root,
+      runId: prepared.run.id,
+      baseUrl: api.baseUrl
+    });
+
+    assert.equal(summary.results[0].status, 'passed');
+    const generated = await loadGeneratedCaseCode(root, prepared.run.id, 'api_login');
+    assert.equal((generated.code.match(/"type": "status"/g) || []).length, 1);
+    assert.match(generated.code, /secret-test-password/);
+  } finally {
+    await api.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('API assertions support arrays and fail unsupported operators explicitly', async () => {
+  const root = makeTempRoot();
+  const api = await startSampleApi();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: api.baseUrl,
+      cases: [{
+        id: 'api_items_array',
+        type: 'api',
+        title: 'Items es arreglo',
+        request: {
+          method: 'GET',
+          path: '/items',
+          expected_status: 200
+        },
+        assertions: [
+          { path: 'items', isArray: true }
+        ]
+      }, {
+        id: 'api_unsupported_assertion',
+        type: 'api',
+        title: 'Asercion no soportada',
+        request: {
+          method: 'GET',
+          path: '/health',
+          expected_status: 200
+        },
+        assertions: [
+          { path: 'ok', greaterThan: 0 }
+        ]
+      }]
+    });
+
+    assert.equal(prepared.cases[0].assertions.some((item) => item.operator === 'is_array'), true);
+    assert.equal(prepared.cases[1].assertions.some((item) => item.type === 'unsupported'), true);
+
+    const summary = await executePreparedRun({
+      root,
+      runId: prepared.run.id,
+      baseUrl: api.baseUrl
+    });
+
+    assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'failed']);
+    assert.match(summary.results[1].message, /Unsupported API assertion/);
+  } finally {
+    await api.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('API natural-language steps do not normalize to UI selectors', async () => {
+  const root = makeTempRoot();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: 'http://api.test',
+      cases: [{
+        id: 'api_step_normalization',
+        type: 'api',
+        title: 'Token exists',
+        request: {
+          method: 'POST',
+          path: '/login',
+          expected_status: 200
+        },
+        steps: ['expect response body field access_token exists'],
+        assertions: [{ path: 'access_token', exists: true }]
+      }]
+    });
+
+    const normalized = prepared.cases[0].executable_steps[0].normalized_action;
+    assert.equal(normalized, 'api assert body.access_token exists');
+    assert.equal(normalized.includes('data-testid'), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('viewer exposes run and usage data through REST API endpoints', async () => {
   const root = makeTempRoot();
   const port = await freePort();
@@ -204,6 +347,16 @@ async function handleSampleApiRequest(request, response) {
   if (request.method === 'POST' && url.pathname === '/users') {
     const payload = await readJsonBody(request);
     return sendJson(response, 201, { id: 'usr_001', name: payload.name || '' });
+  }
+  if (request.method === 'POST' && url.pathname === '/login') {
+    const payload = await readJsonBody(request);
+    if (payload.email === 'qa@example.test' && payload.password === 'secret-test-password') {
+      return sendJson(response, 200, { access_token: 'token_123', token_type: 'Bearer' });
+    }
+    return sendJson(response, 401, { error: 'invalid_credentials' });
+  }
+  if (request.method === 'GET' && url.pathname === '/items') {
+    return sendJson(response, 200, { items: [{ id: 'item_001' }] });
   }
   return sendJson(response, 404, { error: 'not_found' });
 }

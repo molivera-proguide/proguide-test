@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.1.tgz
+npm install -g ./proguide-test-0.2.0-ts.2.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.1/proguide-test-0.2.0-ts.1.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.2/proguide-test-0.2.0-ts.2.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -92,9 +92,30 @@ O como casos estructurados por MCP/CLI:
   "type": "api",
   "title": "Health",
   "request": { "method": "GET", "path": "/health", "expected_status": 200 },
-  "assertions": [{ "path": "service", "equals": "sample-api" }]
+      "assertions": [{ "path": "service", "equals": "sample-api" }]
 }
 ```
+
+Tambien se pueden usar credenciales pasadas por CLI/MCP sin escribir secretos literales en el caso:
+
+```json
+{
+  "type": "api",
+  "title": "Login",
+  "request": {
+    "method": "POST",
+    "path": "/login",
+    "body": {
+      "email": "{{email}}",
+      "password": "{{password}}"
+    },
+    "expected_status": 200
+  },
+  "assertions": [{ "path": "access_token", "exists": true }]
+}
+```
+
+Aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `body_path` con `equals`, `exists`, `contains` e `isArray`. Las aserciones no soportadas fallan explicitamente en la ejecucion para evitar falsos verdes.
 
 Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
 

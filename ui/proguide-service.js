@@ -1409,11 +1409,27 @@ function generateApiTestSpec(planCases) {
     '}',
     '',
     'function requestOptions(apiRequest) {',
-    '  const options = { method: apiRequest.method };',
-    '  if (apiRequest.headers && Object.keys(apiRequest.headers).length) options.headers = apiRequest.headers;',
-    '  if (apiRequest.query && Object.keys(apiRequest.query).length) options.params = apiRequest.query;',
-    '  if (apiRequest.body !== undefined && apiRequest.body !== null) options.data = apiRequest.body;',
+    '  const resolved = resolveRequestValue(apiRequest);',
+    '  const options = { method: resolved.method };',
+    '  if (resolved.headers && Object.keys(resolved.headers).length) options.headers = resolved.headers;',
+    '  if (resolved.query && Object.keys(resolved.query).length) options.params = resolved.query;',
+    '  if (resolved.body !== undefined && resolved.body !== null) options.data = resolved.body;',
     '  return options;',
+    '}',
+    '',
+    'function resolveRequestValue(value) {',
+    '  if (Array.isArray(value)) return value.map(resolveRequestValue);',
+    '  if (value && typeof value === "object") {',
+    '    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveRequestValue(entry)]));',
+    '  }',
+    '  if (typeof value !== "string") return value;',
+    '  return value.replace(/\\{\\{\\s*(email|username|password|PROGUIDE_USER_EMAIL|PROGUIDE_USER_USERNAME|PROGUIDE_USER_PASSWORD)\\s*\\}\\}/gi, (_match, name) => {',
+    '    const normalized = String(name).toUpperCase();',
+    '    if (normalized === "EMAIL" || normalized === "PROGUIDE_USER_EMAIL") return process.env.PROGUIDE_USER_EMAIL || "";',
+    '    if (normalized === "USERNAME" || normalized === "PROGUIDE_USER_USERNAME") return process.env.PROGUIDE_USER_USERNAME || "";',
+    '    if (normalized === "PASSWORD" || normalized === "PROGUIDE_USER_PASSWORD") return process.env.PROGUIDE_USER_PASSWORD || "";',
+    '    return _match;',
+    '  });',
     '}',
     '',
     'function needsResponseBody(assertions) {',
@@ -1460,13 +1476,19 @@ function generateApiTestSpec(planCases) {
     '      expect(actual).not.toBeUndefined();',
     '      return;',
     '    }',
+    "    if (assertion.operator === 'is_array') {",
+    '      expect(Array.isArray(actual)).toBeTruthy();',
+    '      return;',
+    '    }',
     "    if (assertion.operator === 'contains') {",
     '      if (Array.isArray(actual)) expect(actual).toContain(assertion.expected);',
     '      else expect(String(actual)).toContain(String(assertion.expected));',
     '      return;',
     '    }',
     '    expect(actual).toEqual(assertion.expected);',
+    '    return;',
     '  }',
+    "  throw new Error(`Unsupported API assertion: ${JSON.stringify(assertion)}`);",
     '}',
     '',
     'function valueAtPath(source, path) {',
@@ -1485,7 +1507,8 @@ function generateApiTestSpec(planCases) {
     "  if (assertion.type === 'ok') return 'response is successful';",
     "  if (assertion.type === 'header') return `header ${assertion.name} ${assertion.operator || 'equals'} ${assertion.expected}`;",
     "  if (assertion.type === 'body_contains') return `body contains ${assertion.expected}`;",
-    "  if (assertion.type === 'body_path') return `body.${assertion.path} ${assertion.operator || 'equals'} ${assertion.expected ?? ''}`;",
+    "  if (assertion.type === 'body_path') return `body.${assertion.path || '<root>'} ${assertion.operator || 'equals'} ${assertion.expected ?? ''}`;",
+    "  if (assertion.type === 'unsupported') return `unsupported assertion ${assertion.reason || ''}`;",
     "  return 'api assertion';",
     '}',
     ''
@@ -1701,10 +1724,14 @@ function parseBlock(block, number) {
     steps: fields.original_steps,
     expected: fields.expected_results
   });
-  const executableSteps = buildSteps(fields.original_steps);
+  const executableSteps = buildSteps(fields.original_steps, { type });
+  const assertions = type === 'api' ? normalizeApiAssertions({
+    expected: fields.expected_results,
+    expectedStatus: request.expected_status
+  }) : [];
 
   const title = String(fields.title || `Caso ${number}`).trim();
-  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, { type, request });
+  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, { type, request, assertions });
   return {
     id: safeId(`caso_${number}_${title}`),
     number,
@@ -1717,10 +1744,7 @@ function parseBlock(block, number) {
     data_used: maskSecretLines(fields.data_used),
     data: fields.data,
     request: type === 'api' ? request : null,
-    assertions: type === 'api' ? normalizeApiAssertions({
-      expected: fields.expected_results,
-      expectedStatus: request.expected_status
-    }) : [],
+    assertions,
     original_steps: fields.original_steps,
     executable_steps: executableSteps,
     expected_results: fields.expected_results,
@@ -1743,11 +1767,11 @@ function parseBlock(block, number) {
   };
 }
 
-function buildSteps(originalSteps) {
+function buildSteps(originalSteps, options = {}) {
   return originalSteps.map((step, index) => ({
     number: index + 1,
     original_text: step,
-    normalized_action: normalizeStep(step),
+    normalized_action: options.type === 'api' ? normalizeApiCaseStep(step) : normalizeStep(step),
     status: 'pending',
     started_at: null,
     finished_at: null,
@@ -1755,7 +1779,7 @@ function buildSteps(originalSteps) {
     observed_result: '',
     screenshot: null,
     error: null,
-    confidence: stepConfidence(step),
+    confidence: stepConfidence(step, options),
     needs_review: REVIEW_STEP_RE.test(step),
     review_reason: REVIEW_STEP_RE.test(step) ? 'Paso ambiguo o dependiente de datos de ambiente.' : ''
   }));
@@ -1776,6 +1800,23 @@ function normalizeApiStep(step) {
   return `api ${request.method} ${request.path}${body}`;
 }
 
+function normalizeApiCaseStep(step) {
+  const requestStep = normalizeApiStep(step);
+  if (requestStep) return requestStep;
+  const assertion = parseExpectedApiAssertion(step);
+  if (assertion) return `api assert ${formatApiAssertion(assertion)}`;
+  return String(step || '').trim();
+}
+
+function formatApiAssertion(assertion) {
+  if (assertion.type === 'status') return `status ${assertion.expected}`;
+  if (assertion.type === 'ok') return 'ok';
+  if (assertion.type === 'header') return `header ${assertion.name} ${assertion.operator || 'equals'} ${assertion.expected}`;
+  if (assertion.type === 'body_contains') return `body contains ${assertion.expected}`;
+  if (assertion.type === 'body_path') return `body.${assertion.path || '<root>'} ${assertion.operator || 'equals'} ${assertion.expected ?? ''}`.trim();
+  return JSON.stringify(assertion);
+}
+
 function apiRequestFromStep(step) {
   const text = String(step || '').trim();
   const match = text.match(/^(?:(?:api|rest|http|request|llamar|invocar)\s+)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)(.*)$/i);
@@ -1793,6 +1834,8 @@ function normalizeApiRequest(input = {}) {
   const stepRequest = cleanList(input.steps || [])
     .map(apiRequestFromStep)
     .find(Boolean) || {};
+  const explicitType = API_CASE_TYPES.has(norm(input.type).replace(/[_-]+/g, ' '));
+  const explicitPath = input.path || input.endpoint || input.request_path || input.url;
   const method = normalizeHttpMethod(
     input.method ||
     input.request_method ||
@@ -1801,11 +1844,8 @@ function normalizeApiRequest(input = {}) {
     ''
   );
   const requestPath = normalizeApiPath(
-    input.path ||
-    input.endpoint ||
-    input.request_path ||
-    input.url ||
-    input.route ||
+    explicitPath ||
+    (explicitType ? input.route : '') ||
     stepRequest.path ||
     ''
   );
@@ -1822,10 +1862,10 @@ function normalizeApiRequest(input = {}) {
     parseExpectedStatus(cleanList(input.expected || []).join('\n'))
   );
   const request = {
-    method: method || (requestPath ? 'GET' : ''),
+    method: method || (requestPath && (explicitType || explicitPath || stepRequest.path) ? 'GET' : ''),
     path: requestPath,
-    headers: normalizeKeyValueObject(input.headers || input.request_headers),
-    query: normalizeKeyValueObject(input.query || input.params || input.request_query),
+    headers: normalizeKeyValueObject(input.headers || input.request_headers, { preserveSecrets: true }),
+    query: normalizeKeyValueObject(input.query || input.params || input.request_query, { preserveSecrets: true }),
     expected_status: expectedStatus
   };
   if (body !== undefined) request.body = body;
@@ -1858,17 +1898,25 @@ function normalizeApiAssertions({ assertions = [], expected = [], expectedStatus
       normalized.push(parsed);
     }
   }
-  if (!normalized.length) normalized.push({ type: 'ok' });
-  return normalized;
+  const unique = uniqueApiAssertions(normalized);
+  if (!unique.length) unique.push({ type: 'ok' });
+  return unique;
 }
 
 function normalizeApiAssertion(assertion) {
-  if (!assertion) return null;
-  if (typeof assertion === 'string') return parseExpectedApiAssertion(assertion);
-  if (!isPlainObject(assertion)) return null;
+  if (!assertion) return unsupportedApiAssertion(assertion, 'empty_assertion');
+  if (typeof assertion === 'string') return parseExpectedApiAssertion(assertion) || unsupportedApiAssertion(assertion, 'unsupported_text_assertion');
+  if (!isPlainObject(assertion)) return unsupportedApiAssertion(assertion, 'unsupported_assertion_value');
   if (assertion.type === 'status') {
     const expected = normalizeExpectedStatus(assertion.expected ?? assertion.status ?? assertion.status_code);
-    return expected === null ? null : { type: 'status', expected };
+    return expected === null ? unsupportedApiAssertion(assertion, 'invalid_status_assertion') : { type: 'status', expected };
+  }
+  if (assertion.type === 'unsupported') {
+    return {
+      type: 'unsupported',
+      reason: String(assertion.reason || 'unsupported_assertion'),
+      raw: assertion.raw ?? maskSecretsDeep(assertion)
+    };
   }
   if (assertion.type === 'ok') return { type: 'ok' };
   if (assertion.type === 'header') {
@@ -1886,14 +1934,15 @@ function normalizeApiAssertion(assertion) {
     };
   }
   if (assertion.type === 'body_path') {
-    const operator = ['exists', 'contains'].includes(assertion.operator) ? assertion.operator : 'equals';
+    const operator = ['exists', 'contains', 'is_array'].includes(assertion.operator) ? assertion.operator : 'equals';
     const normalized = {
       type: 'body_path',
       path: String(assertion.path || assertion.field || assertion.json_path || ''),
       operator
     };
     if (operator !== 'exists') normalized.expected = parseLooseValue(assertion.expected ?? assertion.value ?? assertion.equals ?? assertion.contains);
-    return normalized.path ? normalized : null;
+    if (operator === 'is_array') delete normalized.expected;
+    return normalized.path || operator === 'is_array' ? normalized : unsupportedApiAssertion(assertion, 'missing_body_path');
   }
   const status = normalizeExpectedStatus(assertion.status ?? assertion.status_code ?? assertion.expected_status);
   if (status !== null) return { type: 'status', expected: status };
@@ -1907,21 +1956,28 @@ function normalizeApiAssertion(assertion) {
     };
   }
   const pathValue = assertion.path || assertion.json_path || assertion.field || assertion.body_path;
-  if (pathValue) {
+  if (pathValue !== undefined && pathValue !== null) {
+    const bodyPath = String(pathValue);
     if (assertion.exists === true) {
-      return { type: 'body_path', path: String(pathValue), operator: 'exists' };
+      return { type: 'body_path', path: bodyPath, operator: 'exists' };
+    }
+    if (assertion.isArray === true || assertion.is_array === true || assertion.array === true) {
+      return { type: 'body_path', path: bodyPath, operator: 'is_array' };
     }
     if (assertion.contains !== undefined) {
       return {
         type: 'body_path',
-        path: String(pathValue),
+        path: bodyPath,
         operator: 'contains',
         expected: parseLooseValue(assertion.contains)
       };
     }
+    if (assertion.equals === undefined && assertion.expected === undefined && assertion.value === undefined) {
+      return unsupportedApiAssertion(assertion, 'missing_body_path_expected_value');
+    }
     return {
       type: 'body_path',
-      path: String(pathValue),
+      path: bodyPath,
       operator: 'equals',
       expected: parseLooseValue(assertion.equals ?? assertion.expected ?? assertion.value)
     };
@@ -1932,7 +1988,27 @@ function normalizeApiAssertion(assertion) {
       expected: parseLooseValue(assertion.body_contains ?? assertion.contains)
     };
   }
-  return null;
+  return unsupportedApiAssertion(assertion, 'unsupported_assertion_object');
+}
+
+function uniqueApiAssertions(assertions) {
+  const unique = [];
+  const seen = new Set();
+  for (const assertion of assertions || []) {
+    const key = JSON.stringify(assertion);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(assertion);
+  }
+  return unique;
+}
+
+function unsupportedApiAssertion(assertion, reason) {
+  return {
+    type: 'unsupported',
+    reason,
+    raw: maskSecretsDeep(assertion)
+  };
 }
 
 function parseExpectedApiAssertion(line) {
@@ -1941,8 +2017,25 @@ function parseExpectedApiAssertion(line) {
   const status = parseExpectedStatus(text);
   if (status !== null) return { type: 'status', expected: status };
 
-  const ascii = stripAccents(text);
+  const ascii = stripAccents(text).replace(/^(?:expect|validar|verificar|comprobar)\s+/i, '').trim();
   let match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s*(?:=|==|equals?|es|sea)\s*(.+)$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: match[1],
+      operator: 'equals',
+      expected: parseLooseValue(match[2])
+    };
+  }
+  match = ascii.match(/^(?:response\s+)?body\s+field\s+([A-Za-z0-9_$.[\]-]+)\s+(?:exists?|existe|presente)$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: match[1],
+      operator: 'exists'
+    };
+  }
+  match = ascii.match(/^(?:response\s+)?body\s+field\s+([A-Za-z0-9_$.[\]-]+)\s*(?:=|==|equals?|es|sea)\s*(.+)$/i);
   if (match) {
     return {
       type: 'body_path',
@@ -1993,6 +2086,14 @@ function parseExpectedApiAssertion(line) {
       expected: parseLooseValue(match[1])
     };
   }
+  match = ascii.match(/^(?:body|response|json)\s+(?:is\s+)?(?:an\s+)?array$/i);
+  if (match) {
+    return {
+      type: 'body_path',
+      path: '',
+      operator: 'is_array'
+    };
+  }
   return null;
 }
 
@@ -2011,22 +2112,22 @@ function normalizeExpectedStatus(value) {
   return Number.isInteger(number) && number >= 100 && number <= 599 ? number : null;
 }
 
-function normalizeKeyValueObject(value) {
+function normalizeKeyValueObject(value, options = {}) {
   if (value === undefined || value === null || value === '') return {};
   if (isPlainObject(value)) {
     return Object.fromEntries(Object.entries(value)
-      .filter(([key, entry]) => key && entry !== undefined && !isSecretKey(key))
+      .filter(([key, entry]) => key && entry !== undefined && (options.preserveSecrets || !isSecretKey(key)))
       .map(([key, entry]) => [String(key), parseLooseValue(entry)]));
   }
   const parsed = parseJsonObject(value);
-  if (parsed) return normalizeKeyValueObject(parsed);
+  if (parsed) return normalizeKeyValueObject(parsed, options);
   const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
   const entries = {};
   for (const line of cleanList(lines)) {
     const match = String(line).match(/^([^:=]{1,80})\s*[:=]\s*(.+)$/);
     if (!match) continue;
     const key = match[1].trim();
-    if (!key || isSecretKey(key)) continue;
+    if (!key || (!options.preserveSecrets && isSecretKey(key))) continue;
     entries[key] = parseLooseValue(match[2]);
   }
   return entries;
@@ -2034,14 +2135,14 @@ function normalizeKeyValueObject(value) {
 
 function normalizeRequestBody(value) {
   if (value === undefined || value === null || value === '') return undefined;
-  if (isPlainObject(value)) return sanitizeCaseData(value);
-  if (Array.isArray(value) && value.some((item) => typeof item !== 'string')) return sanitizeCaseData(value);
+  if (isPlainObject(value)) return value;
+  if (Array.isArray(value) && value.some((item) => typeof item !== 'string')) return value;
   const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
   const joined = cleanList(lines).join('\n').trim();
   if (!joined) return undefined;
   const parsed = parseJsonObject(joined);
-  if (parsed) return sanitizeCaseData(parsed);
-  const entries = normalizeKeyValueObject(lines);
+  if (parsed) return parsed;
+  const entries = normalizeKeyValueObject(lines, { preserveSecrets: true });
   return Object.keys(entries).length ? entries : parseLooseValue(joined);
 }
 
@@ -2124,7 +2225,11 @@ function hasConcreteExpected(expected) {
   return expected.some((item) => /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error|status|codigo|http|body|response|json|header)\b/i.test(item));
 }
 
-function stepConfidence(step) {
+function stepConfidence(step, options = {}) {
+  if (options.type === 'api') {
+    if (normalizeApiStep(step) || parseExpectedApiAssertion(step)) return 0.95;
+    return 0.7;
+  }
   if (explicitStep(step)) return 0.95;
   if (normalizeApiStep(step)) return 0.95;
   if (NOT_AUTOMATABLE_RE.test(step)) return 0.2;
@@ -2293,6 +2398,16 @@ function normalizationWarnings(cases) {
         message: testCase.state_reason || 'El caso requiere revision antes de ejecutar.'
       });
     }
+    for (const assertion of testCase.assertions || []) {
+      if (assertion.type === 'unsupported') {
+        warnings.push({
+          case_id: testCase.id,
+          type: 'unsupported_api_assertion',
+          message: `Asercion API no soportada: ${assertion.reason || 'unsupported'}`,
+          assertion
+        });
+      }
+    }
     for (const step of testCase.executable_steps || []) {
       if (Number(step.confidence ?? 1) < 0.75 || step.needs_review) {
         warnings.push({
@@ -2376,11 +2491,18 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     steps: originalSteps,
     expected: expectedResults
   });
+  const assertions = type === 'api' ? normalizeApiAssertions({
+    assertions: item.assertions || item.api_assertions || fallback.assertions || [],
+    expected: expectedResults,
+    expectedStatus: request.expected_status
+  }) : [];
   const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
       original_text: String(step.original_text || originalSteps[index] || ''),
-      normalized_action: String(step.normalized_action || normalizeStep(step.original_text || originalSteps[index] || '')),
+      normalized_action: String(step.normalized_action || (type === 'api'
+        ? normalizeApiCaseStep(step.original_text || originalSteps[index] || '')
+        : normalizeStep(step.original_text || originalSteps[index] || ''))),
       status: String(step.status || 'pending'),
       started_at: step.started_at || null,
       finished_at: step.finished_at || null,
@@ -2392,10 +2514,14 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
       needs_review: Boolean(step.needs_review),
       review_reason: String(step.review_reason || '')
     }))
-    : buildSteps(originalSteps);
+    : buildSteps(originalSteps, { type });
   const route = type === 'api'
     ? (request.path || inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps))
     : inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
+  const explicitAutomationState = item.automation_state || fallback.automation_state || '';
+  const apiAutomation = type === 'api'
+    ? assessAutomation(originalSteps, expectedResults, { type, request, assertions })
+    : null;
   return {
     id: safeId(item.id || fallback.id || `caso_${number}_${title}`),
     number: Number(item.number || fallback.number || number),
@@ -2408,17 +2534,13 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     data_used: maskSecretLines(cleanList(item.data_used || fallback.data_used || [])),
     data: sanitizeCaseData(mergeCaseData(item.data || {}, fallback.data || {})),
     request: type === 'api' ? request : null,
-    assertions: type === 'api' ? normalizeApiAssertions({
-      assertions: item.assertions || item.api_assertions || fallback.assertions || [],
-      expected: expectedResults,
-      expectedStatus: request.expected_status
-    }) : [],
+    assertions,
     original_steps: originalSteps,
     executable_steps: executableSteps,
     expected_results: expectedResults,
     confidence: Number(item.confidence ?? fallback.confidence ?? 1),
-    automation_state: normalizeAutomationState(item.automation_state || fallback.automation_state || 'listo'),
-    state_reason: String(item.state_reason ?? fallback.state_reason ?? ''),
+    automation_state: normalizeAutomationState(explicitAutomationState || apiAutomation?.[0] || 'listo'),
+    state_reason: String(item.state_reason ?? fallback.state_reason ?? apiAutomation?.[1] ?? ''),
     original_markdown: String(item.original_markdown ?? fallback.original_markdown ?? ''),
     route,
     qa_owner: noneIfEmpty(item.qa_owner ?? fallback.qa_owner),
