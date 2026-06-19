@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.4.tgz
+npm install -g ./proguide-test-0.2.0-ts.5.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.4/proguide-test-0.2.0-ts.4.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.5/proguide-test-0.2.0-ts.5.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -166,11 +166,14 @@ Aserciones soportadas:
 - `{ "path": "name", "equals": "Mario" }`.
 - `{ "path": "items", "isArray": true }`.
 - `{ "path": "items", "contains": "item_001" }`.
+- `{ "path": "$", "isArray": true }` para respuestas cuyo body raiz es un array.
 
-Los paths se leen desde el body JSON. Un path vacio representa el body completo, por
-ejemplo `{ "path": "", "isArray": true }` valida una respuesta raiz que es array.
+Los paths se leen desde el body JSON. Un path vacio o `$` representa el body completo,
+por ejemplo `{ "path": "$", "isArray": true }` valida una respuesta raiz que es array.
 Las aserciones no soportadas fallan durante la creacion del run para evitar falsos
-verdes.
+verdes. No hay operadores numericos como `greater_than` ni `length`; si necesitas ese
+tipo de regla, expresala con una asercion soportada o agrega una validacion especifica
+al runner.
 
 Cuando una asercion API falla, el resultado incluye `actual_response` con `status`,
 `headers` y `body` reales de la respuesta para depurar sin reconstruir el fallo desde
@@ -179,12 +182,19 @@ el request resuelto en `actual_response.request`; usalo solo en entornos locales
 datos no sensibles, porque puede incluir credenciales de prueba.
 
 Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
+Para endpoints que crean recursos (`register`, `orders`, `products`), usa datos
+idempotentes: emails/nombres con sufijo dinamico, endpoints de cleanup o setup separado.
+Una suite de regresion debe poder correrse dos veces sin fallar por datos ya existentes.
 
 Para suites partidas por archivo, el MCP acepta `source_paths: ["auth.md", "items.md"]`
 y los interpreta como un solo run. Para sumar casos a una regresion ya creada, pasa
 `append_to_run: "<run_id>"` junto con `cases`, `source_path`, `source_paths` o `markdown`;
 `run_cases` los agrega y ejecuta el run, mientras que `create_run` solo actualiza el
 preview.
+
+En MCP, el flujo recomendado usa dos tools: `create_run` para dry-run y `run_cases`
+para ejecutar. `create_run_from_markdown` y `run_markdown_cases` se mantienen como
+aliases compatibles, pero no son necesarios para flujos nuevos.
 
 ## MCP En Claude Code
 

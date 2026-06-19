@@ -364,10 +364,24 @@ test('API assertions support arrays and reject unsupported operators during crea
         assertions: [
           { path: 'items', isArray: true }
         ]
+      }, {
+        id: 'api_root_array',
+        type: 'api',
+        title: 'Body raiz es arreglo',
+        request: {
+          method: 'GET',
+          path: '/items-root',
+          expected_status: 200
+        },
+        assertions: [
+          { path: '$', isArray: true },
+          { path: '$[0].id', equals: 'item_001' }
+        ]
       }]
     });
 
     assert.equal(prepared.cases[0].assertions.some((item) => item.operator === 'is_array'), true);
+    assert.equal(prepared.cases[1].assertions.some((item) => item.path === '' && item.operator === 'is_array'), true);
 
     const summary = await executePreparedRun({
       root,
@@ -375,7 +389,7 @@ test('API assertions support arrays and reject unsupported operators during crea
       baseUrl: api.baseUrl
     });
 
-    assert.deepEqual(summary.results.map((item) => item.status), ['passed']);
+    assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'passed']);
 
     await assert.rejects(
       () => prepareCasesRun({
@@ -535,6 +549,9 @@ async function handleSampleApiRequest(request, response) {
   }
   if (request.method === 'GET' && url.pathname === '/items') {
     return sendJson(response, 200, { items: [{ id: 'item_001' }] });
+  }
+  if (request.method === 'GET' && url.pathname === '/items-root') {
+    return sendJson(response, 200, [{ id: 'item_001' }, { id: 'item_002' }]);
   }
   return sendJson(response, 404, { error: 'not_found' });
 }

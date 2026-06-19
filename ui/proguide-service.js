@@ -1731,7 +1731,9 @@ function generateApiTestSpec(planCases) {
     '',
     'function valueAtPath(source, path) {',
     '  if (source === null || source === undefined) return undefined;',
-    "  const parts = String(path || '').replace(/\\[(\\d+)\\]/g, '.$1').split('.').filter(Boolean);",
+    "  const normalizedPath = String(path ?? '').trim();",
+    "  if (!normalizedPath || normalizedPath === '$') return source;",
+    "  const parts = normalizedPath.replace(/^\\$\\./, '').replace(/^\\$/, '').replace(/\\[(\\d+)\\]/g, '.$1').split('.').filter(Boolean);",
     '  let current = source;',
     '  for (const part of parts) {',
     '    if (current === null || current === undefined) return undefined;',
@@ -2321,7 +2323,7 @@ function rejectUnsupportedApiAssertions(assertions, context = '') {
   const unsupported = (assertions || []).find((assertion) => assertion?.type === 'unsupported');
   if (!unsupported) return;
   const suffix = context ? ` en ${context}` : '';
-  throw new Error(`Asercion API no soportada${suffix}: ${unsupported.reason || 'unsupported_assertion'}. Usa status, ok, header, body_contains o body_path con equals/exists/contains/isArray.`);
+  throw new Error(`Asercion API no soportada${suffix}: ${unsupported.reason || 'unsupported_assertion'}. Usa status, ok, header, body_contains o body_path con equals/exists/contains/isArray. Usa path "" o "$" para el body raiz.`);
 }
 
 function normalizeApiAssertion(assertion) {
@@ -2358,7 +2360,7 @@ function normalizeApiAssertion(assertion) {
     const operator = ['exists', 'contains', 'is_array'].includes(assertion.operator) ? assertion.operator : 'equals';
     const normalized = {
       type: 'body_path',
-      path: String(assertion.path || assertion.field || assertion.json_path || ''),
+      path: normalizeApiBodyPath(firstDefined(assertion.path, assertion.field, assertion.json_path, '')),
       operator
     };
     if (operator !== 'exists') normalized.expected = parseLooseValue(assertion.expected ?? assertion.value ?? assertion.equals ?? assertion.contains);
@@ -2376,9 +2378,9 @@ function normalizeApiAssertion(assertion) {
       expected: parseLooseValue(assertion.contains ?? assertion.equals ?? assertion.expected ?? assertion.value ?? '')
     };
   }
-  const pathValue = assertion.path || assertion.json_path || assertion.field || assertion.body_path;
+  const pathValue = firstDefined(assertion.path, assertion.json_path, assertion.field, assertion.body_path);
   if (pathValue !== undefined && pathValue !== null) {
-    const bodyPath = String(pathValue);
+    const bodyPath = normalizeApiBodyPath(pathValue);
     if (assertion.exists === true) {
       return { type: 'body_path', path: bodyPath, operator: 'exists' };
     }
@@ -2422,6 +2424,15 @@ function uniqueApiAssertions(assertions) {
     unique.push(assertion);
   }
   return unique;
+}
+
+function normalizeApiBodyPath(value) {
+  const text = String(value ?? '').trim();
+  return text === '$' ? '' : text.replace(/^\$\./, '').replace(/^\$/, '');
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
 }
 
 function unsupportedApiAssertion(assertion, reason) {

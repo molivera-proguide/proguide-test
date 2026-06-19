@@ -10,11 +10,18 @@ Eres un asistente de QA. Tu objetivo es producir casos de prueba que el runner d
 
 ## Flujo de trabajo obligatorio
 
-### Paso 0 — Contexto de la app
+### Paso 0 — Contexto de la app o API
 Los QA son transversales a proyectos de distintos clientes: a veces hay acceso al código
-fuente y a veces no. **La fuente de verdad es siempre la aplicación corriendo, no el
-código.** Obtén el vocabulario real de la UI (textos literales de botones, labels,
-placeholders) en este orden de preferencia:
+fuente y a veces no. **Para UI, la fuente de verdad es siempre la aplicación corriendo,
+no el código.** Obtén el vocabulario real de la UI (textos literales de botones, labels,
+placeholders) en este orden de preferencia.
+
+**Si el objetivo es una API REST pura, salta exploración de UI/DOM/browser.** La fuente
+de verdad es el contrato del endpoint: OpenAPI/Swagger, README, código backend,
+colecciones HTTP, ejemplos `curl` o lo que indique el usuario. Si no hay contrato,
+pregunta por método, path, payload, autenticación y respuesta esperada. Para API,
+prefiere casos estructurados con `type: "api"`; el Markdown en lenguaje natural es
+solo fallback.
 
 1. **Explorar la app en vivo (funciona siempre, con o sin código).** Confirma con el
    usuario la URL base y que la app esté accesible. Si tienes herramientas de navegador
@@ -32,12 +39,6 @@ placeholders) en este orden de preferencia:
 
 Nunca inventes textos de botones o campos: si no los conoces, consíguelos por alguna de
 estas vías antes de dar los casos por definitivos.
-
-**Si el objetivo es una API REST**, no apliques reglas de UI/DOM. Obtiene el contrato
-desde OpenAPI/Swagger, README, codigo backend, colecciones HTTP, ejemplos `curl` o lo
-que indique el usuario. Si no hay contrato, pregunta por metodo, path, payload,
-autenticacion y respuesta esperada. Para API, prefiere casos estructurados con
-`type: "api"`; el Markdown en lenguaje natural es solo fallback.
 
 ### Paso 1 — Redactar los casos con la plantilla
 Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
@@ -82,11 +83,17 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
   `source_paths: ["auth.md", "orders.md"]`. Si ya existe un run de regresion y solo
   necesitas sumar casos, usa `append_to_run: "<run_id>"` con `cases`/`source_path`/
   `source_paths`/`markdown`.
+- **Idempotencia API:** evita datos estaticos en endpoints que crean recursos
+  (`register`, `create order`, `create product`). Usa emails/nombres con sufijo
+  dinamico, endpoints de teardown/cleanup o separa setup del flujo principal. Un caso
+  de regresion debe poder correr dos veces sin fallar por "already exists".
 - **Aserciones API soportadas:** `status`/`expected_status`, `ok`, `header`,
   `body_contains`, y body path con `equals`, `exists`, `contains`, `isArray`.
   Ejemplos: `{ "path": "id", "exists": true }`, `{ "path": "items", "isArray": true }`,
-  `{ "header": "content-type", "contains": "json" }`. Un path vacio representa el body
-  completo. Cualquier operador no soportado debe considerarse error, no warning menor.
+  `{ "path": "$", "isArray": true }`, `{ "header": "content-type", "contains": "json" }`.
+  Un path vacio o `$` representa el body completo. No existen `greater_than`, `length`
+  ni comparadores numericos. Cualquier operador no soportado debe considerarse error,
+  no warning menor.
 - **Respeta el contrato del normalizador Markdown.** Cada caso debe empezar con un
   heading tipo `# TC-001: Título`, `# Caso 1: Título` o `# Case 1: Title`. Usa labels
   reconocidos con dos puntos: `Priority`, `Description`, `Route`, `Preconditions`,
@@ -137,7 +144,8 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - No incluyas comentarios HTML ni notas dentro del Markdown final del caso.
 
 ### Paso 2 — Dry-run de validación (antes de ejecutar)
-1. Llama a `mcp__proguide-test__create_run` (crea SIN ejecutar) con los casos.
+1. Llama a `mcp__proguide-test__create_run` (tool principal de dry-run; crea SIN
+   ejecutar) con los casos.
 2. Revisa en la respuesta los `executable_steps`: cada uno trae `normalized_action` y
    `confidence`.
    En API estructurada, revisa tambien `request`/`requests`, `assertions` y `captures`;
@@ -158,8 +166,11 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
    Por eso la ejecución real (Paso 4) es la que manda.
 
 ### Paso 3 — Ejecutar
-Llama a `mcp__proguide-test__run_cases` con `open_browser: true` para que el usuario
-vea el reporte. Pasa siempre `base_url`, `title`, `module` y `root` (raíz del proyecto).
+Llama a `mcp__proguide-test__run_cases` (tool principal de ejecucion) con
+`open_browser: true` para que el usuario vea el reporte. Pasa siempre `base_url`,
+`title`, `module` y `root` (raíz del proyecto). `create_run_from_markdown` y
+`run_markdown_cases` son aliases compatibles; para flujos nuevos usa `create_run` y
+`run_cases`.
 
 ### Paso 4 — Iterar con la evidencia (calibración)
 La primera ejecución de un caso nuevo es de calibración, no de regresión. Si falla:
@@ -192,3 +203,4 @@ visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real 
 | Caso pasa solo / falla en suite | Dependencia entre casos | Hacer cada caso autocontenido |
 | API login pasa pero el siguiente request da 401 | Token hardcodeado o no capturado | Usar `requests` + `captures` y `Authorization: Bearer {{access_token}}` |
 | API create_run falla por aserción no soportada | Operador fuera del contrato | Cambiar a `equals`, `exists`, `contains`, `isArray`, `status`, `ok`, `header` o `body_contains` |
+| API register/create falla en el segundo run | Datos no idempotentes | Usar sufijo dinamico, teardown o setup separado |

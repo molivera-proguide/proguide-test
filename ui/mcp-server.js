@@ -28,6 +28,7 @@ const DEFAULT_ROOT = path.resolve(
   process.cwd()
 );
 const PROTOCOL_VERSION = '2025-06-18';
+const API_ASSERTIONS_DESCRIPTION = 'Aserciones REST soportadas: {status:200} o request.expected_status; {ok:true}; {header:"content-type", equals:"application/json"}; {header:"content-type", contains:"json"}; {body_contains:"texto"}; body path con {path:"id", exists:true}, {path:"name", equals:"Mario"}, {path:"items", contains:"item_001"}, {path:"$", isArray:true}. Usa path "" o "$" para el body raiz. No existen greater_than, length ni comparadores numericos.';
 const casesInputSchema = {
   type: 'array',
   description: 'Casos normalizados o semiestructurados. Si se pasa, no hace falta markdown/source_path.',
@@ -84,6 +85,7 @@ const casesInputSchema = {
             expected_status: { type: 'number' },
             assertions: {
               type: 'array',
+              description: API_ASSERTIONS_DESCRIPTION,
               items: { type: 'object', additionalProperties: true }
             },
             captures: {
@@ -97,7 +99,7 @@ const casesInputSchema = {
       },
       assertions: {
         type: 'array',
-        description: 'Aserciones REST, por ejemplo {path:"id", equals:123}, {path:"items", isArray:true} o {status:201}.',
+        description: API_ASSERTIONS_DESCRIPTION,
         items: { type: 'object', additionalProperties: true }
       },
       preconditions: { type: 'array', items: { type: 'string' } },
@@ -121,7 +123,7 @@ const identityInputProperties = {
 const tools = [
   {
     name: 'run_cases',
-    description: 'Crea y ejecuta un run ProGuide desde casos estructurados o Markdown. Alias recomendado para QA.',
+    description: 'Tool principal para ejecutar. Crea y ejecuta un run ProGuide desde casos estructurados o Markdown.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -148,7 +150,7 @@ const tools = [
   },
   {
     name: 'create_run',
-    description: 'Crea un run local desde casos estructurados o Markdown sin ejecutar. Devuelve run_id para ejecutar despues.',
+    description: 'Tool principal para dry-run. Crea un run local desde casos estructurados o Markdown sin ejecutar. Devuelve run_id para ejecutar despues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -171,7 +173,7 @@ const tools = [
   },
   {
     name: 'run_markdown_cases',
-    description: 'Importa casos QA desde Markdown, genera codigo TypeScript Playwright con el agente configurado y ejecuta Playwright Test.',
+    description: 'Alias legacy de run_cases. Preferir run_cases para ejecuciones nuevas.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -198,7 +200,7 @@ const tools = [
   },
   {
     name: 'create_run_from_markdown',
-    description: 'Importa casos QA desde Markdown y crea un run local sin generar codigo ni ejecutar. Devuelve run_id para ejecutar despues.',
+    description: 'Alias legacy de create_run. Preferir create_run para dry-runs nuevos.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -381,7 +383,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.4' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.5' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
