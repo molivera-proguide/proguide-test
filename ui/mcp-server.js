@@ -52,6 +52,46 @@ const casesInputSchema = {
           expected_status: { type: 'number' }
         }
       },
+      requests: {
+        type: 'array',
+        description: 'Flujo REST secuencial para type=api. Cada item puede incluir request/method/path, assertions y captures/save para variables reutilizables como {{access_token}}.',
+        items: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            id: { type: 'string' },
+            title: { type: 'string' },
+            request: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                method: { type: 'string' },
+                path: { type: 'string' },
+                headers: { type: 'object', additionalProperties: true },
+                query: { type: 'object', additionalProperties: true },
+                body: {},
+                expected_status: { type: 'number' }
+              }
+            },
+            method: { type: 'string' },
+            path: { type: 'string' },
+            headers: { type: 'object', additionalProperties: true },
+            query: { type: 'object', additionalProperties: true },
+            body: {},
+            expected_status: { type: 'number' },
+            assertions: {
+              type: 'array',
+              items: { type: 'object', additionalProperties: true }
+            },
+            captures: {
+              type: 'object',
+              additionalProperties: true,
+              description: 'Mapa variable -> body path/header spec. Ejemplo: {"access_token":"access_token"}. Alias: save.'
+            },
+            save: { type: 'object', additionalProperties: true }
+          }
+        }
+      },
       assertions: {
         type: 'array',
         description: 'Aserciones REST, por ejemplo {path:"id", equals:123}, {path:"items", isArray:true} o {status:201}.',
@@ -328,7 +368,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.0' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.3' }
       });
     }
     if (message.method === 'notifications/initialized') return null;

@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.2.tgz
+npm install -g ./proguide-test-0.2.0-ts.3.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.2/proguide-test-0.2.0-ts.2.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.3/proguide-test-0.2.0-ts.3.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -65,8 +65,11 @@ La respuesta incluye `run_url` para abrir el viewer local con estado, resultados
 
 ## Casos E2E Para API REST
 
-Ademas de casos UI, ProGuide puede ejecutar casos REST con Playwright `request`.
-En Markdown:
+ProGuide puede ejecutar casos REST con Playwright `request`. Para API, el camino mas
+confiable es usar casos estructurados con `type: "api"`, `request`/`requests` y
+`assertions`; no depende de DOM, Chromium ni del agente LLM.
+
+En Markdown simple:
 
 ```markdown
 ## TC-API-001 Crear usuario
@@ -85,18 +88,20 @@ Resultado esperado:
 - body.id existe
 ```
 
-O como casos estructurados por MCP/CLI:
+Como caso estructurado de una request:
 
 ```json
 {
   "type": "api",
   "title": "Health",
   "request": { "method": "GET", "path": "/health", "expected_status": 200 },
-      "assertions": [{ "path": "service", "equals": "sample-api" }]
+  "assertions": [{ "path": "service", "equals": "sample-api" }]
 }
 ```
 
-Tambien se pueden usar credenciales pasadas por CLI/MCP sin escribir secretos literales en el caso:
+Tambien se pueden usar credenciales pasadas por CLI/MCP sin escribir secretos literales
+en el caso. `{{email}}`, `{{username}}` y `{{password}}` se resuelven desde los
+argumentos `email`, `username` y `password` de MCP/CLI:
 
 ```json
 {
@@ -115,7 +120,57 @@ Tambien se pueden usar credenciales pasadas por CLI/MCP sin escribir secretos li
 }
 ```
 
-Aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `body_path` con `equals`, `exists`, `contains` e `isArray`. Las aserciones no soportadas fallan explicitamente en la ejecucion para evitar falsos verdes.
+Para flujos autenticados, usa `requests`: las requests corren en orden dentro del mismo
+test. `captures` o `save` guarda valores de una respuesta y los siguientes pasos pueden
+usar `{{variable}}` en headers, query, body o path.
+
+```json
+{
+  "type": "api",
+  "title": "Login y perfil autenticado",
+  "requests": [
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/login",
+      "body": {
+        "email": "{{email}}",
+        "password": "{{password}}"
+      },
+      "expected_status": 200,
+      "assertions": [{ "path": "access_token", "exists": true }],
+      "captures": { "access_token": "access_token" }
+    },
+    {
+      "id": "profile",
+      "method": "GET",
+      "path": "/profile",
+      "headers": { "authorization": "Bearer {{access_token}}" },
+      "expected_status": 200,
+      "assertions": [
+        { "path": "email", "equals": "qa@example.test" },
+        { "path": "roles", "isArray": true }
+      ]
+    }
+  ]
+}
+```
+
+Aserciones soportadas:
+
+- `{ "status": 200 }` o `request.expected_status`.
+- `{ "ok": true }`.
+- `{ "header": "content-type", "contains": "application/json" }`.
+- `{ "body_contains": "texto" }`.
+- `{ "path": "id", "exists": true }`.
+- `{ "path": "name", "equals": "Mario" }`.
+- `{ "path": "items", "isArray": true }`.
+- `{ "path": "items", "contains": "item_001" }`.
+
+Los paths se leen desde el body JSON. Un path vacio representa el body completo, por
+ejemplo `{ "path": "", "isArray": true }` valida una respuesta raiz que es array.
+Las aserciones no soportadas fallan durante la creacion del run para evitar falsos
+verdes.
 
 Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
 

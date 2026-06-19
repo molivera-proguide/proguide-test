@@ -33,9 +33,53 @@ placeholders) en este orden de preferencia:
 Nunca inventes textos de botones o campos: si no los conoces, consíguelos por alguna de
 estas vías antes de dar los casos por definitivos.
 
+**Si el objetivo es una API REST**, no apliques reglas de UI/DOM. Obtiene el contrato
+desde OpenAPI/Swagger, README, codigo backend, colecciones HTTP, ejemplos `curl` o lo
+que indique el usuario. Si no hay contrato, pregunta por metodo, path, payload,
+autenticacion y respuesta esperada. Para API, prefiere casos estructurados con
+`type: "api"`; el Markdown en lenguaje natural es solo fallback.
+
 ### Paso 1 — Redactar los casos con la plantilla
 Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 
+- **Para API REST, usa casos estructurados antes que pasos UI.** Un caso simple usa
+  `request` + `assertions`; un flujo autenticado usa `requests` secuenciales. No uses
+  `click`, `fill`, `Route`, textos de botones ni arbol de accesibilidad para API.
+- **Contrato API estructurado recomendado:**
+  ```json
+  {
+    "type": "api",
+    "title": "Login y perfil autenticado",
+    "requests": [
+      {
+        "id": "login",
+        "method": "POST",
+        "path": "/login",
+        "body": { "email": "{{email}}", "password": "{{password}}" },
+        "expected_status": 200,
+        "assertions": [{ "path": "access_token", "exists": true }],
+        "captures": { "access_token": "access_token" }
+      },
+      {
+        "id": "profile",
+        "method": "GET",
+        "path": "/profile",
+        "headers": { "authorization": "Bearer {{access_token}}" },
+        "expected_status": 200,
+        "assertions": [{ "path": "roles", "isArray": true }]
+      }
+    ]
+  }
+  ```
+- **Variables API:** usa `captures` o `save` para guardar valores del body JSON o
+  headers y reutilizarlos como `{{variable}}` en requests posteriores. Usa
+  `{{email}}`, `{{username}}` y `{{password}}` solo para credenciales pasadas por
+  CLI/MCP; no escribas secretos productivos literales.
+- **Aserciones API soportadas:** `status`/`expected_status`, `ok`, `header`,
+  `body_contains`, y body path con `equals`, `exists`, `contains`, `isArray`.
+  Ejemplos: `{ "path": "id", "exists": true }`, `{ "path": "items", "isArray": true }`,
+  `{ "header": "content-type", "contains": "json" }`. Un path vacio representa el body
+  completo. Cualquier operador no soportado debe considerarse error, no warning menor.
 - **Respeta el contrato del normalizador Markdown.** Cada caso debe empezar con un
   heading tipo `# TC-001: Título`, `# Caso 1: Título` o `# Case 1: Title`. Usa labels
   reconocidos con dos puntos: `Priority`, `Description`, `Route`, `Preconditions`,
@@ -89,6 +133,8 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 1. Llama a `mcp__proguide-test__create_run` (crea SIN ejecutar) con los casos.
 2. Revisa en la respuesta los `executable_steps`: cada uno trae `normalized_action` y
    `confidence`.
+   En API estructurada, revisa tambien `request`/`requests`, `assertions` y `captures`;
+   los casos API deterministas no necesitan DOM ni confianza de selectores.
 3. **Acepta como ideal `confidence: 0.95` en clicks, fills y asserts críticos.**
    Normalmente se logra con el DSL explícito (`click [selector]`, `fill [selector] with`,
    `expect [selector]...`, `expect text "..."`).
@@ -137,3 +183,5 @@ visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real 
 | Falla un paso compuesto | Varias acciones en un paso | Dividir en pasos atómicos |
 | Verificación de precio/número falla | El valor aparece varias veces | Verificar por texto único (nombre/título) |
 | Caso pasa solo / falla en suite | Dependencia entre casos | Hacer cada caso autocontenido |
+| API login pasa pero el siguiente request da 401 | Token hardcodeado o no capturado | Usar `requests` + `captures` y `Authorization: Bearer {{access_token}}` |
+| API create_run falla por aserción no soportada | Operador fuera del contrato | Cambiar a `equals`, `exists`, `contains`, `isArray`, `status`, `ok`, `header` o `body_contains` |

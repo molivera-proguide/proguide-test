@@ -544,6 +544,7 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   if (!Array.isArray(cases) || !cases.length) {
     throw new Error('cases debe contener al menos un caso.');
   }
+  const normalizedCases = cases.map((item, index) => normalizeCaseForStorage(item, index + 1));
 
   const runDir = await newRunDir(root);
   const run = {
@@ -588,7 +589,6 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   await writeJson(path.join(runDir, SOURCE_CASES_JSON), maskSecretsDeep(cases));
   await appendEvent(runDir, { run_id: run.id, type: 'file_received', message: 'Casos estructurados recibidos.' });
 
-  const normalizedCases = cases.map((item, index) => normalizeCaseForStorage(item, index + 1));
   for (const testCase of normalizedCases) {
     if (run.qa_owner && !testCase.qa_owner) testCase.qa_owner = run.qa_owner;
     if (run.dev_owner && !testCase.dev_owner) testCase.dev_owner = run.dev_owner;
@@ -850,6 +850,7 @@ async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, pro
       status: 'setup_failed',
       duration_seconds: 0,
       message: setupMessage,
+      error_details: logText.trim() || setupMessage,
       steps: testCase.steps,
       expected: testCase.expected,
       videos: [],
@@ -950,6 +951,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
         status: normalized.status,
         duration_seconds: normalized.duration_seconds,
         message: normalized.message,
+        error_details: normalized.error_details,
         steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,
         videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
@@ -967,6 +969,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
       status: 'inconclusive',
       duration_seconds: 0,
       message: 'No Playwright result was found for this case.',
+      error_details: '',
       steps: testCase.steps,
       expected: testCase.expected,
       videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
@@ -1024,6 +1027,7 @@ function normalizePlaywrightSpecResult(spec) {
   const result = results.at(-1) || {};
   const status = playwrightStatus(result.status || test.outcome || spec.ok);
   const message = playwrightMessage(result);
+  const errorDetails = playwrightErrorDetails(result);
   const steps = flattenPlaywrightSteps(result.steps || []);
   const attachments = results.flatMap((item) => item.attachments || []);
   const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
@@ -1031,6 +1035,7 @@ function normalizePlaywrightSpecResult(spec) {
     status,
     duration_seconds: Math.round((duration / 1000) * 1000) / 1000,
     message,
+    error_details: errorDetails,
     steps,
     attachments
   };
@@ -1052,6 +1057,72 @@ function playwrightMessage(result) {
   const first = errors[0];
   if (!first) return '';
   return String(first.message || first.value || first.stack || first).trim();
+}
+
+function playwrightErrorDetails(result) {
+  const chunks = [];
+  const errors = [
+    ...(result?.errors || []),
+    result?.error
+  ].filter(Boolean);
+  for (const error of errors) {
+    const formatted = formatPlaywrightError(error);
+    if (formatted) chunks.push(formatted);
+  }
+  const stdout = outputEntriesText(result?.stdout);
+  if (stdout) chunks.push(`stdout:\n${stdout}`);
+  const stderr = outputEntriesText(result?.stderr);
+  if (stderr) chunks.push(`stderr:\n${stderr}`);
+  return uniqueTextChunks(chunks).join('\n\n').trim();
+}
+
+function formatPlaywrightError(error) {
+  if (!error) return '';
+  if (typeof error === 'string') return error.trim();
+  const message = String(error.message || error.value || '').trim();
+  const stack = String(error.stack || '').trim();
+  const location = error.location
+    ? `${error.location.file || ''}${error.location.line ? `:${error.location.line}` : ''}${error.location.column ? `:${error.location.column}` : ''}`.trim()
+    : '';
+  const chunks = [];
+  if (stack && message && stack.includes(message)) {
+    chunks.push(stack);
+  } else {
+    if (message) chunks.push(message);
+    if (stack) chunks.push(stack);
+  }
+  if (location && !chunks.some((chunk) => chunk.includes(location))) chunks.push(`at ${location}`);
+  if (!chunks.length) chunks.push(JSON.stringify(error, null, 2));
+  return uniqueTextChunks(chunks).join('\n').trim();
+}
+
+function outputEntriesText(entries) {
+  return (Array.isArray(entries) ? entries : [])
+    .map((entry) => {
+      if (typeof entry === 'string') return entry;
+      if (entry?.text) return String(entry.text);
+      if (entry?.buffer) {
+        try {
+          return Buffer.from(entry.buffer, 'base64').toString('utf8');
+        } catch {
+          return String(entry.buffer);
+        }
+      }
+      return entry ? JSON.stringify(entry) : '';
+    })
+    .join('')
+    .trim();
+}
+
+function uniqueTextChunks(chunks) {
+  const seen = new Set();
+  const unique = [];
+  for (const chunk of chunks.map((item) => String(item || '').trim()).filter(Boolean)) {
+    if (seen.has(chunk)) continue;
+    seen.add(chunk);
+    unique.push(chunk);
+  }
+  return unique;
 }
 
 function flattenPlaywrightSteps(steps, prefix = '') {
@@ -1350,26 +1421,16 @@ async function validateGeneratedCode(outputDir, plan) {
 
 function isApiPlanCase(testCase) {
   return String(testCase?.type || '').toLowerCase() === 'api' ||
+    (Array.isArray(testCase?.requests) && testCase.requests.some((item) => item?.request?.method && item?.request?.path)) ||
     Boolean(testCase?.request?.method && testCase?.request?.path);
 }
 
 function generateApiTestSpec(planCases) {
   const cases = planCases.map((testCase) => {
-    const request = normalizeApiRequest({
-      ...(testCase.request || {}),
-      route: testCase.route,
-      steps: testCase.steps || [],
-      expected: testCase.expected || []
-    });
     return {
       id: testCase.id,
       title: testCase.title,
-      request,
-      assertions: normalizeApiAssertions({
-        assertions: testCase.assertions || [],
-        expected: testCase.expected || [],
-        expectedStatus: request.expected_status
-      })
+      requests: normalizeApiPlanRequests(testCase)
     };
   });
   const markers = cases.map((testCase) => `// [${testCase.id}] ${testCase.title}`).join('\n');
@@ -1392,24 +1453,37 @@ function generateApiTestSpec(planCases) {
     declarations,
     '',
     'async function runApiCase(request, testCase) {',
-    '    const response = await test.step(`${testCase.request.method} ${testCase.request.path}`, async () => {',
-    '      return request.fetch(testCase.request.path, requestOptions(testCase.request));',
-    '    });',
-    '',
-    '    let responseBody = null;',
-    '    if (needsResponseBody(testCase.assertions)) {',
-    "      responseBody = await test.step('read response body', async () => readResponseBody(response));",
-    '    }',
-    '',
-    '    for (const assertion of testCase.assertions) {',
-    '      await test.step(assertionTitle(assertion), async () => {',
-    '        await applyAssertion({ assertion, response, responseBody });',
-    '      });',
-    '    }',
+    '  const variables = {};',
+    '  for (const apiStep of testCase.requests) {',
+    '    await runApiStep(request, apiStep, variables);',
+    '  }',
     '}',
     '',
-    'function requestOptions(apiRequest) {',
-    '  const resolved = resolveRequestValue(apiRequest);',
+    'async function runApiStep(request, apiStep, variables) {',
+    '  const response = await test.step(`${apiStep.request.method} ${apiStep.request.path}`, async () => {',
+    '    return request.fetch(resolveRequestValue(apiStep.request.path, variables), requestOptions(apiStep.request, variables));',
+    '  });',
+    '',
+    '  let responseBody = null;',
+    '  if (needsResponseBody(apiStep.assertions, apiStep.captures)) {',
+    "    responseBody = await test.step('read response body', async () => readResponseBody(response));",
+    '  }',
+    '',
+    '  for (const assertion of apiStep.assertions) {',
+    '    await test.step(assertionTitle(assertion), async () => {',
+    '      await applyAssertion({ assertion, response, responseBody });',
+    '    });',
+    '  }',
+    '',
+    '  for (const capture of apiStep.captures || []) {',
+    '    await test.step(captureTitle(capture), async () => {',
+    '      applyCapture({ capture, response, responseBody, variables });',
+    '    });',
+    '  }',
+    '}',
+    '',
+    'function requestOptions(apiRequest, variables) {',
+    '  const resolved = resolveRequestValue(apiRequest, variables);',
     '  const options = { method: resolved.method };',
     '  if (resolved.headers && Object.keys(resolved.headers).length) options.headers = resolved.headers;',
     '  if (resolved.query && Object.keys(resolved.query).length) options.params = resolved.query;',
@@ -1417,23 +1491,35 @@ function generateApiTestSpec(planCases) {
     '  return options;',
     '}',
     '',
-    'function resolveRequestValue(value) {',
-    '  if (Array.isArray(value)) return value.map(resolveRequestValue);',
+    'function resolveRequestValue(value, variables = {}) {',
+    '  if (Array.isArray(value)) return value.map((entry) => resolveRequestValue(entry, variables));',
     '  if (value && typeof value === "object") {',
-    '    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveRequestValue(entry)]));',
+    '    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveRequestValue(entry, variables)]));',
     '  }',
     '  if (typeof value !== "string") return value;',
-    '  return value.replace(/\\{\\{\\s*(email|username|password|PROGUIDE_USER_EMAIL|PROGUIDE_USER_USERNAME|PROGUIDE_USER_PASSWORD)\\s*\\}\\}/gi, (_match, name) => {',
-    '    const normalized = String(name).toUpperCase();',
-    '    if (normalized === "EMAIL" || normalized === "PROGUIDE_USER_EMAIL") return process.env.PROGUIDE_USER_EMAIL || "";',
-    '    if (normalized === "USERNAME" || normalized === "PROGUIDE_USER_USERNAME") return process.env.PROGUIDE_USER_USERNAME || "";',
-    '    if (normalized === "PASSWORD" || normalized === "PROGUIDE_USER_PASSWORD") return process.env.PROGUIDE_USER_PASSWORD || "";',
-    '    return _match;',
-    '  });',
+    '  const exact = value.match(/^\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}\\}$/);',
+    '  if (exact) return resolveVariable(exact[1], variables);',
+    '  return value.replace(/\\{\\{\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\}\\}/g, (_match, name) => String(resolveVariable(name, variables)));',
     '}',
     '',
-    'function needsResponseBody(assertions) {',
-    "  return assertions.some((assertion) => ['body_path', 'body_contains'].includes(assertion.type));",
+    'function resolveVariable(name, variables) {',
+    '  if (Object.prototype.hasOwnProperty.call(variables, name)) return variables[name];',
+    '    const normalized = String(name).toUpperCase();',
+    '  if (normalized === "EMAIL" || normalized === "PROGUIDE_USER_EMAIL") return requiredEnv("PROGUIDE_USER_EMAIL");',
+    '  if (normalized === "USERNAME" || normalized === "PROGUIDE_USER_USERNAME") return requiredEnv("PROGUIDE_USER_USERNAME");',
+    '  if (normalized === "PASSWORD" || normalized === "PROGUIDE_USER_PASSWORD") return requiredEnv("PROGUIDE_USER_PASSWORD");',
+    '  throw new Error(`Missing API variable: ${name}`);',
+    '}',
+    '',
+    'function requiredEnv(name) {',
+    '  const value = process.env[name];',
+    '  if (value === undefined || value === "") throw new Error(`Missing API credential env var: ${name}`);',
+    '  return value;',
+    '}',
+    '',
+    'function needsResponseBody(assertions = [], captures = []) {',
+    "  return assertions.some((assertion) => ['body_path', 'body_contains'].includes(assertion.type)) ||",
+    "    captures.some((capture) => (capture.source || 'body') === 'body');",
     '}',
     '',
     'async function readResponseBody(response) {',
@@ -1491,6 +1577,17 @@ function generateApiTestSpec(planCases) {
     "  throw new Error(`Unsupported API assertion: ${JSON.stringify(assertion)}`);",
     '}',
     '',
+    'function applyCapture({ capture, response, responseBody, variables }) {',
+    '  let value;',
+    "  if (capture.source === 'header') {",
+    "    value = response.headers()[String(capture.header || '').toLowerCase()];",
+    '  } else {',
+    '    value = valueAtPath(responseBody, capture.path);',
+    '  }',
+    '  if (value === undefined) throw new Error(`Capture ${capture.name} did not resolve`);',
+    '  variables[capture.name] = value;',
+    '}',
+    '',
     'function valueAtPath(source, path) {',
     '  if (source === null || source === undefined) return undefined;',
     "  const parts = String(path || '').replace(/\\[(\\d+)\\]/g, '.$1').split('.').filter(Boolean);",
@@ -1511,8 +1608,35 @@ function generateApiTestSpec(planCases) {
     "  if (assertion.type === 'unsupported') return `unsupported assertion ${assertion.reason || ''}`;",
     "  return 'api assertion';",
     '}',
+    '',
+    'function captureTitle(capture) {',
+    "  if (capture.source === 'header') return `capture ${capture.name} from header ${capture.header}`;",
+    "  return `capture ${capture.name} from body.${capture.path || '<root>'}`;",
+    '}',
     ''
   ].join('\n');
+}
+
+function normalizeApiPlanRequests(testCase) {
+  const flowRequests = normalizeApiRequests(testCase.requests || []);
+  if (flowRequests.length) return flowRequests;
+  const request = normalizeApiRequest({
+    ...(testCase.request || {}),
+    route: testCase.route,
+    steps: testCase.steps || [],
+    expected: testCase.expected || []
+  });
+  return [{
+    id: 'request_1',
+    title: `${request.method} ${request.path}`,
+    request,
+    assertions: normalizeApiAssertions({
+      assertions: testCase.assertions || [],
+      expected: testCase.expected || [],
+      expectedStatus: request.expected_status
+    }),
+    captures: normalizeApiCaptures(testCase.captures ?? testCase.save ?? testCase.extract)
+  }];
 }
 
 function casesToTestPlan(cases, { sourceMd, appName }) {
@@ -1529,6 +1653,7 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
         expected: testCase.expected_results || []
       })
       : null;
+    const apiRequests = type === 'api' ? normalizeApiRequests(testCase.requests || []) : [];
     const steps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
     const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
     const route = type === 'api'
@@ -1543,6 +1668,7 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
       description: testCase.description || testCase.title,
       route,
       request,
+      requests: apiRequests,
       assertions: type === 'api' ? normalizeApiAssertions({
         assertions: testCase.assertions || [],
         expected: testCase.expected_results || [],
@@ -1785,10 +1911,11 @@ function buildSteps(originalSteps, options = {}) {
   }));
 }
 
-function inferCaseType({ type, request, steps = [] } = {}) {
+function inferCaseType({ type, request, requests = [], steps = [] } = {}) {
   const explicitType = norm(type).replace(/[_-]+/g, ' ');
   if (API_CASE_TYPES.has(explicitType)) return 'api';
   if (request?.method && request?.path) return 'api';
+  if (Array.isArray(requests) && requests.some((item) => item?.request?.method && item?.request?.path)) return 'api';
   if (cleanList(steps).some((step) => normalizeApiStep(step))) return 'api';
   return 'ui';
 }
@@ -1872,6 +1999,104 @@ function normalizeApiRequest(input = {}) {
   return request;
 }
 
+function normalizeApiRequests(value) {
+  return firstArrayValue(value)
+    .map((entry, index) => normalizeApiRequestEntry(entry, index))
+    .filter((entry) => entry.request.method && entry.request.path);
+}
+
+function normalizeApiRequestEntry(entry, index) {
+  const source = isPlainObject(entry) ? entry : {};
+  const nestedRequest = isPlainObject(source.request) ? source.request : {};
+  const request = normalizeApiRequest({
+    ...nestedRequest,
+    type: 'api',
+    route: source.route ?? nestedRequest.route,
+    method: source.method ?? source.request_method ?? source.http_method ?? nestedRequest.method,
+    path: source.path ?? source.endpoint ?? source.request_path ?? source.url ?? nestedRequest.path ?? nestedRequest.endpoint,
+    headers: source.headers ?? source.request_headers ?? nestedRequest.headers,
+    query: source.query ?? source.params ?? source.request_query ?? nestedRequest.query ?? nestedRequest.params,
+    body: source.body ?? source.payload ?? source.request_body ?? nestedRequest.body ?? nestedRequest.payload,
+    expected_status: source.expected_status ?? source.status_code ?? source.status ?? nestedRequest.expected_status
+  });
+  const id = safeId(source.id || source.name || `request_${index + 1}`);
+  const assertions = normalizeApiAssertions({
+    assertions: source.assertions || source.api_assertions || [],
+    expected: source.expected_results || source.expected || [],
+    expectedStatus: request.expected_status
+  });
+  rejectUnsupportedApiAssertions(assertions, id);
+  return {
+    id,
+    title: String(source.title || source.description || `${request.method || 'REQUEST'} ${request.path || ''}`).trim(),
+    request,
+    assertions,
+    captures: normalizeApiCaptures(source.captures ?? source.save ?? source.extract ?? source.exports)
+  };
+}
+
+function normalizeApiCaptures(value) {
+  if (value === undefined || value === null || value === '') return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => normalizeApiCaptureEntry(entry)).filter(Boolean);
+  }
+  if (isPlainObject(value)) {
+    return Object.entries(value)
+      .map(([name, entry]) => normalizeApiCaptureEntry(entry, name))
+      .filter(Boolean);
+  }
+  return cleanList(value).map(parseApiCaptureLine).filter(Boolean);
+}
+
+function normalizeApiCaptureEntry(entry, fallbackName = '') {
+  if (typeof entry === 'string') {
+    const path = normalizeCapturePath(entry);
+    return path !== null ? normalizeApiCaptureObject({ name: fallbackName, path }) : null;
+  }
+  if (!isPlainObject(entry)) return null;
+  return normalizeApiCaptureObject({
+    name: entry.name || entry.variable || entry.as || fallbackName,
+    path: entry.path || entry.body_path || entry.json_path || entry.field,
+    header: entry.header || entry.header_name
+  });
+}
+
+function normalizeApiCaptureObject(entry) {
+  const name = normalizeCaptureName(entry.name);
+  const header = String(entry.header || '').trim().toLowerCase();
+  const path = normalizeCapturePath(entry.path);
+  if (!name || (!header && path === null)) return null;
+  return header
+    ? { name, source: 'header', header }
+    : { name, source: 'body', path };
+}
+
+function parseApiCaptureLine(line) {
+  const text = String(line || '').trim();
+  const match = text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:|<-|from)\s*(.+)$/i);
+  if (!match) return null;
+  const target = match[2].trim();
+  const headerMatch = target.match(/^headers?\.?([A-Za-z0-9_-]+)$/i) || target.match(/^header\s+([A-Za-z0-9_-]+)$/i);
+  return normalizeApiCaptureObject({
+    name: match[1],
+    header: headerMatch ? headerMatch[1] : '',
+    path: headerMatch ? null : target
+  });
+}
+
+function normalizeCaptureName(value) {
+  const text = String(value || '').trim();
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(text) ? text : '';
+}
+
+function normalizeCapturePath(value) {
+  if (value === undefined || value === null) return null;
+  return String(value)
+    .trim()
+    .replace(/^(?:body|response|json)\./i, '')
+    .replace(/^<root>$/i, '');
+}
+
 function normalizeHttpMethod(value) {
   const method = String(value || '').trim().toUpperCase();
   return HTTP_METHODS.has(method) ? method : '';
@@ -1901,6 +2126,13 @@ function normalizeApiAssertions({ assertions = [], expected = [], expectedStatus
   const unique = uniqueApiAssertions(normalized);
   if (!unique.length) unique.push({ type: 'ok' });
   return unique;
+}
+
+function rejectUnsupportedApiAssertions(assertions, context = '') {
+  const unsupported = (assertions || []).find((assertion) => assertion?.type === 'unsupported');
+  if (!unsupported) return;
+  const suffix = context ? ` en ${context}` : '';
+  throw new Error(`Asercion API no soportada${suffix}: ${unsupported.reason || 'unsupported_assertion'}. Usa status, ok, header, body_contains o body_path con equals/exists/contains/isArray.`);
 }
 
 function normalizeApiAssertion(assertion) {
@@ -2469,6 +2701,16 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
   const title = String(item.title || fallback.title || `Caso ${number}`).trim();
   const originalSteps = cleanList(item.original_steps || item.steps || fallback.original_steps || fallback.steps || []);
   const expectedResults = cleanList(item.expected_results || item.expected || fallback.expected_results || fallback.expected || []);
+  const flowRequests = normalizeApiRequests(firstArrayValue(
+    item.requests,
+    item.flow,
+    item.api_requests,
+    item.request_steps,
+    fallback.requests,
+    fallback.flow,
+    fallback.api_requests,
+    fallback.request_steps
+  ));
   const request = normalizeApiRequest({
     ...((fallback && fallback.request) || {}),
     ...((fallback && fallback.api) || {}),
@@ -2485,17 +2727,22 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     steps: originalSteps,
     expected: expectedResults
   });
+  const effectiveRequest = request.method && request.path
+    ? request
+    : (flowRequests[0]?.request || request);
   const type = inferCaseType({
     type: item.type || item.kind || item.test_type || fallback.type || fallback.kind || fallback.test_type,
-    request,
+    request: effectiveRequest,
+    requests: flowRequests,
     steps: originalSteps,
     expected: expectedResults
   });
   const assertions = type === 'api' ? normalizeApiAssertions({
     assertions: item.assertions || item.api_assertions || fallback.assertions || [],
     expected: expectedResults,
-    expectedStatus: request.expected_status
+    expectedStatus: effectiveRequest.expected_status
   }) : [];
+  if (type === 'api') rejectUnsupportedApiAssertions(assertions, title);
   const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
@@ -2516,11 +2763,11 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     }))
     : buildSteps(originalSteps, { type });
   const route = type === 'api'
-    ? (request.path || inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps))
+    ? (effectiveRequest.path || inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps))
     : inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
   const explicitAutomationState = item.automation_state || fallback.automation_state || '';
   const apiAutomation = type === 'api'
-    ? assessAutomation(originalSteps, expectedResults, { type, request, assertions })
+    ? assessAutomation(originalSteps, expectedResults, { type, request: effectiveRequest, requests: flowRequests, assertions })
     : null;
   return {
     id: safeId(item.id || fallback.id || `caso_${number}_${title}`),
@@ -2533,7 +2780,8 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     preconditions: cleanList(item.preconditions || fallback.preconditions || []),
     data_used: maskSecretLines(cleanList(item.data_used || fallback.data_used || [])),
     data: sanitizeCaseData(mergeCaseData(item.data || {}, fallback.data || {})),
-    request: type === 'api' ? request : null,
+    request: type === 'api' ? effectiveRequest : null,
+    requests: type === 'api' ? flowRequests : [],
     assertions,
     original_steps: originalSteps,
     executable_steps: executableSteps,
@@ -2577,6 +2825,17 @@ function markdownAgentSchema() {
         body: {},
         expected_status: 200
       },
+      requests: [{
+        id: 'login',
+        method: 'POST',
+        path: '/login',
+        headers: {},
+        query: {},
+        body: {},
+        expected_status: 200,
+        assertions: [{ path: 'access_token', exists: true }],
+        captures: { access_token: 'access_token' }
+      }],
       assertions: [{ type: 'status', expected: 200 }],
       original_steps: ['string'],
       executable_steps: [{
@@ -2695,11 +2954,14 @@ async function writeEvidenceReport({ summary, run, cases, runDir }) {
   const caseById = new Map(cases.map((item) => [item.id, item]));
   const rows = summary.results.map((result) => {
     const testCase = caseById.get(result.id) || {};
+    const errorDetails = result.error_details
+      ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
+      : '';
     return `<tr>
       <td>${escapeHtml(testCase.number || '')}</td>
       <td>${escapeHtml(result.title)}</td>
       <td>${escapeHtml(result.status)}</td>
-      <td>${escapeHtml(result.message || '')}</td>
+      <td>${escapeHtml(result.message || '')}${errorDetails}</td>
     </tr>`;
   }).join('');
   const html = `<!doctype html>
@@ -2714,6 +2976,9 @@ async function writeEvidenceReport({ summary, run, cases, runDir }) {
     table { width: 100%; border-collapse: collapse; margin-top: 24px; }
     th, td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; vertical-align: top; }
     th { background: #f8fafc; color: #475569; font-size: 12px; text-transform: uppercase; }
+    .error-console { margin-top: 10px; }
+    .error-console summary { cursor: pointer; color: #991b1b; font-weight: 700; }
+    .error-console pre { white-space: pre-wrap; overflow-x: auto; background: #111827; color: #f8fafc; border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.45; }
   </style>
 </head>
 <body>
@@ -3092,6 +3357,13 @@ function splitTags(value) {
 function cleanList(values) {
   const rawValues = typeof values === 'string' ? [values] : Array.from(values || []);
   return rawValues.map((value) => stripListMarker(String(value)).trim()).filter(Boolean);
+}
+
+function firstArrayValue(...values) {
+  for (const value of values) {
+    if (Array.isArray(value)) return value;
+  }
+  return [];
 }
 
 function joinText(existing, value) {

@@ -351,7 +351,17 @@ test('parsePlaywrightResults keeps spec results aligned by case id prefix', asyn
             results: [{
               status: 'failed',
               duration: 11648,
-              error: { message: 'expected admin dashboard' },
+              error: {
+                message: 'locator.click: Timeout 30000ms exceeded.',
+                stack: [
+                  'locator.click: Timeout 30000ms exceeded.',
+                  'Call log:',
+                  '  - waiting for locator(\'[data-testid="missing-submit"]\')',
+                  '',
+                  '  at generated/test_markdown_cases.spec.ts:12:48'
+                ].join('\n')
+              },
+              stdout: [{ text: 'debug stdout line\n' }],
               steps: [{ title: 'dashboard visible' }],
               attachments: []
             }]
@@ -380,8 +390,12 @@ test('parsePlaywrightResults keeps spec results aligned by case id prefix', asyn
 
     assert.deepEqual(results.map((item) => [item.id, item.status, item.message]), [
       ['tc_003', 'passed', ''],
-      ['tc_004', 'failed', 'expected admin dashboard']
+      ['tc_004', 'failed', 'locator.click: Timeout 30000ms exceeded.']
     ]);
+    assert.match(results[1].error_details, /Call log:/);
+    assert.match(results[1].error_details, /\[data-testid="missing-submit"]/);
+    assert.match(results[1].error_details, /generated\/test_markdown_cases\.spec\.ts:12:48/);
+    assert.match(results[1].error_details, /stdout:\ndebug stdout line/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

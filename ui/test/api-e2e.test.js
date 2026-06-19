@@ -185,7 +185,74 @@ test('API cases keep assertions unique and preserve request secrets for executio
   }
 });
 
-test('API assertions support arrays and fail unsupported operators explicitly', async () => {
+test('API flows capture variables and reuse them in later requests', async () => {
+  const root = makeTempRoot();
+  const api = await startSampleApi();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: api.baseUrl,
+      cases: [{
+        id: 'api_auth_flow',
+        type: 'api',
+        title: 'Login y perfil autenticado',
+        requests: [
+          {
+            id: 'login',
+            method: 'POST',
+            path: '/login',
+            body: {
+              email: 'qa@example.test',
+              password: 'secret-test-password'
+            },
+            expected_status: 200,
+            assertions: [{ path: 'access_token', exists: true }],
+            save: { access_token: 'access_token' }
+          },
+          {
+            id: 'profile',
+            method: 'GET',
+            path: '/profile',
+            headers: { authorization: 'Bearer {{access_token}}' },
+            expected_status: 200,
+            assertions: [
+              { path: 'email', equals: 'qa@example.test' },
+              { path: 'roles', isArray: true }
+            ]
+          }
+        ]
+      }]
+    });
+
+    assert.equal(prepared.cases[0].requests.length, 2);
+    assert.deepEqual(prepared.cases[0].requests[0].captures, [{
+      name: 'access_token',
+      source: 'body',
+      path: 'access_token'
+    }]);
+    const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.equal(plan.cases[0].requests[1].request.headers.authorization, 'Bearer {{access_token}}');
+
+    const summary = await executePreparedRun({
+      root,
+      runId: prepared.run.id,
+      baseUrl: api.baseUrl
+    });
+
+    assert.equal(summary.results[0].status, 'passed');
+    assert.match(summary.results[0].steps.join('\n'), /POST \/login/);
+    assert.match(summary.results[0].steps.join('\n'), /GET \/profile/);
+    const generated = await loadGeneratedCaseCode(root, prepared.run.id, 'api_auth_flow');
+    assert.match(generated.code, /resolveVariable/);
+    assert.match(generated.code, /applyCapture/);
+  } finally {
+    await api.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('API assertions support arrays and reject unsupported operators during create', async () => {
   const root = makeTempRoot();
   const api = await startSampleApi();
   try {
@@ -204,23 +271,10 @@ test('API assertions support arrays and fail unsupported operators explicitly', 
         assertions: [
           { path: 'items', isArray: true }
         ]
-      }, {
-        id: 'api_unsupported_assertion',
-        type: 'api',
-        title: 'Asercion no soportada',
-        request: {
-          method: 'GET',
-          path: '/health',
-          expected_status: 200
-        },
-        assertions: [
-          { path: 'ok', greaterThan: 0 }
-        ]
       }]
     });
 
     assert.equal(prepared.cases[0].assertions.some((item) => item.operator === 'is_array'), true);
-    assert.equal(prepared.cases[1].assertions.some((item) => item.type === 'unsupported'), true);
 
     const summary = await executePreparedRun({
       root,
@@ -228,8 +282,28 @@ test('API assertions support arrays and fail unsupported operators explicitly', 
       baseUrl: api.baseUrl
     });
 
-    assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'failed']);
-    assert.match(summary.results[1].message, /Unsupported API assertion/);
+    assert.deepEqual(summary.results.map((item) => item.status), ['passed']);
+
+    await assert.rejects(
+      () => prepareCasesRun({
+        root,
+        baseUrl: api.baseUrl,
+        cases: [{
+          id: 'api_unsupported_assertion',
+          type: 'api',
+          title: 'Asercion no soportada',
+          request: {
+            method: 'GET',
+            path: '/health',
+            expected_status: 200
+          },
+          assertions: [
+            { path: 'ok', greaterThan: 0 }
+          ]
+        }]
+      }),
+      /Asercion API no soportada/
+    );
   } finally {
     await api.close();
     fs.rmSync(root, { recursive: true, force: true });
@@ -354,6 +428,12 @@ async function handleSampleApiRequest(request, response) {
       return sendJson(response, 200, { access_token: 'token_123', token_type: 'Bearer' });
     }
     return sendJson(response, 401, { error: 'invalid_credentials' });
+  }
+  if (request.method === 'GET' && url.pathname === '/profile') {
+    if (request.headers.authorization === 'Bearer token_123') {
+      return sendJson(response, 200, { email: 'qa@example.test', roles: ['qa'] });
+    }
+    return sendJson(response, 401, { error: 'missing_or_invalid_token' });
   }
   if (request.method === 'GET' && url.pathname === '/items') {
     return sendJson(response, 200, { items: [{ id: 'item_001' }] });

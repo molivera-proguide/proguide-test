@@ -32,9 +32,49 @@ separados por `---`.
 - [Resultado observable 2]
 ```
 
+## Plantilla para API REST estructurada
+
+Usar esta forma cuando el caso no necesita UI. Para flujos con login/token, poner todos
+los requests dentro del mismo caso y capturar variables con `captures`.
+
+```json
+{
+  "type": "api",
+  "title": "Login y perfil autenticado",
+  "requests": [
+    {
+      "id": "login",
+      "method": "POST",
+      "path": "/login",
+      "body": {
+        "email": "{{email}}",
+        "password": "{{password}}"
+      },
+      "expected_status": 200,
+      "assertions": [{ "path": "access_token", "exists": true }],
+      "captures": { "access_token": "access_token" }
+    },
+    {
+      "id": "profile",
+      "method": "GET",
+      "path": "/profile",
+      "headers": { "authorization": "Bearer {{access_token}}" },
+      "expected_status": 200,
+      "assertions": [
+        { "path": "email", "equals": "qa@example.test" },
+        { "path": "roles", "isArray": true }
+      ]
+    }
+  ]
+}
+```
+
 ## Checklist antes de enviar el caso
 
 - [ ] Cada paso ejecuta UNA sola acción
+- [ ] Si es API, usar `type: "api"` con `request`/`requests`, no pasos de UI
+- [ ] Si es API autenticada, capturar token con `captures` y reutilizar `{{variable}}`
+- [ ] Si es API, usar solo aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `equals`, `exists`, `contains`, `isArray`
 - [ ] El caso tiene `Route` si la ruta inicial es conocida
 - [ ] La navegación usa un paso `/ruta` o `Ir a /ruta`, no `Navigate to /ruta`
 - [ ] Los clicks, fills y asserts críticos usan DSL explícito: `click [selector]`, `fill [selector] with`, `expect [selector]...` o `expect text "..."`

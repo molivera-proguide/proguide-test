@@ -684,6 +684,7 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
           ${testCase.description ? `<p class="detail-lede">${escapeHtml(testCase.description)}</p>` : ''}
         </header>
         ${result?.message ? `<div class="result-note ${escapeHtml(statusClass(status))}"><strong>Resultado</strong><p>${escapeHtml(result.message)}</p></div>` : ''}
+        ${renderErrorConsole(result)}
         <section class="detail-section">
           <h3>Pasos ejecutados</h3>
           ${renderStepTimeline(testCase, result, stepLog)}
@@ -722,6 +723,16 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
       </aside>
     </main>
     <script>${codeTabsScript()}</script>`;
+}
+
+function renderErrorConsole(result) {
+  const details = String(result?.error_details || '').trim();
+  if (!details) return '';
+  return `
+    <section class="detail-section error-console-section">
+      <h3>Error Playwright completo</h3>
+      <pre class="error-console">${escapeHtml(details)}</pre>
+    </section>`;
 }
 
 function findCaseResult(summary, caseId) {
@@ -2053,6 +2064,22 @@ function styles() {
     .result-note strong { display: block; margin-bottom: 6px; color: var(--text); }
     .result-note p { margin: 0; color: var(--muted); }
     .result-note.failed { border-color: rgba(255, 99, 122, 0.35); background: rgba(255, 99, 122, 0.08); }
+    .error-console-section { gap: 10px; }
+    .error-console {
+      margin: 0;
+      max-height: 520px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      border: 1px solid rgba(255, 99, 122, 0.28);
+      border-radius: var(--radius-sm);
+      background: #090d16;
+      color: #f4f7fb;
+      padding: 14px 16px;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.55;
+    }
     .detail-section { display: grid; gap: 12px; margin-top: 24px; }
     .detail-section.compact { margin-top: 18px; }
     .detail-section h3 {
