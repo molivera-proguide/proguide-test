@@ -56,6 +56,46 @@ Resultado esperado:
   }
 });
 
+test('prepareMarkdownRun accepts multiple REST API Markdown sources', async () => {
+  const root = makeTempRoot();
+  try {
+    const first = path.join(root, 'auth.md');
+    const second = path.join(root, 'items.md');
+    fs.writeFileSync(first, `## TC-API-LOGIN Login invalido
+
+Tipo: API
+Metodo: POST
+Endpoint: /login
+Body:
+- email: qa@example.test
+- password: wrong-password
+Resultado esperado:
+- Status 401
+`, 'utf8');
+    fs.writeFileSync(second, `## TC-API-ITEMS Listar items
+
+Tipo: API
+Metodo: GET
+Endpoint: /items
+Resultado esperado:
+- Status 200
+- body.items isArray
+`, 'utf8');
+
+    const prepared = await prepareMarkdownRun({
+      root,
+      sourceMd: [first, second],
+      baseUrl: 'http://api.test'
+    });
+
+    assert.equal(prepared.cases.length, 2);
+    assert.equal(prepared.run.source_filename, 'auth.md, items.md');
+    assert.deepEqual(prepared.cases.map((item) => item.request.path), ['/login', '/items']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('executePreparedRun runs REST API cases through Playwright request', async () => {
   const root = makeTempRoot();
   const api = await startSampleApi();
@@ -252,6 +292,59 @@ test('API flows capture variables and reuse them in later requests', async () =>
   }
 });
 
+test('API failures expose actual response body and optional debug request', async () => {
+  const root = makeTempRoot();
+  const api = await startSampleApi();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: api.baseUrl,
+      cases: [{
+        id: 'api_debug_failure',
+        type: 'api',
+        title: 'Login falla con respuesta visible',
+        debug: true,
+        request: {
+          method: 'POST',
+          path: '/login',
+          body: {
+            email: 'qa@example.test',
+            password: 'wrong-password'
+          },
+          expected_status: 200
+        },
+        assertions: [{ path: 'access_token', exists: true }]
+      }]
+    });
+
+    assert.equal(prepared.cases[0].executable_steps[0].normalized_action, 'api POST /login');
+    assert.deepEqual(prepared.cases[0].executable_steps[0].request, {
+      method: 'POST',
+      path: '/login',
+      headers: '{}',
+      query: '{}',
+      body: '{ email, password }'
+    });
+
+    const summary = await executePreparedRun({
+      root,
+      runId: prepared.run.id,
+      baseUrl: api.baseUrl
+    });
+
+    const [result] = summary.results;
+    assert.equal(result.status, 'failed');
+    assert.equal(result.actual_response.status, 401);
+    assert.deepEqual(result.actual_response.body, { error: 'invalid_credentials' });
+    assert.equal(result.actual_response.request.body.password, 'wrong-password');
+    assert.match(result.error_details, /ProGuide API debug/);
+    assert.match(result.error_details, /invalid_credentials/);
+  } finally {
+    await api.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('API assertions support arrays and reject unsupported operators during create', async () => {
   const root = makeTempRoot();
   const api = await startSampleApi();
@@ -374,6 +467,11 @@ test('viewer exposes run and usage data through REST API endpoints', async () =>
     assert.equal(runResponse.run.id, prepared.run.id);
     assert.equal(runResponse.cases[0].request.method, 'GET');
     assert.equal(runResponse.events.some((event) => event.type === 'run_created'), true);
+
+    const runHtml = await fetchText(`${baseUrl}/runs/${prepared.run.id}`);
+    assert.doesNotMatch(runHtml, /data-progress-step="dom"/);
+    assert.doesNotMatch(runHtml, />Browser<\/span>/);
+    assert.match(runHtml, /data-progress-step="code"/);
 
     const workspaceUsage = await fetchJson(`${baseUrl}/api/usage`);
     assert.equal(workspaceUsage.scope, 'workspace');
@@ -501,6 +599,12 @@ async function fetchJson(url) {
   const response = await fetch(url);
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
   return response.json();
+}
+
+async function fetchText(url) {
+  const response = await fetch(url);
+  assert.equal(response.ok, true, `${url} returned ${response.status}`);
+  return response.text();
 }
 
 async function stopViewer(viewer, baseUrl, root) {

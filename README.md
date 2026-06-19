@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.3.tgz
+npm install -g ./proguide-test-0.2.0-ts.4.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.3/proguide-test-0.2.0-ts.3.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.4/proguide-test-0.2.0-ts.4.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -172,7 +172,19 @@ ejemplo `{ "path": "", "isArray": true }` valida una respuesta raiz que es array
 Las aserciones no soportadas fallan durante la creacion del run para evitar falsos
 verdes.
 
+Cuando una asercion API falla, el resultado incluye `actual_response` con `status`,
+`headers` y `body` reales de la respuesta para depurar sin reconstruir el fallo desde
+el stack de Playwright. Si un caso API incluye `"debug": true`, ProGuide tambien guarda
+el request resuelto en `actual_response.request`; usalo solo en entornos locales o con
+datos no sensibles, porque puede incluir credenciales de prueba.
+
 Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
+
+Para suites partidas por archivo, el MCP acepta `source_paths: ["auth.md", "items.md"]`
+y los interpreta como un solo run. Para sumar casos a una regresion ya creada, pasa
+`append_to_run: "<run_id>"` junto con `cases`, `source_path`, `source_paths` o `markdown`;
+`run_cases` los agrega y ejecuta el run, mientras que `create_run` solo actualiza el
+preview.
 
 ## MCP En Claude Code
 

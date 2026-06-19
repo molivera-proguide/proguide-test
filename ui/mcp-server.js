@@ -4,12 +4,14 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import {
+  appendCasesToRun,
   executePreparedRun,
   listRunRecords,
   loadGeneratedCaseCode,
   loadRunBundle,
   prepareCasesRun,
-  prepareMarkdownRun
+  prepareMarkdownRun,
+  previewMarkdownRun
 } from './proguide-service.js';
 import { ensurePlaywrightRuntime } from './playwright-runtime.js';
 import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
@@ -39,6 +41,7 @@ const casesInputSchema = {
       description: { type: 'string' },
       priority: { type: 'string' },
       route: { type: 'string' },
+      debug: { type: 'boolean', description: 'Solo API. Si true, los fallos incluyen el request real resuelto en actual_response.request para debugging local.' },
       request: {
         type: 'object',
         additionalProperties: true,
@@ -124,7 +127,9 @@ const tools = [
       properties: {
         cases: casesInputSchema,
         source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
+        source_paths: { type: 'array', items: { type: 'string' }, description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.' },
         markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path/cases.' },
+        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar.' },
         base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
         root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
         title: { type: 'string' },
@@ -149,7 +154,9 @@ const tools = [
       properties: {
         cases: casesInputSchema,
         source_path: { type: 'string' },
+        source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
+        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos sin ejecutar.' },
         base_url: { type: 'string' },
         root: { type: 'string' },
         title: { type: 'string' },
@@ -169,8 +176,10 @@ const tools = [
       type: 'object',
       properties: {
         source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
+        source_paths: { type: 'array', items: { type: 'string' }, description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.' },
         markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path.' },
         cases: casesInputSchema,
+        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar.' },
         base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
         root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
         title: { type: 'string' },
@@ -194,8 +203,10 @@ const tools = [
       type: 'object',
       properties: {
         source_path: { type: 'string' },
+        source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
         cases: casesInputSchema,
+        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos sin ejecutar.' },
         base_url: { type: 'string' },
         root: { type: 'string' },
         title: { type: 'string' },
@@ -217,7 +228,9 @@ const tools = [
         run_id: { type: 'string' },
         cases: casesInputSchema,
         source_path: { type: 'string' },
+        source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
+        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar si no se pasa run_id.' },
         base_url: { type: 'string' },
         from_plan: { type: 'boolean', description: 'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.' },
         root: { type: 'string' },
@@ -368,7 +381,7 @@ async function handleMessage(message) {
       return response(message.id, {
         protocolVersion: message.params?.protocolVersion || PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.3' }
+        serverInfo: { name: 'proguide-test-e2e', version: '0.2.0-ts.4' }
       });
     }
     if (message.method === 'notifications/initialized') return null;
@@ -418,6 +431,7 @@ async function callTool(name, args) {
       run_id: prepared.run.id,
       run: bundle.run,
       cases: bundle.cases,
+      appended_cases: prepared.appended_cases,
       summary,
       ...viewer,
       report_url_path: bundle.run.html_path ? `/artifacts/${prepared.run.id}/${bundle.run.html_path}` : ''
@@ -428,11 +442,14 @@ async function callTool(name, args) {
   if (name === 'create_run_from_markdown' || name === 'create_run') {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
-    const viewer = await attachViewer(root, prepared.run.id, args);
+    const viewer = args.open_browser === false
+      ? viewerDisabled()
+      : await attachViewer(root, prepared.run.id, args);
     const payload = {
       run_id: prepared.run.id,
       run: prepared.run,
       cases: prepared.cases,
+      appended_cases: prepared.appended_cases,
       ...viewer
     };
     return toolResult(runMessage('creado desde Markdown', payload), payload);
@@ -562,6 +579,9 @@ function getPrompt(name, args) {
 }
 
 async function prepareRunFromArgs(root, args) {
+  if (args.append_to_run) {
+    return appendRunFromArgs(root, args);
+  }
   if (Array.isArray(args.cases) && args.cases.length) {
     return prepareCasesRun({
       root,
@@ -580,23 +600,56 @@ async function prepareRunFromArgs(root, args) {
   });
 }
 
+async function appendRunFromArgs(root, args) {
+  const runId = cleanHandle(args.append_to_run, 'append_to_run');
+  let casesPayload = Array.isArray(args.cases) && args.cases.length ? args.cases : null;
+  if (!casesPayload) {
+    const sourceMd = await resolveMarkdownSource(root, args);
+    const preview = await previewMarkdownRun({
+      root,
+      sourceMd,
+      metadata: metadataFromArgs(args),
+      useAgent: false
+    });
+    casesPayload = preview.cases;
+  }
+  return appendCasesToRun({
+    root,
+    runId,
+    casesPayload,
+    baseUrl: args.base_url || '',
+    metadata: metadataFromArgs(args)
+  });
+}
+
 async function resolveMarkdownSource(root, args) {
+  if (Array.isArray(args.source_paths) && args.source_paths.length) {
+    return resolveMarkdownSources(root, args.source_paths, 'source_paths');
+  }
   if (args.source_path) {
-    const rootPath = path.resolve(root);
-    const source = path.resolve(rootPath, String(args.source_path));
-    if (!isPathInside(rootPath, source)) {
-      throw new Error(`source_path debe estar dentro del root: ${args.source_path}`);
-    }
-    return source;
+    return (await resolveMarkdownSources(root, [args.source_path], 'source_path'))[0];
   }
   if (!String(args.markdown || '').trim()) {
-    throw new Error('Debes pasar source_path o markdown.');
+    throw new Error('Debes pasar source_path, source_paths o markdown.');
   }
   const uploadDir = path.join(root, '.codex_tmp', 'mcp_markdown');
   await fs.mkdir(uploadDir, { recursive: true });
   const source = path.join(uploadDir, `cases_${Date.now()}.md`);
   await fs.writeFile(source, String(args.markdown), 'utf8');
   return source;
+}
+
+async function resolveMarkdownSources(root, sourcePaths, label) {
+  const rootPath = path.resolve(root);
+  const sources = sourcePaths.map((sourcePath) => {
+    const source = path.resolve(rootPath, String(sourcePath));
+    if (!isPathInside(rootPath, source)) {
+      throw new Error(`${label} debe estar dentro del root: ${sourcePath}`);
+    }
+    return source;
+  });
+  if (!sources.length) throw new Error(`${label} debe contener al menos una ruta.`);
+  return sources;
 }
 
 function isPathInside(root, target) {
@@ -653,6 +706,18 @@ async function attachViewer(root, runId, options = {}) {
     console.error(`[ProGuide] No se pudo iniciar el visor: ${message}`);
     return { viewer_error: message };
   }
+}
+
+function viewerDisabled() {
+  return {
+    viewer_url: '',
+    run_url: '',
+    events_url: '',
+    viewer_started: false,
+    viewer_port: null,
+    browser_opened: false,
+    browser_disabled: true
+  };
 }
 
 async function startViewer(root, runId = '', options = {}) {

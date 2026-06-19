@@ -478,12 +478,13 @@ function renderRunDetail(run, cases, summary, usage) {
     </main>
     <script>
       const runId = ${JSON.stringify(run.id)};
-      ${clientRunScript()}
+      ${clientRunScript({ apiOnlyRun: isApiOnlyRun(cases) })}
     </script>`;
 }
 
 function renderRunProgress(run, cases, summary) {
-  const state = initialRunProgress(run, summary);
+  const apiOnlyRun = isApiOnlyRun(cases);
+  const state = initialRunProgress(run, summary, { apiOnlyRun });
   return `
     <section id="runProgress" class="run-progress reveal ${state.active ? 'is-active' : ''} ${state.done ? 'is-done' : ''} ${state.error ? 'is-error' : ''}" style="--delay:.04s; --progress:${state.percent}%;" data-stage="${attr(state.stage)}" data-status="${attr(state.status)}">
       <div class="run-progress-main">
@@ -496,7 +497,7 @@ function renderRunProgress(run, cases, summary) {
       </div>
       <div class="run-progress-track" aria-hidden="true"><span></span></div>
       <div class="run-progress-steps" aria-label="Progreso de ejecucion">
-        ${progressStepsMarkup(state.stage, state)}
+        ${progressStepsMarkup(state.stage, state, progressStepsForRun({ apiOnlyRun }))}
       </div>
       <div class="run-progress-counts mono" aria-label="Resumen de casos">
         ${escapeHtml(progressCounts(cases, summary))}
@@ -552,9 +553,23 @@ const PROGRESS_STEPS = [
   ['report', 'Reporte']
 ];
 
-function initialRunProgress(run, summary) {
+function progressStepsForRun({ apiOnlyRun = false } = {}) {
+  return apiOnlyRun
+    ? PROGRESS_STEPS.filter(([key]) => key !== 'dom')
+    : PROGRESS_STEPS;
+}
+
+function isApiOnlyRun(cases = []) {
+  return Array.isArray(cases) && cases.length > 0 && cases.every((testCase) => {
+    const type = String(testCase?.type || '').toLowerCase();
+    return type === 'api' || Boolean(testCase?.request?.method && testCase?.request?.path);
+  });
+}
+
+function initialRunProgress(run, summary, options = {}) {
   const status = statusClass(run.status);
   const counts = countSummary(summary);
+  const apiOnlyRun = Boolean(options.apiOnlyRun);
   if (['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)) {
     return {
       stage: 'report',
@@ -583,8 +598,10 @@ function initialRunProgress(run, summary) {
     return {
       stage: 'tests',
       status: 'running',
-      title: 'Ejecutando tests en browser',
-      message: 'Los casos listos se estan distribuyendo entre workers.',
+      title: apiOnlyRun ? 'Ejecutando tests REST API' : 'Ejecutando tests en browser',
+      message: apiOnlyRun
+        ? 'Los requests API se estan distribuyendo entre workers.'
+        : 'Los casos listos se estan distribuyendo entre workers.',
       percent: 78,
       active: true
     };
@@ -594,7 +611,9 @@ function initialRunProgress(run, summary) {
       stage: 'code',
       status: 'generating',
       title: 'Preparando automatizacion',
-      message: 'ProGuide esta recolectando contexto y generando codigo Playwright.',
+      message: apiOnlyRun
+        ? 'ProGuide esta generando codigo Playwright request para la API.'
+        : 'ProGuide esta recolectando contexto y generando codigo Playwright.',
       percent: 48,
       active: true
     };
@@ -609,9 +628,9 @@ function initialRunProgress(run, summary) {
   };
 }
 
-function progressStepsMarkup(activeStage, state) {
-  const activeIndex = PROGRESS_STEPS.findIndex(([key]) => key === activeStage);
-  return PROGRESS_STEPS.map(([key, label], index) => {
+function progressStepsMarkup(activeStage, state, steps = PROGRESS_STEPS) {
+  const activeIndex = steps.findIndex(([key]) => key === activeStage);
+  return steps.map(([key, label], index) => {
     const className = [
       'run-progress-step',
       index < activeIndex || state.done ? 'is-done' : '',
@@ -684,6 +703,7 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
           ${testCase.description ? `<p class="detail-lede">${escapeHtml(testCase.description)}</p>` : ''}
         </header>
         ${result?.message ? `<div class="result-note ${escapeHtml(statusClass(status))}"><strong>Resultado</strong><p>${escapeHtml(result.message)}</p></div>` : ''}
+        ${renderActualResponse(result)}
         ${renderErrorConsole(result)}
         <section class="detail-section">
           <h3>Pasos ejecutados</h3>
@@ -723,6 +743,15 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
       </aside>
     </main>
     <script>${codeTabsScript()}</script>`;
+}
+
+function renderActualResponse(result) {
+  if (!result?.actual_response) return '';
+  return `
+    <section class="detail-section error-console-section">
+      <h3>Actual response</h3>
+      <pre class="error-console">${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre>
+    </section>`;
 }
 
 function renderErrorConsole(result) {
@@ -1348,16 +1377,21 @@ function codeTabsScript() {
     `;
 }
 
-function clientRunScript() {
+function clientRunScript({ apiOnlyRun = false } = {}) {
   return `
       const pageLoadedAt = Date.now();
-      const progressOrder = ['plan', 'dom', 'code', 'tests', 'report'];
+      const apiOnlyRun = ${JSON.stringify(Boolean(apiOnlyRun))};
+      const progressOrder = apiOnlyRun ? ['plan', 'code', 'tests', 'report'] : ['plan', 'dom', 'code', 'tests', 'report'];
+      const testsTitle = apiOnlyRun ? 'Ejecutando tests REST API' : 'Ejecutando tests en browser';
+      const testsRunningMessage = apiOnlyRun ? 'Los requests API se estan distribuyendo entre workers.' : 'Los casos listos se estan distribuyendo entre workers.';
+      const generatingMessage = apiOnlyRun ? 'ProGuide esta generando codigo Playwright request para la API.' : 'ProGuide esta recolectando contexto y generando codigo Playwright.';
       const terminalStatuses = new Set(['passed', 'failed', 'blocked', 'setup_failed', 'inconclusive', 'no_automatizable_aun']);
       const progressEvents = new Set([
         'plan_generated',
         'dom_context_started',
         'dom_context_collected',
         'dom_context_unavailable',
+        'dom_context_skipped',
         'code_generation_started',
         'code_generation_progress',
         'tests_generated',
@@ -1428,11 +1462,13 @@ function clientRunScript() {
         if (item.type === 'plan_generated') {
           setProgress('plan', item.status || 'generating', 'Plan ejecutable preparado', item.message || 'Casos listos para convertir en codigo.', 22, true);
         } else if (item.type === 'dom_context_started') {
-          setProgress('dom', 'generating', 'Leyendo la app en browser', item.message || 'ProGuide esta tomando contexto visible antes de generar codigo.', 36, true);
+          if (!apiOnlyRun) setProgress('dom', 'generating', 'Leyendo la app en browser', item.message || 'ProGuide esta tomando contexto visible antes de generar codigo.', 36, true);
         } else if (item.type === 'dom_context_collected') {
-          setProgress('dom', 'generating', 'Contexto del browser listo', item.message || 'Se recolectaron roles, textos y selectores visibles.', 46, true);
+          if (!apiOnlyRun) setProgress('dom', 'generating', 'Contexto del browser listo', item.message || 'Se recolectaron roles, textos y selectores visibles.', 46, true);
         } else if (item.type === 'dom_context_unavailable') {
-          setProgress('dom', 'generating', 'Contexto del browser no disponible', item.message || 'La generacion seguira con los casos normalizados.', 46, true, false, true);
+          if (!apiOnlyRun) setProgress('dom', 'generating', 'Contexto del browser no disponible', item.message || 'La generacion seguira con los casos normalizados.', 46, true, false, true);
+        } else if (item.type === 'dom_context_skipped') {
+          if (apiOnlyRun) setProgress('code', item.status || 'generating', 'Preparando tests REST API', item.message || generatingMessage, 42, true);
         } else if (item.type === 'code_generation_started') {
           setProgress('code', item.status || 'generating', 'Agente generando codigo', item.message || 'Creando tests TypeScript Playwright para este run.', 55, true);
         } else if (item.type === 'code_generation_progress') {
@@ -1441,12 +1477,12 @@ function clientRunScript() {
           setProgress('tests', 'queued', 'Codigo generado', item.message || 'Preparando ejecucion de tests.', 68, true);
           markRunnableRowsQueued('Esperando inicio de ejecucion...');
         } else if (item.type === 'run_started') {
-          setProgress('tests', item.status || 'running', 'Ejecutando tests en browser', item.message || 'Los casos listos se estan distribuyendo entre workers.', 78, true);
+          setProgress('tests', item.status || 'running', testsTitle, item.message || testsRunningMessage, 78, true);
           markRunnableRowsQueued('Esperando worker disponible...');
         } else if (['case_started', 'step_started'].includes(item.type)) {
-          setProgress('tests', 'running', 'Ejecutando tests en browser', item.message || 'Hay casos corriendo en paralelo.', 82, true);
+          setProgress('tests', 'running', testsTitle, item.message || (apiOnlyRun ? 'Hay requests API corriendo en paralelo.' : 'Hay casos corriendo en paralelo.'), 82, true);
         } else if (item.type === 'case_finished') {
-          setProgress('tests', 'running', 'Ejecutando tests en browser', item.message || 'Un caso termino y se esperan los restantes.', 88, true);
+          setProgress('tests', 'running', testsTitle, item.message || 'Un caso termino y se esperan los restantes.', 88, true);
         } else if (item.type === 'error_global') {
           setProgress('report', 'error', 'Run detenido', item.message || 'Se produjo un error durante la ejecucion.', 100, false, true);
         } else if (item.type === 'pdf_generated' || item.type === 'pdf_skipped') {
@@ -1560,10 +1596,10 @@ function clientRunScript() {
         }
         const status = statusClass(payload.run?.status || '');
         if (status === 'running') {
-          setProgress('tests', 'running', 'Ejecutando tests en browser', 'Los casos listos se estan distribuyendo entre workers.', 78, true);
+          setProgress('tests', 'running', testsTitle, testsRunningMessage, 78, true);
           markRunnableRowsQueued('Esperando worker disponible...');
         } else if (status === 'generating') {
-          setProgress('code', 'generating', 'Preparando automatizacion', 'ProGuide esta recolectando contexto y generando codigo Playwright.', 48, true);
+          setProgress('code', 'generating', 'Preparando automatizacion', generatingMessage, 48, true);
         } else if (['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)) {
           setProgress('report', payload.run?.status || 'finished', 'Run finalizado', 'Resultados y evidencia disponibles.', 100, false);
         }

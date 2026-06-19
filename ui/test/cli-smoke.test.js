@@ -655,6 +655,99 @@ test('mcp exposes prompts with agent instructions', () => {
   assert.match(promptPayload.result.messages[0].content.text, /run_markdown_cases/);
 });
 
+test('mcp create_run with open_browser false does not start viewer', () => {
+  const root = makeTempRoot();
+  try {
+    const request = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'create_run',
+        arguments: {
+          root,
+          base_url: 'http://api.test',
+          open_browser: false,
+          cases: [{
+            id: 'api_health',
+            type: 'api',
+            title: 'Health',
+            request: { method: 'GET', path: '/health', expected_status: 200 }
+          }]
+        }
+      }
+    };
+    const result = runCli(['mcp'], {
+      input: `${JSON.stringify(request)}\n`
+    });
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseJson(lastJsonLine(result.stdout));
+    assert.equal(payload.result.structuredContent.viewer_started, false);
+    assert.equal(payload.result.structuredContent.run_url, '');
+    assert.equal(payload.result.structuredContent.browser_disabled, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('mcp create_run appends cases to an existing run', () => {
+  const root = makeTempRoot();
+  try {
+    const firstRequest = {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'tools/call',
+      params: {
+        name: 'create_run',
+        arguments: {
+          root,
+          base_url: 'http://api.test',
+          open_browser: false,
+          cases: [{
+            id: 'api_health',
+            type: 'api',
+            title: 'Health',
+            request: { method: 'GET', path: '/health', expected_status: 200 }
+          }]
+        }
+      }
+    };
+    const first = runCli(['mcp'], { input: `${JSON.stringify(firstRequest)}\n` });
+    assert.equal(first.status, 0, first.stderr);
+    const firstPayload = parseJson(lastJsonLine(first.stdout)).result.structuredContent;
+
+    const appendRequest = {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {
+        name: 'create_run',
+        arguments: {
+          root,
+          base_url: 'http://api.test',
+          open_browser: false,
+          append_to_run: firstPayload.run_id,
+          cases: [{
+            id: 'api_profile',
+            type: 'api',
+            title: 'Profile',
+            request: { method: 'GET', path: '/profile', expected_status: 401 }
+          }]
+        }
+      }
+    };
+    const appended = runCli(['mcp'], { input: `${JSON.stringify(appendRequest)}\n` });
+    assert.equal(appended.status, 0, appended.stderr);
+    const payload = parseJson(lastJsonLine(appended.stdout)).result.structuredContent;
+    assert.equal(payload.run_id, firstPayload.run_id);
+    assert.equal(payload.cases.length, 2);
+    assert.equal(payload.appended_cases.length, 1);
+    assert.deepEqual(payload.cases.map((item) => item.id), ['api_health', 'api_profile']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('mcp exposes the full tool surface', () => {
   const listed = runCli(['mcp'], {
     input: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'

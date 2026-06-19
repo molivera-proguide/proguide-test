@@ -75,6 +75,7 @@ los requests dentro del mismo caso y capturar variables con `captures`.
 - [ ] Si es API, usar `type: "api"` con `request`/`requests`, no pasos de UI
 - [ ] Si es API autenticada, capturar token con `captures` y reutilizar `{{variable}}`
 - [ ] Si es API, usar solo aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `equals`, `exists`, `contains`, `isArray`
+- [ ] Si es API y falla en local, usar `debug: true` solo cuando sea aceptable exponer el request real en evidencia
 - [ ] El caso tiene `Route` si la ruta inicial es conocida
 - [ ] La navegación usa un paso `/ruta` o `Ir a /ruta`, no `Navigate to /ruta`
 - [ ] Los clicks, fills y asserts críticos usan DSL explícito: `click [selector]`, `fill [selector] with`, `expect [selector]...` o `expect text "..."`

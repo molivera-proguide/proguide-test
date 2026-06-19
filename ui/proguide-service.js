@@ -446,6 +446,8 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   await loadDotEnv(root);
   const config = await loadUiConfig(root);
   const identity = await resolveRunIdentity(root, metadata, config);
+  const sources = await readMarkdownSources(sourceMd);
+  const sourceFilename = markdownSourceFilename(sources);
   const runDir = await newRunDir(root);
   const run = {
     id: path.basename(runDir),
@@ -455,7 +457,7 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
     status: 'interpreting',
     mode: 'url',
     base_url: String(baseUrl || '').replace(/\/+$/, ''),
-    source_filename: path.basename(sourceMd),
+    source_filename: sourceFilename,
     app_name: metadata.app_name || identity.project_name || metadata.title || null,
     project_name: identity.project_name || null,
     project_key: identity.project_key || null,
@@ -486,19 +488,29 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   await fs.mkdir(runDir, { recursive: true });
   await saveRun(runDir, run);
   await appendEvent(runDir, { run_id: run.id, type: 'run_created', status: run.status, message: 'Run creado.' });
-  const markdown = await readMarkdownText(sourceMd);
+  const markdown = combineMarkdownSources(sources);
   await fs.writeFile(path.join(runDir, SOURCE_MD), maskSecretText(markdown), 'utf8');
-  await appendEvent(runDir, { run_id: run.id, type: 'file_received', message: `Archivo recibido: ${path.basename(sourceMd)}` });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'file_received',
+    message: sources.length === 1
+      ? `Archivo recibido: ${sources[0].name}`
+      : `Archivos recibidos: ${sources.map((source) => source.name).join(', ')}`
+  });
 
   let cases;
   try {
-    cases = useAgent
-      ? await interpretMarkdownWithAgent(markdown, {
-        root,
-        sourceName: path.basename(sourceMd),
-        usageContext: { runId: run.id, runDir }
-      })
-      : parseMarkdownCases(markdown, { sourceName: path.basename(sourceMd) });
+    cases = [];
+    for (const source of sources) {
+      const parsed = useAgent
+        ? await interpretMarkdownWithAgent(source.markdown, {
+          root,
+          sourceName: source.name,
+          usageContext: { runId: run.id, runDir }
+        })
+        : parseMarkdownCases(source.markdown, { sourceName: source.name });
+      cases.push(...parsed);
+    }
   } catch (error) {
     run.status = 'error';
     run.finished_at = nowIso();
@@ -616,10 +628,14 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
 export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAgent = false }) {
   await ensureLayout(root);
   await loadDotEnv(root);
-  const markdown = await readMarkdownText(sourceMd);
-  const cases = useAgent
-    ? await interpretMarkdownWithAgent(markdown, { root, sourceName: path.basename(sourceMd) })
-    : parseMarkdownCases(markdown, { sourceName: path.basename(sourceMd) });
+  const sources = await readMarkdownSources(sourceMd);
+  const cases = [];
+  for (const source of sources) {
+    const parsed = useAgent
+      ? await interpretMarkdownWithAgent(source.markdown, { root, sourceName: source.name })
+      : parseMarkdownCases(source.markdown, { sourceName: source.name });
+    cases.push(...parsed);
+  }
   for (const testCase of cases) {
     if (metadata.qa_owner && !testCase.qa_owner) testCase.qa_owner = metadata.qa_owner;
     if (metadata.dev_owner && !testCase.dev_owner) testCase.dev_owner = metadata.dev_owner;
@@ -651,6 +667,53 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
     message: 'Cambios de preview guardados.'
   });
   return { cases };
+}
+
+export async function appendCasesToRun({ root, runId, casesPayload, baseUrl = '', metadata = {} }) {
+  await ensureLayout(root);
+  await loadDotEnv(root);
+  if (!Array.isArray(casesPayload) || !casesPayload.length) {
+    throw new Error('cases debe contener al menos un caso para append.');
+  }
+  const runDir = runPath(root, runId);
+  if (!(await exists(runDir))) {
+    throw new Error(`Run no encontrado: ${runId}. Root efectivo: ${root}.`);
+  }
+  const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
+  const additions = casesPayload.map((item, index) => normalizeCaseForStorage({
+    ...item,
+    qa_owner: item.qa_owner ?? metadata.qa_owner,
+    dev_owner: item.dev_owner ?? metadata.dev_owner,
+    ticket: item.ticket ?? metadata.ticket
+  }, existing.length + index + 1));
+  const cases = [...existing, ...additions];
+  await saveCasesFile(runDir, cases);
+  const run = await loadRunRecord(runDir);
+  if (String(baseUrl || '').trim()) run.base_url = String(baseUrl || '').replace(/\/+$/, '');
+  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(cases, {
+    sourceMd: run.source_filename || SOURCE_MD,
+    appName: run.app_name || 'ProGuide Markdown Cases'
+  }));
+  run.status = 'ready';
+  run.total_cases = cases.length;
+  run.finished_at = null;
+  run.passed = 0;
+  run.failed = 0;
+  run.inconclusive = 0;
+  run.setup_failed = 0;
+  run.html_path = null;
+  run.pdf_path = null;
+  await fs.rm(path.join(runDir, RESULTS_JSON), { force: true }).catch(() => {});
+  await fs.rm(path.join(runDir, 'summary.json'), { force: true }).catch(() => {});
+  await saveRun(runDir, run);
+  await appendEvent(runDir, {
+    run_id: runId,
+    type: 'cases_appended',
+    status: 'ready',
+    message: `${additions.length} caso(s) agregado(s) al run.`,
+    payload: { appended: additions.length, total: cases.length }
+  });
+  return { run, cases, appended_cases: additions };
 }
 
 export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, fromPlan = false }) {
@@ -851,6 +914,7 @@ async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, pro
       duration_seconds: 0,
       message: setupMessage,
       error_details: logText.trim() || setupMessage,
+      actual_response: null,
       steps: testCase.steps,
       expected: testCase.expected,
       videos: [],
@@ -952,6 +1016,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
         duration_seconds: normalized.duration_seconds,
         message: normalized.message,
         error_details: normalized.error_details,
+        actual_response: normalized.actual_response,
         steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,
         videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
@@ -970,6 +1035,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
       duration_seconds: 0,
       message: 'No Playwright result was found for this case.',
       error_details: '',
+      actual_response: null,
       steps: testCase.steps,
       expected: testCase.expected,
       videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
@@ -1027,7 +1093,9 @@ function normalizePlaywrightSpecResult(spec) {
   const result = results.at(-1) || {};
   const status = playwrightStatus(result.status || test.outcome || spec.ok);
   const message = playwrightMessage(result);
-  const errorDetails = playwrightErrorDetails(result);
+  const rawErrorDetails = playwrightErrorDetails(result, { stripDebugMarker: false });
+  const errorDetails = stripApiDebugMarker(rawErrorDetails).trim();
+  const actualResponse = playwrightActualResponse(message, rawErrorDetails);
   const steps = flattenPlaywrightSteps(result.steps || []);
   const attachments = results.flatMap((item) => item.attachments || []);
   const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
@@ -1036,6 +1104,7 @@ function normalizePlaywrightSpecResult(spec) {
     duration_seconds: Math.round((duration / 1000) * 1000) / 1000,
     message,
     error_details: errorDetails,
+    actual_response: actualResponse,
     steps,
     attachments
   };
@@ -1056,10 +1125,10 @@ function playwrightMessage(result) {
   ].filter(Boolean);
   const first = errors[0];
   if (!first) return '';
-  return String(first.message || first.value || first.stack || first).trim();
+  return shortPlaywrightMessage(first.message || first.value || first.stack || first);
 }
 
-function playwrightErrorDetails(result) {
+function playwrightErrorDetails(result, options = {}) {
   const chunks = [];
   const errors = [
     ...(result?.errors || []),
@@ -1073,7 +1142,39 @@ function playwrightErrorDetails(result) {
   if (stdout) chunks.push(`stdout:\n${stdout}`);
   const stderr = outputEntriesText(result?.stderr);
   if (stderr) chunks.push(`stderr:\n${stderr}`);
-  return uniqueTextChunks(chunks).join('\n\n').trim();
+  const text = uniqueTextChunks(chunks).join('\n\n').trim();
+  return options.stripDebugMarker === false ? text : stripApiDebugMarker(text).trim();
+}
+
+function playwrightActualResponse(...values) {
+  const text = values.map((value) => String(value || '')).join('\n');
+  const base64Match = text.match(/PROGUIDE_API_DEBUG_BASE64 ([A-Za-z0-9+/=]+)/);
+  if (base64Match) {
+    try {
+      const payload = JSON.parse(Buffer.from(base64Match[1], 'base64').toString('utf8'));
+      return payload.actual_response || null;
+    } catch {
+      return null;
+    }
+  }
+  const match = text.match(/PROGUIDE_API_DEBUG (\{[^\n]+\})/);
+  if (!match) return null;
+  try {
+    const payload = JSON.parse(match[1]);
+    return payload.actual_response || null;
+  } catch {
+    return null;
+  }
+}
+
+function shortPlaywrightMessage(value) {
+  return String(value || '').split('\n\nProGuide API debug:')[0].trim();
+}
+
+function stripApiDebugMarker(value) {
+  return String(value || '')
+    .replace(/\n?PROGUIDE_API_DEBUG_BASE64 [A-Za-z0-9+/=]+/g, '')
+    .replace(/\n?PROGUIDE_API_DEBUG \{[^\n]+\}/g, '');
 }
 
 function formatPlaywrightError(error) {
@@ -1430,6 +1531,7 @@ function generateApiTestSpec(planCases) {
     return {
       id: testCase.id,
       title: testCase.title,
+      debug: Boolean(testCase.debug),
       requests: normalizeApiPlanRequests(testCase)
     };
   });
@@ -1455,23 +1557,22 @@ function generateApiTestSpec(planCases) {
     'async function runApiCase(request, testCase) {',
     '  const variables = {};',
     '  for (const apiStep of testCase.requests) {',
-    '    await runApiStep(request, apiStep, variables);',
+    '    await runApiStep(request, apiStep, variables, testCase);',
     '  }',
     '}',
     '',
-    'async function runApiStep(request, apiStep, variables) {',
+    'async function runApiStep(request, apiStep, variables, testCase) {',
+    '  const resolvedRequest = resolveRequestValue(apiStep.request, variables);',
     '  const response = await test.step(`${apiStep.request.method} ${apiStep.request.path}`, async () => {',
-    '    return request.fetch(resolveRequestValue(apiStep.request.path, variables), requestOptions(apiStep.request, variables));',
+    '    return request.fetch(resolvedRequest.path, requestOptions(resolvedRequest));',
     '  });',
     '',
-    '  let responseBody = null;',
-    '  if (needsResponseBody(apiStep.assertions, apiStep.captures)) {',
-    "    responseBody = await test.step('read response body', async () => readResponseBody(response));",
-    '  }',
+    "  const responseBody = await test.step('read response body', async () => readResponseBody(response));",
+    '  const actualResponse = responseSnapshot({ response, responseBody, resolvedRequest, includeRequest: Boolean(testCase.debug || apiStep.debug) });',
     '',
     '  for (const assertion of apiStep.assertions) {',
     '    await test.step(assertionTitle(assertion), async () => {',
-    '      await applyAssertion({ assertion, response, responseBody });',
+    '      await applyAssertion({ assertion, response, responseBody, actualResponse });',
     '    });',
     '  }',
     '',
@@ -1482,12 +1583,11 @@ function generateApiTestSpec(planCases) {
     '  }',
     '}',
     '',
-    'function requestOptions(apiRequest, variables) {',
-    '  const resolved = resolveRequestValue(apiRequest, variables);',
-    '  const options = { method: resolved.method };',
-    '  if (resolved.headers && Object.keys(resolved.headers).length) options.headers = resolved.headers;',
-    '  if (resolved.query && Object.keys(resolved.query).length) options.params = resolved.query;',
-    '  if (resolved.body !== undefined && resolved.body !== null) options.data = resolved.body;',
+    'function requestOptions(apiRequest) {',
+    '  const options = { method: apiRequest.method };',
+    '  if (apiRequest.headers && Object.keys(apiRequest.headers).length) options.headers = apiRequest.headers;',
+    '  if (apiRequest.query && Object.keys(apiRequest.query).length) options.params = apiRequest.query;',
+    '  if (apiRequest.body !== undefined && apiRequest.body !== null) options.data = apiRequest.body;',
     '  return options;',
     '}',
     '',
@@ -1517,11 +1617,6 @@ function generateApiTestSpec(planCases) {
     '  return value;',
     '}',
     '',
-    'function needsResponseBody(assertions = [], captures = []) {',
-    "  return assertions.some((assertion) => ['body_path', 'body_contains'].includes(assertion.type)) ||",
-    "    captures.some((capture) => (capture.source || 'body') === 'body');",
-    '}',
-    '',
     'async function readResponseBody(response) {',
     '  const text = await response.text();',
     "  if (!text) return null;",
@@ -1536,7 +1631,15 @@ function generateApiTestSpec(planCases) {
     '  return text;',
     '}',
     '',
-    'async function applyAssertion({ assertion, response, responseBody }) {',
+    'async function applyAssertion({ assertion, response, responseBody, actualResponse }) {',
+    '  try {',
+    '    await applyAssertionCore({ assertion, response, responseBody });',
+    '  } catch (error) {',
+    '    throw enrichAssertionError(error, assertion, actualResponse);',
+    '  }',
+    '}',
+    '',
+    'async function applyAssertionCore({ assertion, response, responseBody }) {',
     "  if (assertion.type === 'status') {",
     '    expect(response.status()).toBe(assertion.expected);',
     '    return;',
@@ -1575,6 +1678,44 @@ function generateApiTestSpec(planCases) {
     '    return;',
     '  }',
     "  throw new Error(`Unsupported API assertion: ${JSON.stringify(assertion)}`);",
+    '}',
+    '',
+    'function enrichAssertionError(error, assertion, actualResponse) {',
+    '  const payload = { assertion, actual_response: actualResponse };',
+    '  const pretty = JSON.stringify(payload, null, 2);',
+    '  const compact = JSON.stringify(payload);',
+    "  const encoded = Buffer.from(compact, 'utf8').toString('base64');",
+    '  const baseMessage = error?.message || String(error);',
+    '  const message = `${baseMessage}\\n\\nProGuide API debug:\\n${pretty}\\nPROGUIDE_API_DEBUG_BASE64 ${encoded}`;',
+    '  const enriched = new Error(message);',
+    '  enriched.stack = error?.stack ? `${message}\\n${error.stack}` : message;',
+    '  return enriched;',
+    '}',
+    '',
+    'function responseSnapshot({ response, responseBody, resolvedRequest, includeRequest }) {',
+    '  const snapshot = {',
+    '    status: response.status(),',
+    '    ok: response.ok(),',
+    '    headers: response.headers(),',
+    '    body: truncateForDebug(responseBody)',
+    '  };',
+    '  if (includeRequest) snapshot.request = truncateForDebug({',
+    '    method: resolvedRequest.method,',
+    '    path: resolvedRequest.path,',
+    '    headers: resolvedRequest.headers || {},',
+    '    query: resolvedRequest.query || {},',
+    '    body: resolvedRequest.body',
+    '  });',
+    '  return snapshot;',
+    '}',
+    '',
+    'function truncateForDebug(value) {',
+    '  const limit = 12000;',
+    '  if (typeof value === "string") return value.length > limit ? `${value.slice(0, limit)}...<truncated>` : value;',
+    '  if (value === null || value === undefined) return value;',
+    '  const text = JSON.stringify(value);',
+    '  if (!text || text.length <= limit) return value;',
+    '  return `${text.slice(0, limit)}...<truncated>`;',
     '}',
     '',
     'function applyCapture({ capture, response, responseBody, variables }) {',
@@ -1635,7 +1776,8 @@ function normalizeApiPlanRequests(testCase) {
       expected: testCase.expected || [],
       expectedStatus: request.expected_status
     }),
-    captures: normalizeApiCaptures(testCase.captures ?? testCase.save ?? testCase.extract)
+    captures: normalizeApiCaptures(testCase.captures ?? testCase.save ?? testCase.extract),
+    debug: Boolean(testCase.debug)
   }];
 }
 
@@ -1674,6 +1816,7 @@ function casesToTestPlan(cases, { sourceMd, appName }) {
         expected: testCase.expected_results || [],
         expectedStatus: request?.expected_status
       }) : [],
+      debug: Boolean(testCase.debug),
       priority: priorityForPlan(testCase.priority),
       steps: steps.length ? steps : (type === 'api' ? [`api ${request.method} ${request.path}`] : ['go to /']),
       expected: (testCase.expected_results || []).length
@@ -2005,6 +2148,41 @@ function normalizeApiRequests(value) {
     .filter((entry) => entry.request.method && entry.request.path);
 }
 
+function buildApiExecutableSteps({ request, requests = [], assertions = [], captures = [] } = {}) {
+  const entries = requests.length
+    ? requests
+    : (request?.method && request?.path ? [{
+      id: 'request_1',
+      request,
+      assertions,
+      captures
+    }] : []);
+  return entries.map((entry, index) => ({
+    number: index + 1,
+    original_text: `${entry.request.method} ${entry.request.path}`,
+    normalized_action: `api ${entry.request.method} ${entry.request.path}`,
+    status: 'pending',
+    started_at: null,
+    finished_at: null,
+    duration_seconds: 0,
+    observed_result: '',
+    screenshot: null,
+    error: null,
+    confidence: 1,
+    needs_review: false,
+    review_reason: '',
+    request: {
+      method: entry.request.method,
+      path: entry.request.path,
+      headers: describeApiPayload(entry.request.headers),
+      query: describeApiPayload(entry.request.query),
+      body: describeApiPayload(entry.request.body)
+    },
+    assertions: (entry.assertions || []).map(formatApiAssertion),
+    captures: (entry.captures || []).map((capture) => capture.name)
+  }));
+}
+
 function normalizeApiRequestEntry(entry, index) {
   const source = isPlainObject(entry) ? entry : {};
   const nestedRequest = isPlainObject(source.request) ? source.request : {};
@@ -2031,7 +2209,8 @@ function normalizeApiRequestEntry(entry, index) {
     title: String(source.title || source.description || `${request.method || 'REQUEST'} ${request.path || ''}`).trim(),
     request,
     assertions,
-    captures: normalizeApiCaptures(source.captures ?? source.save ?? source.extract ?? source.exports)
+    captures: normalizeApiCaptures(source.captures ?? source.save ?? source.extract ?? source.exports),
+    debug: Boolean(source.debug ?? nestedRequest.debug)
   };
 }
 
@@ -2095,6 +2274,16 @@ function normalizeCapturePath(value) {
     .trim()
     .replace(/^(?:body|response|json)\./i, '')
     .replace(/^<root>$/i, '');
+}
+
+function describeApiPayload(value) {
+  if (value === undefined || value === null || value === '') return '';
+  if (Array.isArray(value)) return `array(${value.length})`;
+  if (isPlainObject(value)) {
+    const keys = Object.keys(value);
+    return keys.length ? `{ ${keys.join(', ')} }` : '{}';
+  }
+  return typeof value;
 }
 
 function normalizeHttpMethod(value) {
@@ -2743,6 +2932,14 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     expectedStatus: effectiveRequest.expected_status
   }) : [];
   if (type === 'api') rejectUnsupportedApiAssertions(assertions, title);
+  const apiExecutableSteps = type === 'api' && !originalSteps.length
+    ? buildApiExecutableSteps({
+      request: effectiveRequest,
+      requests: flowRequests,
+      assertions,
+      captures: normalizeApiCaptures(item.captures ?? item.save ?? item.extract ?? fallback.captures ?? fallback.save ?? fallback.extract)
+    })
+    : [];
   const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
@@ -2761,7 +2958,7 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
       needs_review: Boolean(step.needs_review),
       review_reason: String(step.review_reason || '')
     }))
-    : buildSteps(originalSteps, { type });
+    : (apiExecutableSteps.length ? apiExecutableSteps : buildSteps(originalSteps, { type }));
   const route = type === 'api'
     ? (effectiveRequest.path || inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps))
     : inferCaseRoute(item.route || fallback.route, originalSteps, executableSteps);
@@ -2791,6 +2988,7 @@ function normalizeCaseForStorage(item, number, fallback = {}) {
     state_reason: String(item.state_reason ?? fallback.state_reason ?? apiAutomation?.[1] ?? ''),
     original_markdown: String(item.original_markdown ?? fallback.original_markdown ?? ''),
     route,
+    debug: Boolean(item.debug ?? fallback.debug ?? false),
     qa_owner: noneIfEmpty(item.qa_owner ?? fallback.qa_owner),
     dev_owner: noneIfEmpty(item.dev_owner ?? fallback.dev_owner),
     ticket: noneIfEmpty(item.ticket ?? fallback.ticket),
@@ -2957,11 +3155,14 @@ async function writeEvidenceReport({ summary, run, cases, runDir }) {
     const errorDetails = result.error_details
       ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
       : '';
+    const actualResponse = result.actual_response
+      ? `<details class="error-console"><summary>Actual response</summary><pre>${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre></details>`
+      : '';
     return `<tr>
       <td>${escapeHtml(testCase.number || '')}</td>
       <td>${escapeHtml(result.title)}</td>
       <td>${escapeHtml(result.status)}</td>
-      <td>${escapeHtml(result.message || '')}${errorDetails}</td>
+      <td>${escapeHtml(result.message || '')}${actualResponse}${errorDetails}</td>
     </tr>`;
   }).join('');
   const html = `<!doctype html>
@@ -3247,6 +3448,29 @@ async function readMarkdownText(filePath) {
     return repairDecodedMarkdown(new TextDecoder('utf-8').decode(data.subarray(3)));
   }
   return repairDecodedMarkdown(new TextDecoder('utf-8', { fatal: false }).decode(data));
+}
+
+async function readMarkdownSources(sourceMd) {
+  const paths = (Array.isArray(sourceMd) ? sourceMd : [sourceMd]).filter(Boolean);
+  if (!paths.length) throw new Error('Debes pasar al menos un archivo Markdown.');
+  return Promise.all(paths.map(async (filePath) => ({
+    path: filePath,
+    name: path.basename(filePath),
+    markdown: await readMarkdownText(filePath)
+  })));
+}
+
+function markdownSourceFilename(sources) {
+  if (sources.length === 1) return sources[0].name;
+  const names = sources.map((source) => source.name).join(', ');
+  return names.length <= 180 ? names : `${sources.length} markdown files`;
+}
+
+function combineMarkdownSources(sources) {
+  if (sources.length === 1) return sources[0].markdown;
+  return sources
+    .map((source) => `<!-- source: ${source.name} -->\n\n${source.markdown.trim()}`)
+    .join('\n\n');
 }
 
 function swapBytes(buffer) {

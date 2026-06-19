@@ -75,6 +75,13 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
   headers y reutilizarlos como `{{variable}}` en requests posteriores. Usa
   `{{email}}`, `{{username}}` y `{{password}}` solo para credenciales pasadas por
   CLI/MCP; no escribas secretos productivos literales.
+- **Debug API:** si un fallo necesita confirmar el request real enviado, agrega
+  `"debug": true` solo en entornos locales o con datos no sensibles. El resultado
+  incluira `actual_response` y, con debug, tambien `actual_response.request`.
+- **Suites API grandes:** si los casos estan repartidos en varios Markdown, usa
+  `source_paths: ["auth.md", "orders.md"]`. Si ya existe un run de regresion y solo
+  necesitas sumar casos, usa `append_to_run: "<run_id>"` con `cases`/`source_path`/
+  `source_paths`/`markdown`.
 - **Aserciones API soportadas:** `status`/`expected_status`, `ok`, `header`,
   `body_contains`, y body path con `equals`, `exists`, `contains`, `isArray`.
   Ejemplos: `{ "path": "id", "exists": true }`, `{ "path": "items", "isArray": true }`,
