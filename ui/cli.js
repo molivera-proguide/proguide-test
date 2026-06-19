@@ -15,6 +15,9 @@ import {
 } from './proguide-service.js';
 import { ensurePlaywrightRuntime, playwrightBrowserProbe, playwrightImportProbe, runtimeEnv } from './playwright-runtime.js';
 import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUrl, viewerLinks } from './viewer.js';
+import { loadDotEnv } from './lib/shared/env.js';
+import { isPathInside } from './lib/shared/paths.js';
+import { casesRequireBrowser } from './lib/shared/cases.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
@@ -746,32 +749,6 @@ function formatYamlScalar(value) {
   return text;
 }
 
-async function loadDotEnv(root) {
-  for (const envPath of envFileCandidates(root)) {
-    let text = '';
-    try {
-      text = await fs.readFile(envPath, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!match || process.env[match[1]]) continue;
-      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
-    }
-  }
-}
-
-function envFileCandidates(root) {
-  return [
-    process.env.PROGUIDE_ENV_FILE,
-    path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
-    path.join(root, '.env')
-  ].filter(Boolean).map((item) => path.resolve(String(item)));
-}
-
 function readDotted(config, key) {
   return String(key).split('.').reduce((value, part) => value?.[part], config);
 }
@@ -878,21 +855,11 @@ function credentialsFromOptions(options) {
   };
 }
 
-function casesRequireBrowser(cases = []) {
-  if (!Array.isArray(cases) || !cases.length) return true;
-  return cases.some((testCase) => String(testCase.type || '').toLowerCase() !== 'api' && !(testCase.request?.method && testCase.request?.path));
-}
-
 function requiredHandle(value, label) {
   const text = String(value || '');
   if (!text) throw cliError(`${label} es obligatorio.`, EXIT.invalidInput);
   if (!/^[A-Za-z0-9_.-]+$/.test(text)) throw cliError(`${label} invalido.`, EXIT.invalidInput);
   return text;
-}
-
-function isPathInside(root, target) {
-  const relative = path.relative(path.resolve(root), path.resolve(target));
-  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function option(options, ...names) {

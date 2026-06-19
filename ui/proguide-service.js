@@ -5,6 +5,8 @@ import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { playwrightCommand, proguideRequireAnchor, runtimeEnv } from './playwright-runtime.js';
+import { loadDotEnv } from './lib/shared/env.js';
+import { escapeHtml } from './lib/shared/html.js';
 
 const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
@@ -3581,28 +3583,6 @@ function parseYamlScalar(value) {
   return trimmed;
 }
 
-async function loadDotEnv(root) {
-  for (const envPath of envFileCandidates(root)) {
-    if (!(await exists(envPath))) continue;
-    const text = await fs.readFile(envPath, 'utf8');
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!match || process.env[match[1]]) continue;
-      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
-    }
-  }
-}
-
-function envFileCandidates(root) {
-  return [
-    process.env.PROGUIDE_ENV_FILE,
-    path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
-    path.join(root, '.env')
-  ].filter(Boolean).map((item) => path.resolve(String(item)));
-}
-
 async function readMarkdownText(filePath) {
   const data = await fs.readFile(filePath);
   if (data.length >= 2 && data[0] === 0xff && data[1] === 0xfe) {
@@ -4317,15 +4297,6 @@ function safeId(value) {
 
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function nowIso() {

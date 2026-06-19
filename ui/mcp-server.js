@@ -15,6 +15,8 @@ import {
 } from './proguide-service.js';
 import { ensurePlaywrightRuntime } from './playwright-runtime.js';
 import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
+import { isPathInside } from './lib/shared/paths.js';
+import { casesRequireBrowser } from './lib/shared/cases.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(
@@ -654,11 +656,6 @@ async function resolveMarkdownSources(root, sourcePaths, label) {
   return sources;
 }
 
-function isPathInside(root, target) {
-  const relative = path.relative(path.resolve(root), path.resolve(target));
-  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
 function resolveRoot(value) {
   const root = path.resolve(value ? String(value) : DEFAULT_ROOT);
   return root;
@@ -685,11 +682,6 @@ function credentialsFromArgs(args) {
     username: args.username || '',
     password: args.password || ''
   };
-}
-
-function casesRequireBrowser(cases = []) {
-  if (!Array.isArray(cases) || !cases.length) return true;
-  return cases.some((testCase) => String(testCase.type || '').toLowerCase() !== 'api' && !(testCase.request?.method && testCase.request?.path));
 }
 
 function cleanHandle(value, label) {

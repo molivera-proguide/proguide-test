@@ -12,7 +12,8 @@
     "playwright-runtime.js",
     "proguide-service.js",
     "server.js",
-    "viewer.js"
+    "viewer.js",
+    "lib/"
   ],
   "scripts": {
     "start": "node server.js",
