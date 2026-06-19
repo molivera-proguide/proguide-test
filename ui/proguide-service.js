@@ -20,6 +20,23 @@ import {
   firstArrayValue,
   joinText
 } from './lib/shared/text.js';
+import { isPlainObject } from './lib/shared/object.js';
+import { safeId } from './lib/shared/id.js';
+import {
+  isSecretKey,
+  allowsTestPasswordKey,
+  maskSecretText,
+  maskSecretLines,
+  maskSecretsDeep,
+  sanitizeCaseData
+} from './lib/shared/secrets.js';
+import {
+  normalizeKeyValueObject,
+  normalizeRequestBody,
+  parseLooseValue,
+  stringifyInlineValue
+} from './lib/shared/value-parse.js';
+import { stripListMarker, stripMarkdownEmphasis, cleanList } from './lib/markdown/text.js';
 
 const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
@@ -111,7 +128,6 @@ const FIELD_ALIASES = {
 const GENERIC_EXPECTED_RE = /\b(correcto|correctamente|funciona|ok|exitoso|exitosamente|segun corresponda|adecuado)\b/i;
 const NOT_AUTOMATABLE_RE = /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono|fuera del navegador|manual|base de datos|db|api externa|correo fisico|impresion)\b/i;
 const REVIEW_STEP_RE = /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
-const BULLET_CHARS = '\u2022\u25e6\u2043\u2219\u00b7\u2014\u2013\ufffd';
 const NAVIGATION_RE = /\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b/i;
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 const API_CASE_TYPES = new Set(['api', 'rest', 'restful', 'http', 'api rest', 'api restful']);
@@ -2688,71 +2704,6 @@ function normalizeExpectedStatus(value) {
   return Number.isInteger(number) && number >= 100 && number <= 599 ? number : null;
 }
 
-function normalizeKeyValueObject(value, options = {}) {
-  if (value === undefined || value === null || value === '') return {};
-  if (isPlainObject(value)) {
-    return Object.fromEntries(Object.entries(value)
-      .filter(([key, entry]) => key && entry !== undefined && (options.preserveSecrets || !isSecretKey(key)))
-      .map(([key, entry]) => [String(key), parseLooseValue(entry)]));
-  }
-  const parsed = parseJsonObject(value);
-  if (parsed) return normalizeKeyValueObject(parsed, options);
-  const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
-  const entries = {};
-  for (const line of cleanList(lines)) {
-    const match = String(line).match(/^([^:=]{1,80})\s*[:=]\s*(.+)$/);
-    if (!match) continue;
-    const key = match[1].trim();
-    if (!key || (!options.preserveSecrets && isSecretKey(key))) continue;
-    entries[key] = parseLooseValue(match[2]);
-  }
-  return entries;
-}
-
-function normalizeRequestBody(value) {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (isPlainObject(value)) return value;
-  if (Array.isArray(value) && value.some((item) => typeof item !== 'string')) return value;
-  const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
-  const joined = cleanList(lines).join('\n').trim();
-  if (!joined) return undefined;
-  const parsed = parseJsonObject(joined);
-  if (parsed) return parsed;
-  const entries = normalizeKeyValueObject(lines, { preserveSecrets: true });
-  return Object.keys(entries).length ? entries : parseLooseValue(joined);
-}
-
-function parseJsonObject(value) {
-  if (isPlainObject(value)) return value;
-  const text = Array.isArray(value) ? cleanList(value).join('\n') : String(value || '').trim();
-  if (!/^[[{]/.test(text)) return null;
-  try {
-    const parsed = JSON.parse(text);
-    return isPlainObject(parsed) || Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-function parseLooseValue(value) {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  if (typeof value !== 'string') return value;
-  const text = value.trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
-  if (!text) return '';
-  const parsed = parseJsonObject(text);
-  if (parsed) return parsed;
-  if (/^(true|false)$/i.test(text)) return text.toLowerCase() === 'true';
-  if (/^null$/i.test(text)) return null;
-  if (/^-?\d+(?:\.\d+)?$/.test(text)) return Number(text);
-  return text;
-}
-
-function stringifyInlineValue(value) {
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value);
-}
-
 function normalizeStep(step) {
   const normalized = norm(step);
   const explicit = explicitStep(step);
@@ -2897,10 +2848,6 @@ function mergeCaseData(primary = {}, fallback = {}) {
   return merged;
 }
 
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function dataFromLines(lines) {
   const data = {};
   for (const line of cleanList(lines)) {
@@ -2928,40 +2875,6 @@ function dataFromLines(lines) {
     if (dataKey) data[dataKey] = value;
   }
   return data;
-}
-
-function sanitizeCaseData(value) {
-  if (Array.isArray(value)) return value.map(sanitizeCaseData);
-  if (!isPlainObject(value)) return value;
-  const sanitized = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (isSecretKey(key)) continue;
-    sanitized[key] = sanitizeCaseData(entry);
-  }
-  return sanitized;
-}
-
-function maskSecretsDeep(value, key = '') {
-  if (Array.isArray(value)) return value.map((entry) => maskSecretsDeep(entry));
-  if (isPlainObject(value)) {
-    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [
-      entryKey,
-      maskSecretsDeep(entryValue, entryKey)
-    ]));
-  }
-  if (isSecretKey(key)) return '******';
-  if (typeof value === 'string') return maskSecretLine(value);
-  return value;
-}
-
-function isSecretKey(key) {
-  return /\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b/i.test(norm(key));
-}
-
-function allowsTestPasswordKey(key) {
-  const normalized = norm(key).replace(/_/g, ' ');
-  return /\b(password|pass|clave|contrasena)\b/.test(normalized) &&
-    /\b(test|prueba|dummy|fake|no productiv[oa]|non production)\b/.test(normalized);
 }
 
 function normalizationWarnings(cases) {
@@ -3643,15 +3556,6 @@ function looksLikeStep(line) {
   return /^(?:\d+[).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line)) || Boolean(normalizeApiStep(line));
 }
 
-function stripListMarker(line) {
-  const bulletPattern = escapeRegExp(BULLET_CHARS);
-  return line.replace(new RegExp(`^\\s*(?:[-*+${bulletPattern}]\\s+|\\d+[\\).\\s-]+|paso\\s+\\d+[:.\\s-]+)`, 'i'), '').trim();
-}
-
-function stripMarkdownEmphasis(line) {
-  return line.replace(/\*\*/g, '').replace(/__/g, '').trim();
-}
-
 function isSeparatorLine(line) {
   return /^[-*_]{3,}$/.test(String(line || '').trim());
 }
@@ -3667,11 +3571,6 @@ function cleanHeading(heading) {
 
 function isFieldLabel(text) {
   return Boolean(FIELD_ALIASES[text]);
-}
-
-function cleanList(values) {
-  const rawValues = typeof values === 'string' ? [values] : Array.from(values || []);
-  return rawValues.map((value) => stripListMarker(String(value)).trim()).filter(Boolean);
 }
 
 function inferCaseRoute(explicitRoute, originalSteps = [], executableSteps = []) {
@@ -3732,27 +3631,6 @@ function extractClickTarget(step) {
     if (target && !['formulario', 'boton', 'button'].includes(norm(target))) return target;
   }
   return null;
-}
-
-function maskSecretText(text) {
-  return String(text).split(/\r?\n/).map(maskSecretLine).join('\n');
-}
-
-function maskSecretLines(values) {
-  return values.map(maskSecretLine);
-}
-
-function maskSecretLine(value) {
-  const text = String(value);
-  const normalized = norm(text);
-  if (!/\b(password|pass|clave|contrasena|secret|token)\b/.test(normalized)) return text;
-  if (/\b(valido|valid|campo|input|completar|ingresar|escribir|placeholder)\b/.test(normalized)) return text;
-  if (text.includes(':')) {
-    const prefix = text.slice(0, text.indexOf(':') + 1);
-    return `${prefix}${prefix.endsWith(' ') ? '' : ' '}******`;
-  }
-  const match = text.match(/^(\s*[-*+]?\s*(?:password|pass|clave|contrasena|secret|token)\b).*$/i);
-  return match ? `${match[1]}: ******` : text;
 }
 
 function noneIfEmpty(value) {
@@ -4137,15 +4015,6 @@ function positiveInteger(value, fallback) {
 
 function relativePath(filePath, base) {
   return path.relative(base, filePath).split(path.sep).join('/');
-}
-
-function safeId(value) {
-  const cleaned = String(value || '').trim().toLowerCase().replace(/[^a-zA-Z0-9_]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
-  return cleaned || 'item';
-}
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function nowIso() {
