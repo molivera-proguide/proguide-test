@@ -9,6 +9,17 @@ import { loadDotEnv } from './lib/shared/env.js';
 import { escapeHtml } from './lib/shared/html.js';
 import { safeNumber, roundMoney } from './lib/shared/num.js';
 import { estimateLlmCost, normalizeLlmUsage } from './lib/usage/pricing.js';
+import {
+  norm,
+  stripAccents,
+  slug,
+  normalizePriority,
+  priorityForPlan,
+  normalizeAutomationState,
+  splitTags,
+  firstArrayValue,
+  joinText
+} from './lib/shared/text.js';
 
 const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
@@ -3545,15 +3556,6 @@ function emailDomain(email) {
   return match ? match[1].toLowerCase() : '';
 }
 
-function slug(value) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/^@/, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 function parseYamlScalar(value) {
   const trimmed = String(value || '').trim().replace(/^['"]|['"]$/g, '');
   if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
@@ -3667,56 +3669,9 @@ function isFieldLabel(text) {
   return Boolean(FIELD_ALIASES[text]);
 }
 
-function norm(value) {
-  return String(value || '')
-    .normalize('NFKD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .trim()
-    .replace(/[*_`]+/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-function stripAccents(value) {
-  return String(value || '').normalize('NFKD').replace(/\p{M}/gu, '');
-}
-
-function normalizePriority(value) {
-  const normalized = norm(value);
-  if (['critica', 'critical', 'bloqueante'].includes(normalized)) return 'critica';
-  if (['alta', 'high'].includes(normalized)) return 'alta';
-  if (['baja', 'low'].includes(normalized)) return 'baja';
-  return 'media';
-}
-
-function priorityForPlan(value) {
-  return { baja: 'low', media: 'medium', alta: 'high', critica: 'critical' }[normalizePriority(value)] || 'medium';
-}
-
-function normalizeAutomationState(value) {
-  const normalized = String(value || '').trim();
-  return ['listo', 'necesita_revision', 'no_automatizable_aun'].includes(normalized) ? normalized : 'listo';
-}
-
-function splitTags(value) {
-  const rawValues = typeof value === 'string' ? [value] : Array.from(value || []);
-  return rawValues.flatMap((item) => String(item).split(/[,;]/).map((part) => part.trim()).filter(Boolean));
-}
-
 function cleanList(values) {
   const rawValues = typeof values === 'string' ? [values] : Array.from(values || []);
   return rawValues.map((value) => stripListMarker(String(value)).trim()).filter(Boolean);
-}
-
-function firstArrayValue(...values) {
-  for (const value of values) {
-    if (Array.isArray(value)) return value;
-  }
-  return [];
-}
-
-function joinText(existing, value) {
-  return existing ? `${existing}\n${String(value).trim()}` : String(value).trim();
 }
 
 function inferCaseRoute(explicitRoute, originalSteps = [], executableSteps = []) {
