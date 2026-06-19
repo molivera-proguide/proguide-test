@@ -2734,7 +2734,7 @@ function normalizeRequestBody(value) {
 function parseJsonObject(value) {
   if (isPlainObject(value)) return value;
   const text = Array.isArray(value) ? cleanList(value).join('\n') : String(value || '').trim();
-  if (!/^[\[{]/.test(text)) return null;
+  if (!/^[[{]/.test(text)) return null;
   try {
     const parsed = JSON.parse(text);
     return isPlainObject(parsed) || Array.isArray(parsed) ? parsed : null;
@@ -3680,7 +3680,7 @@ function appendField(fields, label, value) {
 }
 
 function looksLikeStep(line) {
-  return /^(?:\d+[\).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line)) || Boolean(normalizeApiStep(line));
+  return /^(?:\d+[).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line)) || Boolean(normalizeApiStep(line));
 }
 
 function stripListMarker(line) {
