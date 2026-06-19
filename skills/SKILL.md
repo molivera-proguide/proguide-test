@@ -79,6 +79,9 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - **Debug API:** si un fallo necesita confirmar el request real enviado, agrega
   `"debug": true` solo en entornos locales o con datos no sensibles. El resultado
   incluira `actual_response` y, con debug, tambien `actual_response.request`.
+- **Evidencia API:** cada request genera `api_evidence` JSON con request, response,
+  assertions, captures y duracion; el viewer lo muestra tipo Postman. Para API pura,
+  esa evidencia reemplaza la necesidad de screenshots de browser.
 - **Suites API grandes:** si los casos estan repartidos en varios Markdown, usa
   `source_paths: ["auth.md", "orders.md"]`. Si ya existe un run de regresion y solo
   necesitas sumar casos, usa `append_to_run: "<run_id>"` con `cases`/`source_path`/

@@ -150,6 +150,20 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
     assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'passed']);
     assert.match(summary.results[0].steps.join('\n'), /GET \/health/);
     assert.match(summary.results[1].steps.join('\n'), /POST \/users/);
+    assert.equal(summary.results[0].api_evidence.length, 1);
+    assert.equal(summary.results[1].api_evidence.length, 1);
+    assert.equal(summary.results[0].api_evidence[0].request.method, 'GET');
+    assert.equal(summary.results[0].api_evidence[0].response.status, 200);
+    assert.equal(summary.results[0].api_evidence[0].response.body.service, 'sample-api');
+    assert.equal(summary.results[1].api_evidence[0].request.body.name, 'Mario');
+    assert.match(summary.results[0].api_evidence[0].path, /^api_evidence\/api_health\/.+\.json$/);
+    const evidencePath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, summary.results[0].api_evidence[0].path);
+    const evidenceFile = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
+    assert.equal(evidenceFile.kind, 'api_evidence');
+    assert.equal(evidenceFile.response.status, 200);
+    const evidenceHtml = fs.readFileSync(path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'evidence.html'), 'utf8');
+    assert.match(evidenceHtml, /API evidence/);
+    assert.match(evidenceHtml, /sample-api/);
 
     const generated = await loadGeneratedCaseCode(root, prepared.run.id, 'api_create_user');
     assert.equal(generated.path, 'generated/test_api_cases.spec.ts');

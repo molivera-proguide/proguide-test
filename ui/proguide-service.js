@@ -917,6 +917,7 @@ async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, pro
       actual_response: null,
       steps: testCase.steps,
       expected: testCase.expected,
+      api_evidence: [],
       videos: [],
       screenshots: [],
       traces: []
@@ -1019,6 +1020,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
         actual_response: normalized.actual_response,
         steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,
+        api_evidence: await collectApiEvidence(runDir, testCase.id),
         videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
         screenshots: await artifactPaths(runDir, normalized.attachments, new Set(['.png']), safeId(testCase.id)),
         traces: await artifactPaths(runDir, normalized.attachments, new Set(['.zip']), safeId(testCase.id))
@@ -1038,6 +1040,7 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
       actual_response: null,
       steps: testCase.steps,
       expected: testCase.expected,
+      api_evidence: await collectApiEvidence(runDir, testCase.id),
       videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
       screenshots: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.png']), safeId(testCase.id)),
       traces: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.zip']), safeId(testCase.id))
@@ -1532,7 +1535,10 @@ function generateApiTestSpec(planCases) {
       id: testCase.id,
       title: testCase.title,
       debug: Boolean(testCase.debug),
-      requests: normalizeApiPlanRequests(testCase)
+      requests: normalizeApiPlanRequests(testCase).map((request, index) => ({
+        ...request,
+        sequence: index + 1
+      }))
     };
   });
   const markers = cases.map((testCase) => `// [${testCase.id}] ${testCase.title}`).join('\n');
@@ -1549,6 +1555,8 @@ function generateApiTestSpec(planCases) {
     ].join('\n');
   }).join('\n\n');
   return [
+    "import fs from 'node:fs/promises';",
+    "import path from 'node:path';",
     "import { test, expect } from './proguide-test-runtime.mjs';",
     '',
     markers,
@@ -1562,23 +1570,49 @@ function generateApiTestSpec(planCases) {
     '}',
     '',
     'async function runApiStep(request, apiStep, variables, testCase) {',
+    '  const startedAt = new Date().toISOString();',
+    '  const startedMs = Date.now();',
     '  const resolvedRequest = resolveRequestValue(apiStep.request, variables);',
-    '  const response = await test.step(`${apiStep.request.method} ${apiStep.request.path}`, async () => {',
-    '    return request.fetch(resolvedRequest.path, requestOptions(resolvedRequest));',
-    '  });',
-    '',
-    "  const responseBody = await test.step('read response body', async () => readResponseBody(response));",
-    '  const actualResponse = responseSnapshot({ response, responseBody, resolvedRequest, includeRequest: Boolean(testCase.debug || apiStep.debug) });',
-    '',
-    '  for (const assertion of apiStep.assertions) {',
-    '    await test.step(assertionTitle(assertion), async () => {',
-    '      await applyAssertion({ assertion, response, responseBody, actualResponse });',
+    '  const evidence = { assertions: [], captures: [] };',
+    '  let response = null;',
+    '  let responseBody = null;',
+    '  let actualResponse = null;',
+    '  let failure = null;',
+    '  try {',
+    '    response = await test.step(`${apiStep.request.method} ${apiStep.request.path}`, async () => {',
+    '      return request.fetch(resolvedRequest.path, requestOptions(resolvedRequest));',
     '    });',
-    '  }',
     '',
-    '  for (const capture of apiStep.captures || []) {',
-    '    await test.step(captureTitle(capture), async () => {',
-    '      applyCapture({ capture, response, responseBody, variables });',
+    "    responseBody = await test.step('read response body', async () => readResponseBody(response));",
+    '    actualResponse = responseSnapshot({ response, responseBody, resolvedRequest, includeRequest: Boolean(testCase.debug || apiStep.debug) });',
+    '',
+    '    for (const assertion of apiStep.assertions) {',
+    '      await test.step(assertionTitle(assertion), async () => {',
+    '        await runAssertion({ assertion, response, responseBody, actualResponse, evidence });',
+    '      });',
+    '    }',
+    '',
+    '    for (const capture of apiStep.captures || []) {',
+    '      await test.step(captureTitle(capture), async () => {',
+    '        runCapture({ capture, response, responseBody, variables, evidence, includeSecrets: Boolean(testCase.debug || apiStep.debug) });',
+    '      });',
+    '    }',
+    '  } catch (error) {',
+    '    failure = error;',
+    '    throw error;',
+    '  } finally {',
+    '    await writeApiEvidence({',
+    '      testCase,',
+    '      apiStep,',
+    '      resolvedRequest,',
+    '      response,',
+    '      responseBody,',
+    '      actualResponse,',
+    '      evidence,',
+    '      startedAt,',
+    '      durationMs: Date.now() - startedMs,',
+    '      failure,',
+    '      includeSecrets: Boolean(testCase.debug || apiStep.debug)',
     '    });',
     '  }',
     '}',
@@ -1636,6 +1670,16 @@ function generateApiTestSpec(planCases) {
     '    await applyAssertionCore({ assertion, response, responseBody });',
     '  } catch (error) {',
     '    throw enrichAssertionError(error, assertion, actualResponse);',
+    '  }',
+    '}',
+    '',
+    'async function runAssertion({ assertion, response, responseBody, actualResponse, evidence }) {',
+    '  try {',
+    '    await applyAssertion({ assertion, response, responseBody, actualResponse });',
+    "    evidence.assertions.push({ assertion, status: 'passed' });",
+    '  } catch (error) {',
+    "    evidence.assertions.push({ assertion, status: 'failed', message: shortErrorMessage(error) });",
+    '    throw error;',
     '  }',
     '}',
     '',
@@ -1727,6 +1771,31 @@ function generateApiTestSpec(planCases) {
     '  }',
     '  if (value === undefined) throw new Error(`Capture ${capture.name} did not resolve`);',
     '  variables[capture.name] = value;',
+    '  return value;',
+    '}',
+    '',
+    'function runCapture({ capture, response, responseBody, variables, evidence, includeSecrets }) {',
+    '  try {',
+    '    const value = applyCapture({ capture, response, responseBody, variables });',
+    '    evidence.captures.push({',
+    "      name: capture.name,",
+    "      source: capture.source || 'body',",
+    '      path: capture.path || null,',
+    '      header: capture.header || null,',
+    "      status: 'captured',",
+    '      value: sanitizeForEvidence(value, { includeSecrets, key: capture.name })',
+    '    });',
+    '  } catch (error) {',
+    '    evidence.captures.push({',
+    "      name: capture.name,",
+    "      source: capture.source || 'body',",
+    '      path: capture.path || null,',
+    '      header: capture.header || null,',
+    "      status: 'failed',",
+    '      message: shortErrorMessage(error)',
+    '    });',
+    '    throw error;',
+    '  }',
     '}',
     '',
     'function valueAtPath(source, path) {',
@@ -1755,6 +1824,90 @@ function generateApiTestSpec(planCases) {
     'function captureTitle(capture) {',
     "  if (capture.source === 'header') return `capture ${capture.name} from header ${capture.header}`;",
     "  return `capture ${capture.name} from body.${capture.path || '<root>'}`;",
+    '}',
+    '',
+    'async function writeApiEvidence({ testCase, apiStep, resolvedRequest, response, responseBody, actualResponse, evidence, startedAt, durationMs, failure, includeSecrets }) {',
+    '  const runDir = process.env.PROGUIDE_RUN_DIR;',
+    '  if (!runDir) return;',
+    '  const payload = {',
+    '    kind: "api_evidence",',
+    '    case_id: testCase.id,',
+    '    case_title: testCase.title,',
+    '    step_id: apiStep.id || `request_${apiStep.sequence || 1}`,',
+    '    step_title: apiStep.title || `${apiStep.request.method} ${apiStep.request.path}`,',
+    '    sequence: apiStep.sequence || 1,',
+    '    started_at: startedAt,',
+    '    finished_at: new Date().toISOString(),',
+    '    duration_ms: durationMs,',
+    '    redacted: !includeSecrets,',
+    '    request: evidenceRequestSnapshot(resolvedRequest, includeSecrets),',
+    '    response: response ? evidenceResponseSnapshot({ response, responseBody, includeSecrets }) : null,',
+    '    assertions: evidence.assertions || [],',
+    '    captures: evidence.captures || [],',
+    '    error: failure ? shortErrorMessage(failure) : null',
+    '  };',
+    '  try {',
+    '    const directory = path.join(runDir, "api_evidence", safeEvidenceName(testCase.id));',
+    '    await fs.mkdir(directory, { recursive: true });',
+    '    const fileName = `${String(payload.sequence).padStart(2, "0")}_${safeEvidenceName(payload.step_id)}.json`;',
+    '    await fs.writeFile(path.join(directory, fileName), JSON.stringify(payload, null, 2), "utf8");',
+    '  } catch (error) {',
+    '    console.warn(`ProGuide could not write API evidence: ${error?.message || error}`);',
+    '  }',
+    '}',
+    '',
+    'function evidenceRequestSnapshot(request, includeSecrets) {',
+    '  return {',
+    '    method: request.method,',
+    '    path: request.path,',
+    '    url: absoluteUrl(request.path),',
+    '    headers: sanitizeForEvidence(request.headers || {}, { includeSecrets }),',
+    '    query: sanitizeForEvidence(request.query || {}, { includeSecrets }),',
+    '    body: sanitizeForEvidence(request.body, { includeSecrets })',
+    '  };',
+    '}',
+    '',
+    'function evidenceResponseSnapshot({ response, responseBody, includeSecrets }) {',
+    '  return {',
+    '    status: response.status(),',
+    '    ok: response.ok(),',
+    '    headers: sanitizeForEvidence(response.headers(), { includeSecrets }),',
+    '    body: sanitizeForEvidence(truncateForDebug(responseBody), { includeSecrets })',
+    '  };',
+    '}',
+    '',
+    'function absoluteUrl(requestPath) {',
+    '  const text = String(requestPath || "");',
+    '  if (/^https?:\\/\\//i.test(text)) return text;',
+    '  const base = String(process.env.PROGUIDE_BASE_URL || "").replace(/\\/+$/, "");',
+    '  if (!base) return text;',
+    '  return `${base}${text.startsWith("/") ? "" : "/"}${text}`;',
+    '}',
+    '',
+    'function sanitizeForEvidence(value, options = {}) {',
+    '  const includeSecrets = Boolean(options.includeSecrets);',
+    '  const key = String(options.key || "");',
+    '  if (!includeSecrets && isSensitiveKey(key)) return "[REDACTED]";',
+    '  if (Array.isArray(value)) return value.map((entry) => sanitizeForEvidence(entry, options));',
+    '  if (value && typeof value === "object") {',
+    '    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [',
+    '      entryKey,',
+    '      sanitizeForEvidence(entryValue, { includeSecrets, key: entryKey })',
+    '    ]));',
+    '  }',
+    '  return value;',
+    '}',
+    '',
+    'function isSensitiveKey(key) {',
+    '  return /authorization|cookie|password|pass|secret|token|api[_-]?key/i.test(String(key || ""));',
+    '}',
+    '',
+    'function safeEvidenceName(value) {',
+    '  return String(value || "item").replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 120) || "item";',
+    '}',
+    '',
+    'function shortErrorMessage(error) {',
+    '  return String(error?.message || error || "").split("\\n\\nProGuide API debug:")[0].trim();',
     '}',
     ''
   ].join('\n');
@@ -3169,11 +3322,14 @@ async function writeEvidenceReport({ summary, run, cases, runDir }) {
     const actualResponse = result.actual_response
       ? `<details class="error-console"><summary>Actual response</summary><pre>${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre></details>`
       : '';
+    const apiEvidence = (result.api_evidence || []).length
+      ? `<details class="error-console"><summary>API evidence</summary><pre>${escapeHtml(JSON.stringify(result.api_evidence, null, 2))}</pre></details>`
+      : '';
     return `<tr>
       <td>${escapeHtml(testCase.number || '')}</td>
       <td>${escapeHtml(result.title)}</td>
       <td>${escapeHtml(result.status)}</td>
-      <td>${escapeHtml(result.message || '')}${actualResponse}${errorDetails}</td>
+      <td>${escapeHtml(result.message || '')}${apiEvidence}${actualResponse}${errorDetails}</td>
     </tr>`;
   }).join('');
   const html = `<!doctype html>
@@ -4074,6 +4230,23 @@ async function collectArtifacts(directory, relativeTo, suffixes, stem = null) {
     }
   });
   return files.sort();
+}
+
+async function collectApiEvidence(runDir, caseId) {
+  const directory = path.join(runDir, 'api_evidence', safeId(caseId));
+  if (!(await exists(directory))) return [];
+  const entries = [];
+  await walk(directory, async (filePath) => {
+    if (path.extname(filePath).toLowerCase() !== '.json') return;
+    const payload = await readJson(filePath, null);
+    if (!payload) return;
+    entries.push({
+      ...payload,
+      path: relativePath(filePath, runDir)
+    });
+  });
+  return entries.sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) ||
+    String(a.path || '').localeCompare(String(b.path || '')));
 }
 
 async function walk(directory, onFile) {

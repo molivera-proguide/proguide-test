@@ -703,6 +703,7 @@ function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
           ${testCase.description ? `<p class="detail-lede">${escapeHtml(testCase.description)}</p>` : ''}
         </header>
         ${result?.message ? `<div class="result-note ${escapeHtml(statusClass(status))}"><strong>Resultado</strong><p>${escapeHtml(result.message)}</p></div>` : ''}
+        ${renderApiEvidence(result, run.id)}
         ${renderActualResponse(result)}
         ${renderErrorConsole(result)}
         <section class="detail-section">
@@ -754,6 +755,64 @@ function renderActualResponse(result) {
     </section>`;
 }
 
+function renderApiEvidence(result, runId) {
+  const entries = Array.isArray(result?.api_evidence) ? result.api_evidence : [];
+  if (!entries.length) return '';
+  return `
+    <section class="detail-section api-evidence-section">
+      <h3>API Evidence</h3>
+      ${entries.map((entry, index) => renderApiEvidenceEntry(entry, runId, index)).join('')}
+    </section>`;
+}
+
+function renderApiEvidenceEntry(entry, runId, index) {
+  const method = entry?.request?.method || '';
+  const url = entry?.request?.url || entry?.request?.path || '';
+  const status = entry?.response?.status ?? 'error';
+  const ok = entry?.response?.ok === true;
+  const requestJson = {
+    method: entry?.request?.method,
+    url: entry?.request?.url,
+    path: entry?.request?.path,
+    headers: entry?.request?.headers || {},
+    query: entry?.request?.query || {},
+    body: entry?.request?.body ?? null
+  };
+  const responseJson = entry?.response || { error: entry?.error || 'No response captured' };
+  return `
+    <details class="api-evidence" ${index === 0 ? 'open' : ''}>
+      <summary>
+        <span class="api-method mono">${escapeHtml(method)}</span>
+        <span class="api-url mono">${escapeHtml(url)}</span>
+        <span class="api-status ${ok ? 'passed' : 'failed'}">${escapeHtml(String(status))}</span>
+        ${entry?.path ? `<a class="chip-link" href="${attr(artifactHref(runId, entry.path))}">JSON</a>` : ''}
+      </summary>
+      ${entry?.redacted ? '<p class="muted api-redacted">Valores sensibles redactados. Usa debug:true solo en local si necesitas ver el request completo.</p>' : ''}
+      <div class="api-evidence-grid">
+        <div>
+          <h4>Request</h4>
+          <pre class="error-console">${escapeHtml(JSON.stringify(requestJson, null, 2))}</pre>
+        </div>
+        <div>
+          <h4>Response</h4>
+          <pre class="error-console">${escapeHtml(JSON.stringify(responseJson, null, 2))}</pre>
+        </div>
+      </div>
+      ${renderApiEvidenceChecks(entry)}
+    </details>`;
+}
+
+function renderApiEvidenceChecks(entry) {
+  const assertions = Array.isArray(entry?.assertions) ? entry.assertions : [];
+  const captures = Array.isArray(entry?.captures) ? entry.captures : [];
+  if (!assertions.length && !captures.length) return '';
+  return `
+    <div class="api-evidence-checks">
+      ${assertions.length ? `<div><h4>Assertions</h4><pre class="error-console">${escapeHtml(JSON.stringify(assertions, null, 2))}</pre></div>` : ''}
+      ${captures.length ? `<div><h4>Captures</h4><pre class="error-console">${escapeHtml(JSON.stringify(captures, null, 2))}</pre></div>` : ''}
+    </div>`;
+}
+
 function renderErrorConsole(result) {
   const details = String(result?.error_details || '').trim();
   if (!details) return '';
@@ -783,6 +842,9 @@ function renderEvidenceLinks(result, runId) {
   }
   for (const trace of result.traces || []) {
     evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, trace))}">Trace</a>`);
+  }
+  for (const apiEvidence of result.api_evidence || []) {
+    if (apiEvidence?.path) evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, apiEvidence.path))}">API JSON</a>`);
   }
   return evidence.join('');
 }
@@ -2116,6 +2178,31 @@ function styles() {
       font-size: 12.5px;
       line-height: 1.55;
     }
+    .api-evidence-section { gap: 14px; }
+    .api-evidence {
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.028);
+      overflow: hidden;
+    }
+    .api-evidence summary {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      cursor: pointer; padding: 12px 14px; color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+    .api-method { color: var(--accent); font-weight: 700; }
+    .api-url { color: var(--muted); overflow-wrap: anywhere; }
+    .api-status {
+      display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px;
+      border-radius: 999px; border: 1px solid var(--border-strong); font-size: 12px; font-weight: 700;
+    }
+    .api-status.passed { color: #83f0c8; background: rgba(69, 211, 166, 0.12); border-color: rgba(69, 211, 166, 0.28); }
+    .api-status.failed { color: #ff9bab; background: rgba(255, 99, 122, 0.12); border-color: rgba(255, 99, 122, 0.28); }
+    .api-redacted { margin: 12px 14px 0; font-size: 13px; }
+    .api-evidence-grid, .api-evidence-checks {
+      display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding: 14px;
+    }
+    .api-evidence h4 { margin: 0 0 8px; color: var(--muted); font-size: 12px; font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .08em; }
     .detail-section { display: grid; gap: 12px; margin-top: 24px; }
     .detail-section.compact { margin-top: 18px; }
     .detail-section h3 {

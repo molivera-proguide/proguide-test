@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.5.tgz
+npm install -g ./proguide-test-0.2.0-ts.6.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.5/proguide-test-0.2.0-ts.5.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.6/proguide-test-0.2.0-ts.6.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -180,6 +180,13 @@ Cuando una asercion API falla, el resultado incluye `actual_response` con `statu
 el stack de Playwright. Si un caso API incluye `"debug": true`, ProGuide tambien guarda
 el request resuelto en `actual_response.request`; usalo solo en entornos locales o con
 datos no sensibles, porque puede incluir credenciales de prueba.
+
+Cada request API ejecutado genera evidencia JSON en `api_evidence/<case_id>/`, con
+request, response, assertions, captures y duracion. El viewer muestra esa evidencia en
+un panel tipo Postman con el JSON pretty-print; el `evidence.html` tambien la incluye
+para compartir resultados. Por defecto se redactan valores sensibles como
+`authorization`, `cookie`, `password`, `token` y `api_key`; con `"debug": true` se guarda
+el request completo para debugging local.
 
 Los casos REST usan `base_url` igual que los UI, pero no necesitan contexto DOM ni Chromium.
 Para endpoints que crean recursos (`register`, `orders`, `products`), usa datos
