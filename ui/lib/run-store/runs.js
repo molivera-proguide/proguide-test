@@ -1,12 +1,9 @@
 // @ts-check
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { TextDecoder } from 'node:util';
 import { loadDotEnv } from '../shared/env.js';
 import { nowIso } from '../shared/time.js';
 import {
-  slug,
   normalizePriority,
   normalizeAutomationState,
   splitTags,
@@ -52,7 +49,6 @@ import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
 import { callJsonModel } from '../llm/anthropic.js';
 import {
-  PROGUIDE_DIR,
   SOURCE_MD,
   SOURCE_CASES_JSON,
   NORMALIZED_CASES_JSON,
@@ -77,6 +73,13 @@ import {
   statusFromSummary,
   relativePath
 } from './io.js';
+import { resolveRunIdentity } from './identity.js';
+import { loadUiConfig } from './config.js';
+import {
+  readMarkdownSources,
+  markdownSourceFilename,
+  combineMarkdownSources
+} from '../markdown/sources.js';
 
 // High-level run lifecycle and storage orchestration: create/preview/append
 // runs from Markdown or structured cases, execute prepared runs (codegen +
@@ -836,264 +839,5 @@ function coerceCasesPayload(data) {
   if (Array.isArray(data.normalized_cases)) return data.normalized_cases;
   if (Array.isArray(data.test_cases)) return data.test_cases;
   throw new Error('El agente no devolvio una lista de casos en la clave cases.');
-}
-
-async function loadUiConfig(root) {
-  const config = {
-    runner: {
-      browser: 'chromium',
-      parallel_workers: 'auto',
-      video: 'on',
-      screenshots: 'on',
-      traces: 'retain_on_failure'
-    },
-    identity: {
-      run_user_email: '',
-      run_user_name: '',
-      project_name: '',
-      project_key: '',
-      require_user_email: false,
-      require_project_name: false
-    },
-    llm: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5-20251001',
-      temperature: 0.2,
-      max_cases: 12,
-      max_context_chars: 50000,
-      max_output_tokens: 8000
-    }
-  };
-  const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
-  if (!(await exists(configPath))) return config;
-  const text = await fs.readFile(configPath, 'utf8');
-  let section = '';
-  for (const line of text.split(/\r?\n/)) {
-    const sectionMatch = line.match(/^([A-Za-z_][\w-]*):\s*$/);
-    if (sectionMatch) {
-      section = sectionMatch[1];
-      continue;
-    }
-    const valueMatch = line.match(/^\s+([A-Za-z_][\w-]*):\s*(.*?)\s*$/);
-    if (!valueMatch || !config[section]) continue;
-    config[section][valueMatch[1]] = parseYamlScalar(valueMatch[2]);
-  }
-  return config;
-}
-
-async function resolveRunIdentity(root, metadata = {}, config = {}) {
-  const rootPath = path.resolve(root);
-  const identityConfig = config.identity || {};
-  const git = gitIdentity(rootPath);
-  const packageName = await packageProjectName(rootPath);
-  const pyprojectName = await pyprojectProjectName(rootPath);
-  const remoteProjectName = projectNameFromRemote(git.remote);
-  const folderName = path.basename(rootPath);
-
-  const runUserEmail = firstValue(
-    metadata.run_user_email,
-    metadata.user_email,
-    identityConfig.run_user_email,
-    process.env.PROGUIDE_RUN_USER_EMAIL,
-    git.email
-  );
-  const runUserName = firstValue(
-    metadata.run_user_name,
-    metadata.user_name,
-    identityConfig.run_user_name,
-    process.env.PROGUIDE_RUN_USER_NAME,
-    git.name
-  );
-  const projectName = firstValue(
-    metadata.project_name,
-    metadata.project,
-    metadata.app_name,
-    identityConfig.project_name,
-    process.env.PROGUIDE_PROJECT_NAME,
-    packageName,
-    pyprojectName,
-    remoteProjectName,
-    folderName
-  );
-  const projectKey = firstValue(
-    metadata.project_key,
-    identityConfig.project_key,
-    process.env.PROGUIDE_PROJECT_KEY,
-    slug(projectName)
-  );
-
-  if (identityConfig.require_user_email && !runUserEmail) {
-    throw new Error('Falta metadata de usuario: configura identity.run_user_email, PROGUIDE_RUN_USER_EMAIL o pasa run_user_email por MCP/CLI.');
-  }
-  if (identityConfig.require_project_name && !projectName) {
-    throw new Error('Falta metadata de proyecto: configura identity.project_name, PROGUIDE_PROJECT_NAME o pasa project_name por MCP/CLI.');
-  }
-
-  return {
-    run_user_email: runUserEmail || '',
-    run_user_name: runUserName || '',
-    company_domain: emailDomain(runUserEmail),
-    project_name: projectName || '',
-    project_key: projectKey || '',
-    workspace_root: rootPath,
-    run_source: firstValue(metadata.run_source, metadata.source, process.env.PROGUIDE_RUN_SOURCE) || '',
-    git_branch: git.branch || '',
-    git_commit: git.commit || '',
-    identity_source: {
-      run_user_email: sourceFor([
-        ['metadata', metadata.run_user_email || metadata.user_email],
-        ['config', identityConfig.run_user_email],
-        ['env', process.env.PROGUIDE_RUN_USER_EMAIL],
-        ['git', git.email]
-      ]),
-      run_user_name: sourceFor([
-        ['metadata', metadata.run_user_name || metadata.user_name],
-        ['config', identityConfig.run_user_name],
-        ['env', process.env.PROGUIDE_RUN_USER_NAME],
-        ['git', git.name]
-      ]),
-      project_name: sourceFor([
-        ['metadata', metadata.project_name || metadata.project || metadata.app_name],
-        ['config', identityConfig.project_name],
-        ['env', process.env.PROGUIDE_PROJECT_NAME],
-        ['package_json', packageName],
-        ['pyproject', pyprojectName],
-        ['git_remote', remoteProjectName],
-        ['folder', folderName]
-      ]),
-      project_key: sourceFor([
-        ['metadata', metadata.project_key],
-        ['config', identityConfig.project_key],
-        ['env', process.env.PROGUIDE_PROJECT_KEY],
-        ['derived', slug(projectName)]
-      ])
-    }
-  };
-}
-
-function gitIdentity(root) {
-  return {
-    email: gitValue(root, ['config', '--get', 'user.email']),
-    name: gitValue(root, ['config', '--get', 'user.name']),
-    remote: gitValue(root, ['config', '--get', 'remote.origin.url']),
-    branch: gitValue(root, ['rev-parse', '--abbrev-ref', 'HEAD']),
-    commit: gitValue(root, ['rev-parse', '--short', 'HEAD'])
-  };
-}
-
-function gitValue(root, args) {
-  const result = spawnSync('git', ['-C', root, ...args], {
-    encoding: 'utf8',
-    timeout: 2500,
-    windowsHide: true
-  });
-  if (result.status !== 0) return '';
-  return String(result.stdout || '').trim();
-}
-
-async function packageProjectName(root) {
-  const packagePath = path.join(root, 'package.json');
-  try {
-    const data = JSON.parse(await fs.readFile(packagePath, 'utf8'));
-    return cleanProjectName(data.name || '');
-  } catch {
-    return '';
-  }
-}
-
-async function pyprojectProjectName(root) {
-  try {
-    const text = await fs.readFile(path.join(root, 'pyproject.toml'), 'utf8');
-    const match = text.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
-    return cleanProjectName(match?.[1] || '');
-  } catch {
-    return '';
-  }
-}
-
-function projectNameFromRemote(remote) {
-  const text = String(remote || '').trim();
-  if (!text) return '';
-  const withoutQuery = text.split(/[?#]/)[0];
-  const last = withoutQuery.split(/[/:\\]/).filter(Boolean).at(-1) || '';
-  return cleanProjectName(last.replace(/\.git$/i, ''));
-}
-
-function cleanProjectName(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  return text.replace(/^@[^/]+\//, '');
-}
-
-function firstValue(...values) {
-  return values.map((value) => String(value ?? '').trim()).find(Boolean) || '';
-}
-
-function sourceFor(entries) {
-  const found = entries.find(([, value]) => String(value ?? '').trim());
-  return found?.[0] || '';
-}
-
-function emailDomain(email) {
-  const match = String(email || '').trim().match(/@([^@\s]+)$/);
-  return match ? match[1].toLowerCase() : '';
-}
-
-function parseYamlScalar(value) {
-  const trimmed = String(value || '').trim().replace(/^['"]|['"]$/g, '');
-  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
-  if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
-  return trimmed;
-}
-
-async function readMarkdownText(filePath) {
-  const data = await fs.readFile(filePath);
-  if (data.length >= 2 && data[0] === 0xff && data[1] === 0xfe) {
-    return repairDecodedMarkdown(new TextDecoder('utf-16le').decode(data.subarray(2)));
-  }
-  if (data.length >= 2 && data[0] === 0xfe && data[1] === 0xff) {
-    return repairDecodedMarkdown(new TextDecoder('utf-16le').decode(swapBytes(data.subarray(2))));
-  }
-  if (data.length >= 3 && data[0] === 0xef && data[1] === 0xbb && data[2] === 0xbf) {
-    return repairDecodedMarkdown(new TextDecoder('utf-8').decode(data.subarray(3)));
-  }
-  return repairDecodedMarkdown(new TextDecoder('utf-8', { fatal: false }).decode(data));
-}
-
-async function readMarkdownSources(sourceMd) {
-  const paths = (Array.isArray(sourceMd) ? sourceMd : [sourceMd]).filter(Boolean);
-  if (!paths.length) throw new Error('Debes pasar al menos un archivo Markdown.');
-  return Promise.all(paths.map(async (filePath) => ({
-    path: filePath,
-    name: path.basename(filePath),
-    markdown: await readMarkdownText(filePath)
-  })));
-}
-
-function markdownSourceFilename(sources) {
-  if (sources.length === 1) return sources[0].name;
-  const names = sources.map((source) => source.name).join(', ');
-  return names.length <= 180 ? names : `${sources.length} markdown files`;
-}
-
-function combineMarkdownSources(sources) {
-  if (sources.length === 1) return sources[0].markdown;
-  return sources
-    .map((source) => `<!-- source: ${source.name} -->\n\n${source.markdown.trim()}`)
-    .join('\n\n');
-}
-
-function swapBytes(buffer) {
-  const swapped = Buffer.from(buffer);
-  for (let index = 0; index + 1 < swapped.length; index += 2) {
-    const next = swapped[index];
-    swapped[index] = swapped[index + 1];
-    swapped[index + 1] = next;
-  }
-  return swapped;
-}
-
-function repairDecodedMarkdown(text) {
-  return text.replace(/^(\s*)\ufffd(?=\s+)/gm, '$1-');
 }
 
