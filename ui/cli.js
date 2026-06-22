@@ -15,35 +15,14 @@ import {
 } from './proguide-service.js';
 import { ensurePlaywrightRuntime, playwrightBrowserProbe, playwrightImportProbe, runtimeEnv } from './playwright-runtime.js';
 import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUrl, viewerLinks } from './viewer.js';
+import { loadDotEnv } from './lib/shared/env.js';
+import { isPathInside } from './lib/shared/paths.js';
+import { casesRequireBrowser } from './lib/shared/cases.js';
+import { defaultConfig } from './lib/config/defaults.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
 const DEFAULT_VIEWER_PORT_ATTEMPTS = Number(process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS || 20);
-const DEFAULT_CONFIG = {
-  runner: {
-    browser: 'chromium',
-    parallel_workers: 'auto',
-    video: 'on',
-    screenshots: 'on',
-    traces: 'retain_on_failure'
-  },
-  identity: {
-    run_user_email: '',
-    run_user_name: '',
-    project_name: '',
-    project_key: '',
-    require_user_email: false,
-    require_project_name: false
-  },
-  llm: {
-    provider: 'anthropic',
-    model: 'claude-haiku-4-5-20251001',
-    temperature: 0.2,
-    max_cases: 12,
-    max_context_chars: 50000,
-    max_output_tokens: 8000
-  }
-};
 
 const EXIT = {
   ok: 0,
@@ -427,7 +406,7 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.2.0-ts.6' }, parsed.options, '0.2.0-ts.6');
+    emit({ version: '0.2.0-ts.7' }, parsed.options, '0.2.0-ts.7');
   }
 }
 
@@ -673,17 +652,18 @@ function tcpOpen(host, port) {
 
 async function readConfig(root) {
   const configPath = path.join(root, 'proguide_tests', 'config.yaml');
-  let parsed = {};
+  let parsed;
   try {
     parsed = parseSimpleYaml(await fs.readFile(configPath, 'utf8'));
   } catch {
     parsed = {};
   }
+  const defaults = defaultConfig();
   return {
     ...parsed,
-    runner: { ...DEFAULT_CONFIG.runner, ...(parsed.runner || {}) },
-    identity: { ...DEFAULT_CONFIG.identity, ...(parsed.identity || {}) },
-    llm: { ...DEFAULT_CONFIG.llm, ...(parsed.llm || {}) }
+    runner: { ...defaults.runner, ...(parsed.runner || {}) },
+    identity: { ...defaults.identity, ...(parsed.identity || {}) },
+    llm: { ...defaults.llm, ...(parsed.llm || {}) }
   };
 }
 
@@ -744,32 +724,6 @@ function formatYamlScalar(value) {
   const text = String(value ?? '');
   if (!text || /[:#\n\r]|^\s|\s$/.test(text)) return `'${text.replace(/'/g, "''")}'`;
   return text;
-}
-
-async function loadDotEnv(root) {
-  for (const envPath of envFileCandidates(root)) {
-    let text = '';
-    try {
-      text = await fs.readFile(envPath, 'utf8');
-    } catch {
-      continue;
-    }
-    for (const line of text.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-      if (!match || process.env[match[1]]) continue;
-      process.env[match[1]] = match[2].trim().replace(/^['"]|['"]$/g, '');
-    }
-  }
-}
-
-function envFileCandidates(root) {
-  return [
-    process.env.PROGUIDE_ENV_FILE,
-    path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
-    path.join(root, '.env')
-  ].filter(Boolean).map((item) => path.resolve(String(item)));
 }
 
 function readDotted(config, key) {
@@ -878,21 +832,11 @@ function credentialsFromOptions(options) {
   };
 }
 
-function casesRequireBrowser(cases = []) {
-  if (!Array.isArray(cases) || !cases.length) return true;
-  return cases.some((testCase) => String(testCase.type || '').toLowerCase() !== 'api' && !(testCase.request?.method && testCase.request?.path));
-}
-
 function requiredHandle(value, label) {
   const text = String(value || '');
   if (!text) throw cliError(`${label} es obligatorio.`, EXIT.invalidInput);
   if (!/^[A-Za-z0-9_.-]+$/.test(text)) throw cliError(`${label} invalido.`, EXIT.invalidInput);
   return text;
-}
-
-function isPathInside(root, target) {
-  const relative = path.relative(path.resolve(root), path.resolve(target));
-  return relative === '' || (relative && !relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function option(options, ...names) {

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "esnext",
+    "lib": ["esnext"],
+    "checkJs": false,
+    "allowJs": true,
+    "strict": true,
+    "noEmit": true,
+    "resolveJsonModule": true
+  },
+  "include": ["*.js", "test/**/*.js"],
+  "exclude": ["node_modules", "proguide_tests", "test-results", "playwright-report"]
+}

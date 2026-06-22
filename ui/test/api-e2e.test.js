@@ -612,7 +612,11 @@ function startViewer(root, port) {
 }
 
 async function waitForJson(url, viewer) {
-  const deadline = Date.now() + 10000;
+  // Generous deadline: the viewer boots fastify + the large proguide-service
+  // module, which can take several seconds under load when the full suite runs
+  // many spawned processes in parallel. Polling returns as soon as it is ready,
+  // so a larger ceiling only adds margin under contention, never normal latency.
+  const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
     if (viewer.child.exitCode !== null) {
       throw new Error(`Viewer exited early: ${viewer.output.join('')}`);

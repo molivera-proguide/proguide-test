@@ -1,6 +1,6 @@
 {
   "name": "@proguide/test",
-  "version": "0.2.0-ts.6",
+  "version": "0.2.0-ts.7",
   "private": false,
   "type": "module",
   "bin": {
@@ -12,13 +12,21 @@
     "playwright-runtime.js",
     "proguide-service.js",
     "server.js",
-    "viewer.js"
+    "viewer.js",
+    "lib/",
+    "assets/",
+    "views/"
   ],
   "scripts": {
     "start": "node server.js",
     "mcp": "node mcp-server.js",
     "proguide": "node cli.js",
-    "test": "node --test"
+    "test": "node --test",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm test"
   },
   "engines": {
     "node": ">=20"
@@ -27,5 +35,12 @@
     "@anthropic-ai/sdk": "^0.104.2",
     "@playwright/test": "^1.61.0",
     "fastify": "^5.2.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.5.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.4"
   }
 }
