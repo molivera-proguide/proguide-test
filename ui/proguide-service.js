@@ -1,12 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { playwrightCommand, proguideRequireAnchor, runtimeEnv } from './playwright-runtime.js';
+import { proguideRequireAnchor, runtimeEnv } from './playwright-runtime.js';
 import { loadDotEnv } from './lib/shared/env.js';
-import { escapeHtml } from './lib/shared/html.js';
 import { safeNumber, roundMoney } from './lib/shared/num.js';
 import { estimateLlmCost, normalizeLlmUsage } from './lib/usage/pricing.js';
 import { nowIso } from './lib/shared/time.js';
@@ -47,17 +46,11 @@ import {
 import { parseMarkdownCases } from './lib/markdown/parse-cases.js';
 import { isApiPlanCase, generateApiTestSpec } from './lib/codegen/api-spec.js';
 import { casesToTestPlan } from './lib/codegen/test-plan.js';
-import {
-  collectPlaywrightSpecs,
-  caseFromPlaywrightSpec,
-  normalizePlaywrightSpecResult
-} from './lib/runner/results.js';
-import {
-  playwrightWorkerArgs,
-  normalizePlaywrightScreenshot,
-  normalizePlaywrightTrace,
-  normalizePlaywrightVideo
-} from './lib/runner/config.js';
+import { playwrightWorkerArgs } from './lib/runner/config.js';
+import { runPlaywrightTests, runProcess, parsePlaywrightResults } from './lib/runner/playwright.js';
+import { writeEvidenceReport } from './lib/runner/evidence.js';
+
+export { parsePlaywrightResults };
 import {
   PROGUIDE_DIR,
   SOURCE_MD,
@@ -82,12 +75,9 @@ import {
   writeJson,
   readJson,
   exists,
-  collectArtifacts,
-  collectApiEvidence,
   walk,
   countSummary,
   statusFromSummary,
-  setupFailureMessage,
   firstUsefulLogLine,
   chunkArray,
   positiveInteger,
@@ -841,165 +831,6 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
   return summary;
 }
 
-async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, projectRoot, credentials }) {
-  await fs.mkdir(runDir, { recursive: true });
-  const startedAt = nowIso();
-  const reportPath = path.join(runDir, 'playwright-report.json');
-  const playwrightLogPath = path.join(runDir, 'playwright.log');
-  const outputDir = path.join(runDir, 'artifacts', 'playwright');
-  const configPath = path.join(runDir, 'playwright.config.cjs');
-  const runnerConfig = {
-    browser: config.runner.browser || 'chromium',
-    video: config.runner.video || 'on',
-    screenshots: config.runner.screenshots || 'on',
-    traces: config.runner.traces || 'retain_on_failure'
-  };
-  await writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig });
-  const command = playwrightCommand([
-    'test',
-    '--config',
-    configPath,
-    ...playwrightWorkerArgs(config)
-  ]);
-  const env = {
-    ...runtimeEnv(),
-    PROGUIDE_BASE_URL: baseUrl,
-    PROGUIDE_RUN_DIR: runDir,
-    PROGUIDE_BROWSER: runnerConfig.browser,
-    PROGUIDE_VIDEO: normalizePlaywrightVideo(runnerConfig.video),
-    PROGUIDE_SCREENSHOTS: normalizePlaywrightScreenshot(runnerConfig.screenshots),
-    PROGUIDE_TRACES: normalizePlaywrightTrace(runnerConfig.traces)
-  };
-  if (credentials.email) env.PROGUIDE_USER_EMAIL = credentials.email;
-  if (credentials.username) env.PROGUIDE_USER_USERNAME = credentials.username;
-  if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;
-
-  await fs.writeFile(playwrightLogPath, `$ ${command.join(' ')}\n`, 'utf8');
-  const completed = await runProcess(command, { cwd: projectRoot, env, logPath: playwrightLogPath });
-  let results = await parsePlaywrightResults({ plan, reportPath, runDir });
-  if (completed.code !== 0 && !(await exists(reportPath))) {
-    const logText = await fs.readFile(playwrightLogPath, 'utf8').catch(() => '');
-    const setupMessage = setupFailureMessage(completed.code, logText, relativePath(playwrightLogPath, projectRoot));
-    results = plan.cases.map((testCase) => ({
-      id: testCase.id,
-      title: testCase.title,
-      status: 'setup_failed',
-      duration_seconds: 0,
-      message: setupMessage,
-      error_details: logText.trim() || setupMessage,
-      actual_response: null,
-      steps: testCase.steps,
-      expected: testCase.expected,
-      api_evidence: [],
-      videos: [],
-      screenshots: [],
-      traces: []
-    }));
-  }
-  return {
-    run_id: path.basename(runDir),
-    base_url: baseUrl,
-    started_at: startedAt,
-    finished_at: nowIso(),
-    results
-  };
-}
-
-async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig }) {
-  await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const configSource = [
-    "const path = require('node:path');",
-    '',
-    'module.exports = {',
-    `  testDir: ${JSON.stringify(testsDir)},`,
-    `  outputDir: ${JSON.stringify(outputDir)},`,
-    `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
-    '  fullyParallel: true,',
-    '  use: {',
-    `    baseURL: process.env.PROGUIDE_BASE_URL || ${JSON.stringify('')},`,
-    `    browserName: process.env.PROGUIDE_BROWSER || ${JSON.stringify(runnerConfig.browser || 'chromium')},`,
-    `    screenshot: process.env.PROGUIDE_SCREENSHOTS || ${JSON.stringify(normalizePlaywrightScreenshot(runnerConfig.screenshots))},`,
-    `    video: process.env.PROGUIDE_VIDEO || ${JSON.stringify(normalizePlaywrightVideo(runnerConfig.video))},`,
-    `    trace: process.env.PROGUIDE_TRACES || ${JSON.stringify(normalizePlaywrightTrace(runnerConfig.traces))}`,
-    '  }',
-    '};',
-    ''
-  ].join('\n');
-  await fs.writeFile(configPath, configSource, 'utf8');
-}
-
-
-function runProcess(command, { cwd, env, logPath }) {
-  return new Promise((resolve, reject) => {
-    const [cmd, ...args] = command;
-    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.on('error', reject);
-    child.stdout.on('data', (chunk) => fs.appendFile(logPath, chunk).catch(() => {}));
-    child.stderr.on('data', (chunk) => fs.appendFile(logPath, chunk).catch(() => {}));
-    child.on('close', (code) => resolve({ code: code ?? 0 }));
-  });
-}
-
-export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
-  const caseById = new Map(plan.cases.map((testCase) => [String(testCase.id), testCase]));
-  const caseBySafeId = new Map(plan.cases.map((testCase) => [safeId(testCase.id), testCase]));
-  const parsed = new Map();
-  if (await exists(reportPath)) {
-    const report = await readJson(reportPath, null);
-    for (const spec of collectPlaywrightSpecs(report)) {
-      const testCase = caseFromPlaywrightSpec(spec, caseById, caseBySafeId);
-      if (!testCase) continue;
-      const normalized = normalizePlaywrightSpecResult(spec);
-      parsed.set(testCase.id, {
-        id: testCase.id,
-        title: testCase.title,
-        status: normalized.status,
-        duration_seconds: normalized.duration_seconds,
-        message: normalized.message,
-        error_details: normalized.error_details,
-        actual_response: normalized.actual_response,
-        steps: normalized.steps.length ? normalized.steps : testCase.steps,
-        expected: testCase.expected,
-        api_evidence: await collectApiEvidence(runDir, testCase.id),
-        videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
-        screenshots: await artifactPaths(runDir, normalized.attachments, new Set(['.png']), safeId(testCase.id)),
-        traces: await artifactPaths(runDir, normalized.attachments, new Set(['.zip']), safeId(testCase.id))
-      });
-    }
-  }
-
-  const results = [];
-  for (const testCase of plan.cases) {
-    results.push(parsed.get(testCase.id) || {
-      id: testCase.id,
-      title: testCase.title,
-      status: 'inconclusive',
-      duration_seconds: 0,
-      message: 'No Playwright result was found for this case.',
-      error_details: '',
-      actual_response: null,
-      steps: testCase.steps,
-      expected: testCase.expected,
-      api_evidence: await collectApiEvidence(runDir, testCase.id),
-      videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
-      screenshots: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.png']), safeId(testCase.id)),
-      traces: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.zip']), safeId(testCase.id))
-    });
-  }
-  return results;
-}
-
-async function artifactPaths(runDir, attachments, suffixes, stem) {
-  const direct = [];
-  for (const attachment of attachments || []) {
-    const filePath = attachment.path ? path.resolve(String(attachment.path)) : '';
-    if (!filePath || !suffixes.has(path.extname(filePath).toLowerCase()) || !(await exists(filePath))) continue;
-    direct.push(relativePath(filePath, runDir));
-  }
-  const collected = await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, suffixes, stem);
-  return [...new Set([...direct, ...collected])].sort();
-}
-
 async function collectDomContext({ root, runDir, plan, baseUrl, config }) {
   const cases = (plan.cases || [])
     .filter((testCase) => !isApiPlanCase(testCase))
@@ -1609,58 +1440,6 @@ function extractJson(content, context = {}) {
       : '.';
     throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`);
   }
-}
-
-async function writeEvidenceReport({ summary, run, cases, runDir }) {
-  const caseById = new Map(cases.map((item) => [item.id, item]));
-  const rows = summary.results.map((result) => {
-    const testCase = caseById.get(result.id) || {};
-    const errorDetails = result.error_details
-      ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
-      : '';
-    const actualResponse = result.actual_response
-      ? `<details class="error-console"><summary>Actual response</summary><pre>${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre></details>`
-      : '';
-    const apiEvidence = (result.api_evidence || []).length
-      ? `<details class="error-console"><summary>API evidence</summary><pre>${escapeHtml(JSON.stringify(result.api_evidence, null, 2))}</pre></details>`
-      : '';
-    return `<tr>
-      <td>${escapeHtml(testCase.number || '')}</td>
-      <td>${escapeHtml(result.title)}</td>
-      <td>${escapeHtml(result.status)}</td>
-      <td>${escapeHtml(result.message || '')}${apiEvidence}${actualResponse}${errorDetails}</td>
-    </tr>`;
-  }).join('');
-  const html = `<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>${escapeHtml(run.title || run.ticket || 'Evidencia QA')}</title>
-  <style>
-    body { font-family: Arial, sans-serif; color: #111827; margin: 32px; line-height: 1.45; }
-    h1 { margin: 0 0 8px; }
-    .muted { color: #64748b; }
-    table { width: 100%; border-collapse: collapse; margin-top: 24px; }
-    th, td { border-bottom: 1px solid #e5e7eb; padding: 10px; text-align: left; vertical-align: top; }
-    th { background: #f8fafc; color: #475569; font-size: 12px; text-transform: uppercase; }
-    .error-console { margin-top: 10px; }
-    .error-console summary { cursor: pointer; color: #991b1b; font-weight: 700; }
-    .error-console pre { white-space: pre-wrap; overflow-x: auto; background: #111827; color: #f8fafc; border-radius: 6px; padding: 12px; font-size: 12px; line-height: 1.45; }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(run.title || run.ticket || 'Evidencia QA')}</h1>
-  <p class="muted">${escapeHtml(summary.base_url || '')}</p>
-  <p><strong>Run:</strong> ${escapeHtml(run.id)} | <strong>Estado:</strong> ${escapeHtml(run.status)}</p>
-  <table>
-    <thead><tr><th>N</th><th>Caso</th><th>Estado</th><th>Mensaje</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-</body>
-</html>`;
-  const htmlPath = path.join(runDir, 'evidence.html');
-  await fs.writeFile(htmlPath, html, 'utf8');
-  return htmlPath;
 }
 
 async function loadUiConfig(root) {
