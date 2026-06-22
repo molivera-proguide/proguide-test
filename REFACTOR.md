@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (codegen+runner+I/O+usage/llm extraídos; service ~1101 líneas, −75%).
+> Última actualización: 2026-06-22 (FASE 2 COMPLETA: proguide-service.js 4333 → 21 líneas, fachada).
 
 ## Objetivo
 
@@ -29,7 +29,7 @@ convierte en **fachada (barrel)** que re-exporta desde los módulos nuevos. Así
 |---|---|---|
 | 0 | Red de seguridad (ESLint/Prettier/jsconfig, lint en CI, e2e flaky estabilizado, golden test) | ✅ Hecha |
 | 1 | Utilidades duplicadas → `lib/shared/{env,paths,html,cases}.js` | ✅ Hecha |
-| 2 | Partir `proguide-service.js` en módulos de dominio | 🚧 En curso |
+| 2 | Partir `proguide-service.js` en módulos de dominio | ✅ Hecha (4333 → 21 líneas, fachada) |
 | 3 | Partir `server.js` (assets CSS/JS + vistas) | ⬜ Pendiente |
 | 4 | Funciones gigantes (`generateApiTestSpec`, etc.) | ⬜ Pendiente |
 | 5 | Endurecer (config central, tests unitarios, reglas lint) | ⬜ Pendiente |
@@ -52,9 +52,10 @@ cd99ad2  Phase 2: extract low-level run-store I/O into lib/run-store/io.js
 23ead9a  Phase 2: extract Playwright runner shells into lib/runner/{playwright,evidence}.js
 ed1efb4  Phase 2: extract LLM usage accounting + Anthropic call into lib/usage/record.js + lib/llm/anthropic.js
 db3dce2  Phase 2: extract agent codegen + DOM-context probe into lib/codegen/{agent,dom-context}.js
+42130e3  Phase 2: move run orchestration to lib/run-store/runs.js; proguide-service is now a facade
 ```
 
-`proguide-service.js`: 4333 → **1101 líneas**.
+`proguide-service.js`: 4333 → **21 líneas (fachada)**. La lógica vive en `lib/` por dominio.
 
 ## Hallazgo clave (orden corregido)
 
@@ -110,24 +111,38 @@ ui/lib/llm/anthropic.js       callJsonModel (+ anthropicApiKey/anthropicErrorDet
 ui/lib/codegen/agent.js       generateTestsWithAgent, loadExistingTestPlan, extractCaseCode (+ helpers y
                               PLAYWRIGHT_CODE_AGENT_PROMPT internos). Importa callJsonModel/api-spec/test-plan/io.
 ui/lib/codegen/dom-context.js collectDomContext (+ DOM_CONTEXT_PROBE_SCRIPT interno). Importa runProcess/io/api-spec.
+ui/lib/run-store/runs.js      Orquestación de runs (9 públicas: listRunRecords/loadRunBundle/loadGeneratedCaseCode/
+                              prepareMarkdownRun/prepareCasesRun/previewMarkdownRun/saveCasesForRun/appendCasesToRun/
+                              executePreparedRun) + helpers internos (interpretMarkdownWithAgent, normalizeCaseForStorage,
+                              markdownAgentSchema, coerceCasesPayload, normalizationWarnings, resolveRunIdentity +
+                              identity/config/markdown-source helpers, MARKDOWN_AGENT_PROMPT).
+ui/proguide-service.js        FACHADA (barrel, 21 líneas): re-exporta las 13 públicas desde lib/.
 ```
 
-## Pendiente de Fase 2 (orden sugerido)
+## Fase 2 COMPLETA ✅
 
-> ✅ **Hecho:** leaves puros, codegen completo (api-spec, test-plan, agent, dom-context),
-> runner completo (results, config, playwright shells, evidence), cimiento I/O (run-store/io)
-> y la capa usage/record + llm/anthropic. Service: 4333 → 1101 líneas (−75%).
+proguide-service.js (4333 líneas) descompuesto en 19 módulos `lib/` por dominio; el archivo quedó
+como fachada de 21 líneas que re-exporta las 13 funciones públicas. Suite 36/36, lint 0 errores en
+cada commit. API pública intacta (cli/mcp/server/viewer/tests no cambian sus imports).
 
-1. **store alto nivel + fachada (ÚLTIMO PASO)**: lo que queda en proguide-service.js son las
-   funciones públicas de orquestación (prepareMarkdownRun, prepareCasesRun, previewMarkdownRun,
-   saveCasesForRun, appendCasesToRun, executePreparedRun, listRunRecords, loadRunBundle,
-   loadGeneratedCaseCode, recordLlmUsage/loadUsageSummary ya re-exportadas) + helpers que aún viven
-   ahí (interpretMarkdownWithAgent, normalizeCaseForStorage, markdownAgentSchema, coerceCasesPayload,
-   normalizationWarnings, resolveRunIdentity + identity helpers gitIdentity/packageProjectName/etc.,
-   loadUiConfig, parseYamlScalar, readMarkdownSources/combineMarkdownSources, MARKDOWN_AGENT_PROMPT).
-   Mover a `lib/run-store/runs.js` (+ posible `lib/run-store/identity.js`, `lib/config/`) y dejar
-   `proguide-service.js` como fachada (barrel) que re-exporta las 13 públicas. OJO ciclos: estas
-   funciones se llaman entre sí; conviene moverlas JUNTAS a un módulo de orquestación.
+> Nota de cierre Fase 2: `lib/run-store/runs.js` (~1099 líneas) sigue siendo grande. Sub-dividirlo
+> (identity.js, config.js, markdown/sources.js, normalize-storage) queda para Fase 4 ("funciones
+> gigantes"), junto con `generateApiTestSpec`. No bloquea Fase 3.
+
+(referencia histórica del orden seguido)
+> ✅ leaves puros → codegen (api-spec, test-plan, agent, dom-context) → runner (results, config,
+> playwright shells, evidence) → cimiento I/O (run-store/io) → usage/record + llm/anthropic →
+> store alto nivel + fachada. Helpers que vivían en el servicio y se movieron a runs.js:
+   (interpretMarkdownWithAgent, normalizeCaseForStorage, markdownAgentSchema, coerceCasesPayload,
+   normalizationWarnings, resolveRunIdentity + identity helpers, loadUiConfig/parseYamlScalar,
+   readMarkdownSources/combineMarkdownSources, MARKDOWN_AGENT_PROMPT). Se movieron JUNTAS a runs.js
+   para evitar ciclos (se llaman entre sí).
+
+## Próxima fase
+
+**Fase 3** — partir `server.js` (~2476 líneas): extraer assets (CSS/JS embebidos) y vistas (render*)
+a `assets/` y `views/`, dejando `server.js` como orquestador de endpoints. Mismo patrón: golden/lint
+verde en cada commit, API HTTP intacta.
 
 ## Técnica para mover un bloque grande
 
@@ -157,8 +172,8 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Siguiente (ÚLTIMO) paso: **store alto nivel + fachada** — mover la orquestación pública que queda en
-proguide-service.js a `lib/run-store/` y dejar el archivo como fachada (barrel) de las 13 públicas.
+Fase 2 ✅ COMPLETA. Siguiente: **Fase 3** — partir `server.js` (assets + vistas). `cd ui && npm run check`
+sigue verde (lint + 36 tests). proguide-service.js es ahora una fachada de 21 líneas.
 
 ## Comandos de verificación
 
