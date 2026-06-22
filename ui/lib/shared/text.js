@@ -116,3 +116,13 @@ export function firstArrayValue(...values) {
 export function joinText(existing, value) {
   return existing ? `${existing}\n${String(value).trim()}` : String(value).trim();
 }
+
+/**
+ * Trim a value to a string, returning null when the result is empty.
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+export function noneIfEmpty(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
