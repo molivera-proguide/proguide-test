@@ -18,35 +18,11 @@ import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUr
 import { loadDotEnv } from './lib/shared/env.js';
 import { isPathInside } from './lib/shared/paths.js';
 import { casesRequireBrowser } from './lib/shared/cases.js';
+import { defaultConfig } from './lib/config/defaults.js';
 
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
 const DEFAULT_VIEWER_PORT_ATTEMPTS = Number(process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS || 20);
-const DEFAULT_CONFIG = {
-  runner: {
-    browser: 'chromium',
-    parallel_workers: 'auto',
-    video: 'on',
-    screenshots: 'on',
-    traces: 'retain_on_failure'
-  },
-  identity: {
-    run_user_email: '',
-    run_user_name: '',
-    project_name: '',
-    project_key: '',
-    require_user_email: false,
-    require_project_name: false
-  },
-  llm: {
-    provider: 'anthropic',
-    model: 'claude-haiku-4-5-20251001',
-    temperature: 0.2,
-    max_cases: 12,
-    max_context_chars: 50000,
-    max_output_tokens: 8000
-  }
-};
 
 const EXIT = {
   ok: 0,
@@ -682,11 +658,12 @@ async function readConfig(root) {
   } catch {
     parsed = {};
   }
+  const defaults = defaultConfig();
   return {
     ...parsed,
-    runner: { ...DEFAULT_CONFIG.runner, ...(parsed.runner || {}) },
-    identity: { ...DEFAULT_CONFIG.identity, ...(parsed.identity || {}) },
-    llm: { ...DEFAULT_CONFIG.llm, ...(parsed.llm || {}) }
+    runner: { ...defaults.runner, ...(parsed.runner || {}) },
+    identity: { ...defaults.identity, ...(parsed.identity || {}) },
+    llm: { ...defaults.llm, ...(parsed.llm || {}) }
   };
 }
 

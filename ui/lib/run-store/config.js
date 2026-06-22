@@ -2,37 +2,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PROGUIDE_DIR, exists } from './io.js';
+import { defaultConfig } from '../config/defaults.js';
 
-// Viewer/runner UI config: defaults + shallow YAML (config.yaml) overrides for the
-// runner, identity and llm sections. Extracted verbatim from run-store/runs.js;
-// loadUiConfig is imported back there.
+// Viewer/runner UI config: central defaults + shallow YAML (config.yaml) overrides
+// for the runner, identity and llm sections. loadUiConfig is imported back into
+// run-store/runs.js.
 
 export async function loadUiConfig(root) {
-  const config = {
-    runner: {
-      browser: 'chromium',
-      parallel_workers: 'auto',
-      video: 'on',
-      screenshots: 'on',
-      traces: 'retain_on_failure'
-    },
-    identity: {
-      run_user_email: '',
-      run_user_name: '',
-      project_name: '',
-      project_key: '',
-      require_user_email: false,
-      require_project_name: false
-    },
-    llm: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5-20251001',
-      temperature: 0.2,
-      max_cases: 12,
-      max_context_chars: 50000,
-      max_output_tokens: 8000
-    }
-  };
+  const config = defaultConfig();
   const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
   if (!(await exists(configPath))) return config;
   const text = await fs.readFile(configPath, 'utf8');
