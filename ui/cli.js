@@ -676,7 +676,7 @@ function tcpOpen(host, port) {
 
 async function readConfig(root) {
   const configPath = path.join(root, 'proguide_tests', 'config.yaml');
-  let parsed = {};
+  let parsed;
   try {
     parsed = parseSimpleYaml(await fs.readFile(configPath, 'utf8'));
   } catch {

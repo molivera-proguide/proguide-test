@@ -2,9 +2,10 @@ import js from '@eslint/js';
 import globals from 'globals';
 import prettier from 'eslint-config-prettier';
 
-// Phase 0 baseline: catch real defects (undeclared names, unreachable code,
-// accidental globals) without forcing a stylistic rewrite of the existing
-// codebase. Stricter rules (complexity, max-lines) are introduced in Phase 5.
+// Phase 0 surfaced real defects (undeclared names, unreachable code, accidental
+// globals) as warnings during the refactor. Phase 5 promotes the now-clean rules
+// to errors so regressions block CI; underscore-prefixed names stay intentional
+// and empty catches remain a sanctioned best-effort idiom.
 export default [
   {
     ignores: [
@@ -27,19 +28,17 @@ export default [
       }
     },
     rules: {
-      // Unused code is worth surfacing during a refactor, but as warnings so it
-      // never blocks the suite; underscore-prefixed names are intentional.
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
-      // The codebase uses empty catch blocks as a deliberate "best effort" idiom.
-      'no-empty': ['warn', { allowEmptyCatch: true }],
+      // Dead code blocks CI now that the tree is clean; underscore-prefixed names
+      // are intentional opt-outs.
+      'no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // Empty catch blocks are a deliberate "best effort" idiom across the codebase.
+      'no-empty': ['error', { allowEmptyCatch: true }],
       // `while (true)` polling loops are intentional.
       'no-constant-condition': ['error', { checkLoops: false }],
-      // Defensive `let x = ''` then reassign-in-try with `catch { continue }` is
-      // an intentional idiom here; surface it but do not block.
-      'no-useless-assignment': 'warn',
-      // Adding `{ cause }` to re-thrown errors changes runtime error payloads;
-      // defer to Phase 5 rather than altering behavior during the safety-net step.
-      'preserve-caught-error': 'warn'
+      // Dead `let x = <init>` before a try/catch that always reassigns is now removed.
+      'no-useless-assignment': 'error',
+      // Re-thrown wrapper errors must chain the original via `{ cause }`.
+      'preserve-caught-error': 'error'
     }
   },
   // Disable rules that conflict with Prettier formatting.

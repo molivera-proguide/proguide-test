@@ -94,7 +94,7 @@ function token(kind, value) {
   return `<span class="tok-${kind}">${escapeHtml(value)}</span>`;
 }
 
-function codeKeywords(language) {
+function codeKeywords(_language) {
   return new Set([
     'as', 'async', 'await', 'break', 'catch', 'class', 'const', 'continue', 'default',
     'else', 'export', 'extends', 'false', 'finally', 'for', 'from', 'function', 'if',

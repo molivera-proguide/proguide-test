@@ -68,7 +68,7 @@ export async function loadRunRecord(runDir) {
 }
 
 export async function legacyRunRecord(runDir, runId, error) {
-  let createdAt = '';
+  let createdAt;
   try {
     createdAt = (await fs.stat(runDir)).mtime.toISOString();
   } catch {

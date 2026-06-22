@@ -135,7 +135,7 @@ function positiveNumber(value, fallback) {
 function loadDotEnvSync(root) {
   for (const envPath of envFileCandidates(root)) {
     if (!existsSync(envPath)) continue;
-    let text = '';
+    let text;
     try {
       text = readFileSync(envPath, 'utf8');
     } catch {

@@ -28,7 +28,7 @@ export function envFileCandidates(root) {
  */
 export async function loadDotEnv(root) {
   for (const envPath of envFileCandidates(root)) {
-    let text = '';
+    let text;
     try {
       text = await fs.readFile(envPath, 'utf8');
     } catch {

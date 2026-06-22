@@ -34,7 +34,7 @@ export async function callJsonModel(config, { root, system, payload, purpose, us
         ]
       });
     } catch (error) {
-      throw new Error(`Anthropic fallo al ${purpose}${anthropicErrorDetails(error)}`);
+      throw new Error(`Anthropic fallo al ${purpose}${anthropicErrorDetails(error)}`, { cause: error });
     }
     await recordLlmUsage({
       root,
@@ -88,6 +88,6 @@ function extractJson(content, context = {}) {
     const details = context.purpose
       ? ` al ${context.purpose}. Provider: ${context.provider}. max_tokens=${context.maxOutputTokens}. Config: ${context.configPath}.`
       : '.';
-    throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`);
+    throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`, { cause: error });
   }
 }
