@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (codegen puro: api-spec + test-plan extraídos).
+> Última actualización: 2026-06-22 (codegen puro + runner puro extraídos).
 
 ## Objetivo
 
@@ -47,9 +47,10 @@ c43c150  Phase 0: safety net (lint, formatter, golden test, flake fix)
 d8e24a8  Phase 2: extract Markdown case parser into lib/markdown/parse-cases.js
 dfda471  Phase 2: extract REST API spec generation into lib/codegen/api-spec.js
 7a6acf4  Phase 2: extract test-plan builder into lib/codegen/test-plan.js (+lib/shared/time.js)
+98a24ce  Phase 2: extract pure Playwright runner helpers into lib/runner/ (results.js, config.js)
 ```
 
-`proguide-service.js`: 4333 → **2491 líneas**.
+`proguide-service.js`: 4333 → **2280 líneas**.
 
 ## Hallazgo clave (orden corregido)
 
@@ -83,21 +84,37 @@ ui/lib/shared/text.js         (+ noneIfEmpty, reubicado aquí para evitar import
 ui/lib/shared/time.js         nowIso (reubicado; lo usan store/usage/codegen)
 ui/lib/codegen/api-spec.js    isApiPlanCase, generateApiTestSpec (+ normalizeApiPlanRequests interno) — 2 exports
 ui/lib/codegen/test-plan.js   casesToTestPlan (único export)
+ui/lib/runner/results.js      collectPlaywrightSpecs, caseFromPlaywrightSpec, normalizePlaywrightSpecResult
+                              (+ status/message/error/steps helpers internos). Parsing puro del reporte.
+ui/lib/runner/config.js       playwrightWorkerArgs (re-exportado por el servicio, API pública usada por tests),
+                              normalizePlaywright{Screenshot,Trace,Video}
 ```
 
 ## Pendiente de Fase 2 (orden sugerido)
 
-> **Codegen PURO ya extraído** (api-spec, test-plan). Lo que queda de codegen
-> —`agent-codegen` (generateTestsWithAgent, buildCodeGenerationPayload, extractCaseCode,
-> normalizeGeneratedFiles, safeGeneratedPath, targetGeneratedPath, validateGeneratedCode,
-> loadExistingTestPlan) y `dom-context` (collectDomContext + DOM_CONTEXT_PROBE_SCRIPT/
-> DOM_SNAPSHOT_JS)— depende de `callJsonModel` (LLM) + fs/appendEvent/spawn (I/O), así que
-> va DESPUÉS de extraer la capa I/O+LLM, para no crear imports circulares.
+> **Ya extraído:** codegen PURO (api-spec, test-plan) y runner PURO (results, config).
+> Lo que queda está acoplado a la capa I/O del store + LLM, así que el siguiente
+> cimiento es esa capa. Acoplados a I/O/LLM (van DESPUÉS):
+> - **runner shells:** runPlaywrightTests, writePlaywrightConfig, runProcess,
+>   parsePlaywrightResults (usa exists/readJson/collectApiEvidence/collectArtifacts),
+>   artifactPaths, writeEvidenceReport.
+> - **agent-codegen:** generateTestsWithAgent, buildCodeGenerationPayload, extractCaseCode,
+>   normalizeGeneratedFiles, safeGeneratedPath, targetGeneratedPath, validateGeneratedCode,
+>   loadExistingTestPlan, writePlaywrightRuntimeShim (usan callJsonModel + fs).
+> - **dom-context:** collectDomContext + DOM_CONTEXT_PROBE_SCRIPT/DOM_SNAPSHOT_JS (spawn + fs).
 
-1. `lib/runner/` — playwright (runPlaywrightTests, writePlaywrightConfig), results (parsePlaywrightResults), evidence (writeEvidenceReport). Tocan fs/spawn.
-2. **Capa I/O (delicada):** `lib/run-store/` (paths+constantes, readJson/writeJson/appendEvent, listRunRecords, loadRunBundle, prepare*/save*/append*/executePreparedRun, resolveRunIdentity) + `lib/usage/record.js` (recordLlmUsage, loadUsageSummary, summarize/group) + `lib/llm/anthropic.js` (callJsonModel, anthropicApiKey, extractJson)
-3. `lib/codegen/` resto: `agent-codegen` + `dom-context` (ya que dependen de I/O+LLM del punto 2).
-4. Dejar `proguide-service.js` como **fachada** que re-exporta las 13 funciones públicas.
+1. **Cimiento I/O (low-level primero):** `lib/run-store/io.js` — readJson, writeJson, exists,
+   appendEvent, loadEvents, ensureLayout, newRunDir, makeRunId, walk, collectArtifacts,
+   collectApiEvidence, relativePath, saveRun/saveCasesFile/loadSummary + constantes de paths
+   (runPath/usageRoot/runsRoot/globalUsageLogPath) y utils (countSummary, statusFromSummary,
+   setupFailureMessage, firstUsefulLogLine, chunkArray, positiveInteger). Hojas de I/O, sin
+   dependencias del servicio → desbloquea runner shells y la capa alta del store.
+2. **runner shells + evidence** (ya pueden importar de run-store/io).
+3. **usage/record** (recordLlmUsage, loadUsageSummary, summarize/group) + **llm/anthropic**
+   (callJsonModel, anthropicApiKey, extractJson, anthropicErrorDetails).
+4. **agent-codegen + dom-context** (dependen de 1-3).
+5. **store alto nivel** (prepare*/append*/save*/executePreparedRun/loadRunBundle/listRunRecords/
+   resolveRunIdentity) y dejar `proguide-service.js` como **fachada** que re-exporta las 13 públicas.
 
 ## Técnica para mover un bloque grande
 
@@ -127,8 +144,9 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Siguiente módulo a extraer: **`lib/runner/`** (punto 1 del pendiente) — playwright/results/evidence.
-Tras eso, la capa I/O+LLM (punto 2) y luego el resto de codegen (agent/dom-context) y la fachada.
+Siguiente módulo a extraer: **`lib/run-store/io.js`** (punto 1) — los primitivos de I/O de bajo
+nivel (readJson/writeJson/exists/appendEvent/collectArtifacts/collectApiEvidence/etc.). Son el
+cimiento que desbloquea los runner shells, agent-codegen, dom-context y la capa alta del store.
 
 ## Comandos de verificación
 
