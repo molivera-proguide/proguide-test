@@ -47,6 +47,19 @@ import {
 import { parseMarkdownCases } from './lib/markdown/parse-cases.js';
 import { isApiPlanCase, generateApiTestSpec } from './lib/codegen/api-spec.js';
 import { casesToTestPlan } from './lib/codegen/test-plan.js';
+import {
+  collectPlaywrightSpecs,
+  caseFromPlaywrightSpec,
+  normalizePlaywrightSpecResult
+} from './lib/runner/results.js';
+import {
+  playwrightWorkerArgs,
+  normalizePlaywrightScreenshot,
+  normalizePlaywrightTrace,
+  normalizePlaywrightVideo
+} from './lib/runner/config.js';
+
+export { playwrightWorkerArgs };
 
 const PROGUIDE_DIR = 'proguide_tests';
 const RUNS_DIR = 'runs';
@@ -892,39 +905,6 @@ async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPa
   await fs.writeFile(configPath, configSource, 'utf8');
 }
 
-export function playwrightWorkerArgs(config = {}) {
-  const rawWorkers = config?.runner?.parallel_workers ?? 'auto';
-  const workers = String(rawWorkers ?? '').trim().toLowerCase();
-  if (!workers || workers === 'auto') return [];
-  if (['1', '0', 'false', 'off', 'none'].includes(workers)) return ['--workers=1'];
-
-  const count = Number(rawWorkers);
-  if (Number.isInteger(count) && count > 1) return [`--workers=${count}`];
-
-  throw new Error(`runner.parallel_workers invalido: ${rawWorkers}. Usa "auto", 1 o un entero mayor que 1.`);
-}
-
-function normalizePlaywrightScreenshot(value) {
-  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
-  if (['on', 'off', 'only-on-failure'].includes(normalized)) return normalized;
-  if (['on-failure', 'failure', 'failed'].includes(normalized)) return 'only-on-failure';
-  return 'only-on-failure';
-}
-
-function normalizePlaywrightTrace(value) {
-  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
-  if (['on', 'off', 'retain-on-failure', 'on-first-retry', 'on-all-retries'].includes(normalized)) return normalized;
-  if (['retain-on-fail', 'retain-on-failed', 'retain-failure'].includes(normalized)) return 'retain-on-failure';
-  return 'retain-on-failure';
-}
-
-function normalizePlaywrightVideo(value) {
-  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
-  if (['on', 'off', 'retain-on-failure', 'on-first-retry'].includes(normalized)) return normalized;
-  if (['true', 'yes'].includes(normalized)) return 'on';
-  if (['false', 'no', 'none'].includes(normalized)) return 'off';
-  return 'on';
-}
 
 function runProcess(command, { cwd, env, logPath }) {
   return new Promise((resolve, reject) => {
@@ -984,197 +964,6 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
     });
   }
   return results;
-}
-
-function collectPlaywrightSpecs(report) {
-  const specs = [];
-  const visitSuite = (suite) => {
-    for (const spec of suite?.specs || []) specs.push(spec);
-    for (const child of suite?.suites || []) visitSuite(child);
-  };
-  for (const suite of report?.suites || []) visitSuite(suite);
-  return specs;
-}
-
-function caseFromPlaywrightSpec(spec, caseById, caseBySafeId) {
-  const candidates = [
-    caseIdFromTitle(spec?.title),
-    caseIdFromAnnotations(spec),
-    caseIdFromTitle(spec?.tests?.[0]?.title)
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    if (caseById.has(candidate)) return caseById.get(candidate);
-    const safe = safeId(candidate);
-    if (caseBySafeId.has(safe)) return caseBySafeId.get(safe);
-  }
-  return null;
-}
-
-function caseIdFromTitle(title) {
-  const text = String(title || '').trim();
-  const bracket = text.match(/^\[([^\]]+)]/);
-  if (bracket) return bracket[1].trim();
-  const prefix = text.match(/^([A-Za-z0-9_.-]+)\s*[:|-]/);
-  return prefix ? prefix[1].trim() : '';
-}
-
-function caseIdFromAnnotations(spec) {
-  const annotations = [
-    ...(spec?.annotations || []),
-    ...((spec?.tests || []).flatMap((test) => test.annotations || []))
-  ];
-  const annotation = annotations.find((item) => item?.type === 'proguide_case' || item?.type === 'case_id');
-  return annotation?.description || '';
-}
-
-function normalizePlaywrightSpecResult(spec) {
-  const test = spec?.tests?.[0] || {};
-  const results = Array.isArray(test.results) ? test.results : [];
-  const result = results.at(-1) || {};
-  const status = playwrightStatus(result.status || test.outcome || spec.ok);
-  const message = playwrightMessage(result);
-  const rawErrorDetails = playwrightErrorDetails(result, { stripDebugMarker: false });
-  const errorDetails = stripApiDebugMarker(rawErrorDetails).trim();
-  const actualResponse = playwrightActualResponse(message, rawErrorDetails);
-  const steps = flattenPlaywrightSteps(result.steps || []);
-  const attachments = results.flatMap((item) => item.attachments || []);
-  const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
-  return {
-    status,
-    duration_seconds: Math.round((duration / 1000) * 1000) / 1000,
-    message,
-    error_details: errorDetails,
-    actual_response: actualResponse,
-    steps,
-    attachments
-  };
-}
-
-function playwrightStatus(status) {
-  const normalized = String(status || '').toLowerCase();
-  if (normalized === 'passed' || normalized === 'expected' || normalized === 'true') return 'passed';
-  if (['failed', 'timedout', 'timedout', 'interrupted', 'unexpected'].includes(normalized)) return 'failed';
-  if (normalized === 'skipped') return 'inconclusive';
-  return normalized ? 'failed' : 'inconclusive';
-}
-
-function playwrightMessage(result) {
-  const errors = [
-    ...(result?.errors || []),
-    result?.error
-  ].filter(Boolean);
-  const first = errors[0];
-  if (!first) return '';
-  return shortPlaywrightMessage(first.message || first.value || first.stack || first);
-}
-
-function playwrightErrorDetails(result, options = {}) {
-  const chunks = [];
-  const errors = [
-    ...(result?.errors || []),
-    result?.error
-  ].filter(Boolean);
-  for (const error of errors) {
-    const formatted = formatPlaywrightError(error);
-    if (formatted) chunks.push(formatted);
-  }
-  const stdout = outputEntriesText(result?.stdout);
-  if (stdout) chunks.push(`stdout:\n${stdout}`);
-  const stderr = outputEntriesText(result?.stderr);
-  if (stderr) chunks.push(`stderr:\n${stderr}`);
-  const text = uniqueTextChunks(chunks).join('\n\n').trim();
-  return options.stripDebugMarker === false ? text : stripApiDebugMarker(text).trim();
-}
-
-function playwrightActualResponse(...values) {
-  const text = values.map((value) => String(value || '')).join('\n');
-  const base64Match = text.match(/PROGUIDE_API_DEBUG_BASE64 ([A-Za-z0-9+/=]+)/);
-  if (base64Match) {
-    try {
-      const payload = JSON.parse(Buffer.from(base64Match[1], 'base64').toString('utf8'));
-      return payload.actual_response || null;
-    } catch {
-      return null;
-    }
-  }
-  const match = text.match(/PROGUIDE_API_DEBUG (\{[^\n]+\})/);
-  if (!match) return null;
-  try {
-    const payload = JSON.parse(match[1]);
-    return payload.actual_response || null;
-  } catch {
-    return null;
-  }
-}
-
-function shortPlaywrightMessage(value) {
-  return String(value || '').split('\n\nProGuide API debug:')[0].trim();
-}
-
-function stripApiDebugMarker(value) {
-  return String(value || '')
-    .replace(/\n?PROGUIDE_API_DEBUG_BASE64 [A-Za-z0-9+/=]+/g, '')
-    .replace(/\n?PROGUIDE_API_DEBUG \{[^\n]+\}/g, '');
-}
-
-function formatPlaywrightError(error) {
-  if (!error) return '';
-  if (typeof error === 'string') return error.trim();
-  const message = String(error.message || error.value || '').trim();
-  const stack = String(error.stack || '').trim();
-  const location = error.location
-    ? `${error.location.file || ''}${error.location.line ? `:${error.location.line}` : ''}${error.location.column ? `:${error.location.column}` : ''}`.trim()
-    : '';
-  const chunks = [];
-  if (stack && message && stack.includes(message)) {
-    chunks.push(stack);
-  } else {
-    if (message) chunks.push(message);
-    if (stack) chunks.push(stack);
-  }
-  if (location && !chunks.some((chunk) => chunk.includes(location))) chunks.push(`at ${location}`);
-  if (!chunks.length) chunks.push(JSON.stringify(error, null, 2));
-  return uniqueTextChunks(chunks).join('\n').trim();
-}
-
-function outputEntriesText(entries) {
-  return (Array.isArray(entries) ? entries : [])
-    .map((entry) => {
-      if (typeof entry === 'string') return entry;
-      if (entry?.text) return String(entry.text);
-      if (entry?.buffer) {
-        try {
-          return Buffer.from(entry.buffer, 'base64').toString('utf8');
-        } catch {
-          return String(entry.buffer);
-        }
-      }
-      return entry ? JSON.stringify(entry) : '';
-    })
-    .join('')
-    .trim();
-}
-
-function uniqueTextChunks(chunks) {
-  const seen = new Set();
-  const unique = [];
-  for (const chunk of chunks.map((item) => String(item || '').trim()).filter(Boolean)) {
-    if (seen.has(chunk)) continue;
-    seen.add(chunk);
-    unique.push(chunk);
-  }
-  return unique;
-}
-
-function flattenPlaywrightSteps(steps, prefix = '') {
-  const lines = [];
-  for (const step of steps || []) {
-    const title = String(step.title || '').trim();
-    const label = prefix && title ? `${prefix} > ${title}` : (title || prefix);
-    if (label) lines.push(label);
-    lines.push(...flattenPlaywrightSteps(step.steps || [], label));
-  }
-  return [...new Set(lines)];
 }
 
 async function artifactPaths(runDir, attachments, suffixes, stem) {
