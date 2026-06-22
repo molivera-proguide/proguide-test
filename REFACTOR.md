@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22.
+> Última actualización: 2026-06-22 (parse-cases extraído).
 
 ## Objetivo
 
@@ -44,9 +44,10 @@ c43c150  Phase 0: safety net (lint, formatter, golden test, flake fix)
 22851be  Phase 2: foundational leaf helpers (object,id,secrets,value-parse, markdown/text)
 665fd2e  Phase 2: extract API/REST normalization into lib/cases/api-normalize.js
 32c7e6f  Phase 2: extract step/automation normalization into lib/cases/normalize.js
+d8e24a8  Phase 2: extract Markdown case parser into lib/markdown/parse-cases.js
 ```
 
-`proguide-service.js`: 4333 → **3082 líneas**.
+`proguide-service.js`: 4333 → **2966 líneas**.
 
 ## Hallazgo clave (orden corregido)
 
@@ -74,17 +75,17 @@ ui/lib/usage/pricing.js       ANTHROPIC_PRICING_*, anthropicModelFamily, normali
 ui/lib/cases/api-normalize.js inferCaseType, normalizeApi* (request/assertions/captures), parseExpectedApiAssertion (10 exports)
 ui/lib/cases/normalize.js     buildSteps, normalizeStep, assessAutomation, explicitStep, mergeCaseData, dataFromLines,
                               inferCaseRoute (7 exports; selector/route/regex helpers internos)
+ui/lib/markdown/parse-cases.js parseMarkdownCases (único export) + FIELD_ALIASES y helpers de bloque/campo
+                              (splitCaseBlocks, parseBlock, extractLabel, fieldFromHeading, ...) internos.
+ui/lib/shared/text.js         (+ noneIfEmpty, reubicado aquí para evitar import circular parser↔servicio)
 ```
 
 ## Pendiente de Fase 2 (orden sugerido)
 
-1. `lib/markdown/parse-cases.js` — parseMarkdownCases, splitCaseBlocks, parseBlock + field/heading helpers
-   (extractLabel, fieldFromHeading, appendField, looksLikeStep, isSeparatorLine, titleFromHeading,
-   cleanHeading, isFieldLabel, isCaseHeading, hasCaseContent). Importa de cases/{normalize,api-normalize}.
-2. `lib/codegen/` — api-spec (generateApiTestSpec, ~384 líneas), agent-codegen, test-plan, dom-context
-3. `lib/runner/` — playwright (runPlaywrightTests, writePlaywrightConfig), results (parsePlaywrightResults), evidence (writeEvidenceReport)
-4. **Capa I/O (delicada):** `lib/run-store/` (paths+constantes, readJson/writeJson/appendEvent, listRunRecords, loadRunBundle, prepare*/save*/append*/executePreparedRun, resolveRunIdentity) + `lib/usage/record.js` (recordLlmUsage, loadUsageSummary, summarize/group) + `lib/llm/anthropic.js` (callJsonModel, anthropicApiKey, extractJson)
-5. Dejar `proguide-service.js` como **fachada** que re-exporta las 13 funciones públicas.
+1. `lib/codegen/` — api-spec (generateApiTestSpec, ~384 líneas), agent-codegen, test-plan, dom-context
+2. `lib/runner/` — playwright (runPlaywrightTests, writePlaywrightConfig), results (parsePlaywrightResults), evidence (writeEvidenceReport)
+3. **Capa I/O (delicada):** `lib/run-store/` (paths+constantes, readJson/writeJson/appendEvent, listRunRecords, loadRunBundle, prepare*/save*/append*/executePreparedRun, resolveRunIdentity) + `lib/usage/record.js` (recordLlmUsage, loadUsageSummary, summarize/group) + `lib/llm/anthropic.js` (callJsonModel, anthropicApiKey, extractJson)
+4. Dejar `proguide-service.js` como **fachada** que re-exporta las 13 funciones públicas.
 
 ## Técnica para mover un bloque grande
 
@@ -114,9 +115,9 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Siguiente módulo a extraer: **`lib/markdown/parse-cases.js`** (punto 1 del pendiente). Nota: el
-orden bottom-up exige que `parse-cases` se extraiga DESPUÉS de `cases/normalize.js` (ya hecho),
-porque `parseBlock` importa `buildSteps`/`assessAutomation`/`inferCaseRoute`/`dataFromLines`.
+Siguiente módulo a extraer: **`lib/codegen/`** (punto 1 del pendiente), empezando por api-spec
+(`generateApiTestSpec`, ~384 líneas). Helpers de codegen ya identificados: casesToTestPlan,
+buildCodeGenerationPayload, generateTestsWithAgent, extractCaseCode, normalizeGeneratedFiles, etc.
 
 ## Comandos de verificación
 
