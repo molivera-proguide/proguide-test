@@ -58,21 +58,44 @@ import {
   normalizePlaywrightTrace,
   normalizePlaywrightVideo
 } from './lib/runner/config.js';
+import {
+  PROGUIDE_DIR,
+  SOURCE_MD,
+  SOURCE_CASES_JSON,
+  NORMALIZED_CASES_JSON,
+  TEST_PLAN_JSON,
+  RESULTS_JSON,
+  LLM_USAGE_JSON,
+  ensureLayout,
+  usageRoot,
+  globalUsageLogPath,
+  runsRoot,
+  runPath,
+  newRunDir,
+  loadRunRecord,
+  legacyRunRecord,
+  saveRun,
+  saveCasesFile,
+  loadSummary,
+  loadEvents,
+  appendEvent,
+  writeJson,
+  readJson,
+  exists,
+  collectArtifacts,
+  collectApiEvidence,
+  walk,
+  countSummary,
+  statusFromSummary,
+  setupFailureMessage,
+  firstUsefulLogLine,
+  chunkArray,
+  positiveInteger,
+  relativePath
+} from './lib/run-store/io.js';
 
 export { playwrightWorkerArgs };
 
-const PROGUIDE_DIR = 'proguide_tests';
-const RUNS_DIR = 'runs';
-const RUN_JSON = 'run.json';
-const SOURCE_MD = 'source.md';
-const SOURCE_CASES_JSON = 'source_cases.json';
-const NORMALIZED_CASES_JSON = 'normalized_cases.json';
-const TEST_PLAN_JSON = 'test_plan.json';
-const EVENTS_JSONL = 'events.jsonl';
-const RESULTS_JSON = 'results.json';
-const USAGE_DIR = 'usage';
-const LLM_USAGE_JSON = 'llm_usage.json';
-const LLM_USAGE_JSONL = 'llm_usage.jsonl';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const MARKDOWN_AGENT_PROMPT = `You are a senior QA analyst converting Markdown test cases into structured cases.
@@ -2025,256 +2048,5 @@ function formatUsageTokensForEvent(usage) {
 function finiteOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-async function ensureLayout(root) {
-  await fs.mkdir(path.join(root, PROGUIDE_DIR, RUNS_DIR), { recursive: true });
-  await fs.mkdir(usageRoot(root), { recursive: true });
-}
-
-function usageRoot(root) {
-  return path.join(root, PROGUIDE_DIR, USAGE_DIR);
-}
-
-function globalUsageLogPath(root) {
-  return path.join(usageRoot(root), LLM_USAGE_JSONL);
-}
-
-function runsRoot(root) {
-  return path.join(root, PROGUIDE_DIR, RUNS_DIR);
-}
-
-function runPath(root, runId) {
-  return path.join(runsRoot(root), runId);
-}
-
-async function newRunDir(root) {
-  const runsDir = runsRoot(root);
-  await fs.mkdir(runsDir, { recursive: true });
-  const baseId = makeRunId();
-  let candidate = path.join(runsDir, baseId);
-  let suffix = 2;
-  while (await exists(candidate)) {
-    candidate = path.join(runsDir, `${baseId}_${suffix}`);
-    suffix += 1;
-  }
-  return candidate;
-}
-
-function makeRunId() {
-  const now = new Date();
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
-}
-
-async function loadRunRecord(runDir) {
-  return readJson(path.join(runDir, RUN_JSON));
-}
-
-async function legacyRunRecord(runDir, runId, error) {
-  let createdAt = '';
-  try {
-    createdAt = (await fs.stat(runDir)).mtime.toISOString();
-  } catch {
-    createdAt = nowIso();
-  }
-  return {
-    id: runId,
-    created_at: createdAt,
-    started_at: null,
-    finished_at: null,
-    status: 'unknown',
-    mode: 'url',
-    base_url: '',
-    source_filename: '',
-    app_name: null,
-    project_name: null,
-    project_key: null,
-    run_user_email: null,
-    run_user_name: null,
-    company_domain: null,
-    workspace_root: null,
-    run_source: null,
-    git_branch: null,
-    git_commit: null,
-    identity_source: {},
-    ticket: null,
-    module: null,
-    title: null,
-    qa_owner: null,
-    dev_owner: null,
-    total_cases: 0,
-    passed: 0,
-    failed: 0,
-    blocked: 0,
-    inconclusive: 0,
-    setup_failed: 0,
-    pdf_path: null,
-    html_path: null,
-    data_dir: runDir,
-    load_error: error?.message || String(error || 'run.json no disponible'),
-    recovery_hint: 'El directorio existe pero no tiene run.json valido. Re-crea el run o conserva el directorio solo como evidencia legacy.'
-  };
-}
-
-async function saveRun(runDir, run) {
-  await fs.mkdir(runDir, { recursive: true });
-  await writeJson(path.join(runDir, RUN_JSON), run);
-}
-
-async function saveCasesFile(runDir, cases) {
-  await writeJson(path.join(runDir, NORMALIZED_CASES_JSON), cases);
-}
-
-async function loadSummary(runDir) {
-  const resultsPath = path.join(runDir, RESULTS_JSON);
-  if (await exists(resultsPath)) return readJson(resultsPath);
-  const summaryPath = path.join(runDir, 'summary.json');
-  if (await exists(summaryPath)) return readJson(summaryPath);
-  return null;
-}
-
-async function loadEvents(runDir) {
-  const eventsPath = path.join(runDir, EVENTS_JSONL);
-  if (!(await exists(eventsPath))) return [];
-  const text = await fs.readFile(eventsPath, 'utf8');
-  return text.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
-}
-
-async function appendEvent(runDir, event) {
-  const payload = {
-    run_id: event.run_id || path.basename(runDir),
-    type: event.type,
-    status: event.status || '',
-    message: event.message || '',
-    timestamp: event.timestamp || nowIso(),
-    case_id: event.case_id || null,
-    step_id: event.step_id || null,
-    payload: event.payload || {}
-  };
-  await fs.mkdir(runDir, { recursive: true });
-  await fs.appendFile(path.join(runDir, EVENTS_JSONL), `${JSON.stringify(payload)}\n`, 'utf8');
-}
-
-async function writeJson(filePath, value) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
-}
-
-async function readJson(filePath, fallback) {
-  try {
-    return JSON.parse(await fs.readFile(filePath, 'utf8'));
-  } catch (error) {
-    if (arguments.length >= 2) return fallback;
-    throw error;
-  }
-}
-
-async function exists(filePath) {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function loadLoggedSteps(runDir, caseId) {
-  const stepPath = path.join(runDir, 'step_logs', `${safeId(caseId)}.json`);
-  if (!(await exists(stepPath))) return [];
-  const payload = await readJson(stepPath, {});
-  return (payload.steps || []).map((entry) => `${entry.status}: ${entry.step}`);
-}
-
-async function collectArtifacts(directory, relativeTo, suffixes, stem = null) {
-  if (!(await exists(directory))) return [];
-  const files = [];
-  await walk(directory, async (filePath) => {
-    const ext = path.extname(filePath).toLowerCase();
-    const safeStem = safeId(path.parse(filePath).name);
-    const safeRelative = safeId(relativePath(filePath, relativeTo));
-    if (suffixes.has(ext) && (!stem || safeStem.startsWith(stem) || safeRelative.includes(stem))) {
-      files.push(relativePath(filePath, relativeTo));
-    }
-  });
-  return files.sort();
-}
-
-async function collectApiEvidence(runDir, caseId) {
-  const directory = path.join(runDir, 'api_evidence', safeId(caseId));
-  if (!(await exists(directory))) return [];
-  const entries = [];
-  await walk(directory, async (filePath) => {
-    if (path.extname(filePath).toLowerCase() !== '.json') return;
-    const payload = await readJson(filePath, null);
-    if (!payload) return;
-    entries.push({
-      ...payload,
-      path: relativePath(filePath, runDir)
-    });
-  });
-  return entries.sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) ||
-    String(a.path || '').localeCompare(String(b.path || '')));
-}
-
-async function walk(directory, onFile) {
-  const entries = await fs.readdir(directory, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) await walk(fullPath, onFile);
-    if (entry.isFile()) await onFile(fullPath);
-  }
-}
-
-function countSummary(summary) {
-  const counts = { passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 };
-  for (const result of summary.results || []) {
-    if (result.status === 'passed') counts.passed += 1;
-    else if (result.status === 'failed') counts.failed += 1;
-    else if (result.status === 'setup_failed') counts.setup_failed += 1;
-    else counts.inconclusive += 1;
-  }
-  return counts;
-}
-
-function statusFromSummary(counts, blocked) {
-  if (counts.setup_failed) return 'setup_failed';
-  if (counts.failed) return 'failed';
-  if (counts.inconclusive) return 'inconclusive';
-  if (blocked && !counts.passed) return 'blocked';
-  if (blocked && counts.passed) return 'finished';
-  if (counts.passed && !counts.failed && !counts.inconclusive) return 'passed';
-  return 'finished';
-}
-
-function setupFailureMessage(exitCode, logText, relativeLogPath) {
-  const firstUseful = firstUsefulLogLine(logText);
-  const reason = firstUseful || `playwright test exited with code ${exitCode}`;
-  return `setup_failed: ${reason}. See ${relativeLogPath}. Run proguide doctor --fix.`;
-}
-
-function firstUsefulLogLine(logText) {
-  return String(logText || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => /Cannot find module|Error|Traceback|Target page|Timeout|ERR_|playwright/i.test(line)) || '';
-}
-
-function chunkArray(items, size) {
-  const chunks = [];
-  const chunkSize = Math.max(1, size);
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
-  }
-  return chunks;
-}
-
-function positiveInteger(value, fallback) {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function relativePath(filePath, base) {
-  return path.relative(base, filePath).split(path.sep).join('/');
 }
 
