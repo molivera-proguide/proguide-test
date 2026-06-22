@@ -126,3 +126,12 @@ export function noneIfEmpty(value) {
   const text = String(value || '').trim();
   return text || null;
 }
+
+/**
+ * Strip a leading bullet/dash marker from a case title for display.
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function cleanCaseTitle(value) {
+  return String(value ?? '').replace(/^\s*[•◦⁃∙·—–�-]\s+/, '').trim();
+}
