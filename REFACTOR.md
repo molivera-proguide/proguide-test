@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (parse-cases extraído).
+> Última actualización: 2026-06-22 (codegen puro: api-spec + test-plan extraídos).
 
 ## Objetivo
 
@@ -45,9 +45,11 @@ c43c150  Phase 0: safety net (lint, formatter, golden test, flake fix)
 665fd2e  Phase 2: extract API/REST normalization into lib/cases/api-normalize.js
 32c7e6f  Phase 2: extract step/automation normalization into lib/cases/normalize.js
 d8e24a8  Phase 2: extract Markdown case parser into lib/markdown/parse-cases.js
+dfda471  Phase 2: extract REST API spec generation into lib/codegen/api-spec.js
+7a6acf4  Phase 2: extract test-plan builder into lib/codegen/test-plan.js (+lib/shared/time.js)
 ```
 
-`proguide-service.js`: 4333 → **2966 líneas**.
+`proguide-service.js`: 4333 → **2491 líneas**.
 
 ## Hallazgo clave (orden corregido)
 
@@ -78,13 +80,23 @@ ui/lib/cases/normalize.js     buildSteps, normalizeStep, assessAutomation, expli
 ui/lib/markdown/parse-cases.js parseMarkdownCases (único export) + FIELD_ALIASES y helpers de bloque/campo
                               (splitCaseBlocks, parseBlock, extractLabel, fieldFromHeading, ...) internos.
 ui/lib/shared/text.js         (+ noneIfEmpty, reubicado aquí para evitar import circular parser↔servicio)
+ui/lib/shared/time.js         nowIso (reubicado; lo usan store/usage/codegen)
+ui/lib/codegen/api-spec.js    isApiPlanCase, generateApiTestSpec (+ normalizeApiPlanRequests interno) — 2 exports
+ui/lib/codegen/test-plan.js   casesToTestPlan (único export)
 ```
 
 ## Pendiente de Fase 2 (orden sugerido)
 
-1. `lib/codegen/` — api-spec (generateApiTestSpec, ~384 líneas), agent-codegen, test-plan, dom-context
-2. `lib/runner/` — playwright (runPlaywrightTests, writePlaywrightConfig), results (parsePlaywrightResults), evidence (writeEvidenceReport)
-3. **Capa I/O (delicada):** `lib/run-store/` (paths+constantes, readJson/writeJson/appendEvent, listRunRecords, loadRunBundle, prepare*/save*/append*/executePreparedRun, resolveRunIdentity) + `lib/usage/record.js` (recordLlmUsage, loadUsageSummary, summarize/group) + `lib/llm/anthropic.js` (callJsonModel, anthropicApiKey, extractJson)
+> **Codegen PURO ya extraído** (api-spec, test-plan). Lo que queda de codegen
+> —`agent-codegen` (generateTestsWithAgent, buildCodeGenerationPayload, extractCaseCode,
+> normalizeGeneratedFiles, safeGeneratedPath, targetGeneratedPath, validateGeneratedCode,
+> loadExistingTestPlan) y `dom-context` (collectDomContext + DOM_CONTEXT_PROBE_SCRIPT/
+> DOM_SNAPSHOT_JS)— depende de `callJsonModel` (LLM) + fs/appendEvent/spawn (I/O), así que
+> va DESPUÉS de extraer la capa I/O+LLM, para no crear imports circulares.
+
+1. `lib/runner/` — playwright (runPlaywrightTests, writePlaywrightConfig), results (parsePlaywrightResults), evidence (writeEvidenceReport). Tocan fs/spawn.
+2. **Capa I/O (delicada):** `lib/run-store/` (paths+constantes, readJson/writeJson/appendEvent, listRunRecords, loadRunBundle, prepare*/save*/append*/executePreparedRun, resolveRunIdentity) + `lib/usage/record.js` (recordLlmUsage, loadUsageSummary, summarize/group) + `lib/llm/anthropic.js` (callJsonModel, anthropicApiKey, extractJson)
+3. `lib/codegen/` resto: `agent-codegen` + `dom-context` (ya que dependen de I/O+LLM del punto 2).
 4. Dejar `proguide-service.js` como **fachada** que re-exporta las 13 funciones públicas.
 
 ## Técnica para mover un bloque grande
@@ -115,9 +127,8 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Siguiente módulo a extraer: **`lib/codegen/`** (punto 1 del pendiente), empezando por api-spec
-(`generateApiTestSpec`, ~384 líneas). Helpers de codegen ya identificados: casesToTestPlan,
-buildCodeGenerationPayload, generateTestsWithAgent, extractCaseCode, normalizeGeneratedFiles, etc.
+Siguiente módulo a extraer: **`lib/runner/`** (punto 1 del pendiente) — playwright/results/evidence.
+Tras eso, la capa I/O+LLM (punto 2) y luego el resto de codegen (agent/dom-context) y la fachada.
 
 ## Comandos de verificación
 
