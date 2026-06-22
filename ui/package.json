@@ -13,7 +13,9 @@
     "proguide-service.js",
     "server.js",
     "viewer.js",
-    "lib/"
+    "lib/",
+    "assets/",
+    "views/"
   ],
   "scripts": {
     "start": "node server.js",
