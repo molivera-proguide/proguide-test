@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (FASE 2 COMPLETA: proguide-service.js 4333 → 21 líneas, fachada).
+> Última actualización: 2026-06-22 (FASES 2 y 3 COMPLETAS: proguide-service.js → 21 líneas, server.js → 270).
 
 ## Objetivo
 
@@ -30,7 +30,7 @@ convierte en **fachada (barrel)** que re-exporta desde los módulos nuevos. Así
 | 0 | Red de seguridad (ESLint/Prettier/jsconfig, lint en CI, e2e flaky estabilizado, golden test) | ✅ Hecha |
 | 1 | Utilidades duplicadas → `lib/shared/{env,paths,html,cases}.js` | ✅ Hecha |
 | 2 | Partir `proguide-service.js` en módulos de dominio | ✅ Hecha (4333 → 21 líneas, fachada) |
-| 3 | Partir `server.js` (assets CSS/JS + vistas) | ⬜ Pendiente |
+| 3 | Partir `server.js` (assets CSS/JS + vistas) | ✅ Hecha (2468 → 270 líneas, solo rutas) |
 | 4 | Funciones gigantes (`generateApiTestSpec`, etc.) | ⬜ Pendiente |
 | 5 | Endurecer (config central, tests unitarios, reglas lint) | ⬜ Pendiente |
 
@@ -53,9 +53,14 @@ cd99ad2  Phase 2: extract low-level run-store I/O into lib/run-store/io.js
 ed1efb4  Phase 2: extract LLM usage accounting + Anthropic call into lib/usage/record.js + lib/llm/anthropic.js
 db3dce2  Phase 2: extract agent codegen + DOM-context probe into lib/codegen/{agent,dom-context}.js
 42130e3  Phase 2: move run orchestration to lib/run-store/runs.js; proguide-service is now a facade
+9bf4ae8  Phase 3: extract viewer assets (CSS + client scripts) into ui/assets/
+0b346c7  Phase 3: extract code views (highlight + TS snippet) into ui/views/code.js
+c00c89e  Phase 3: extract shared view primitives into ui/views/format.js
+c945520  Phase 3: extract server-rendered pages into ui/views/pages.js (server.js routes-only)
 ```
 
-`proguide-service.js`: 4333 → **21 líneas (fachada)**. La lógica vive en `lib/` por dominio.
+`proguide-service.js`: 4333 → **21 líneas (fachada)**. `server.js`: 2468 → **270 líneas (solo rutas)**.
+La lógica vive en `lib/`, `assets/` y `views/` por dominio.
 
 ## Hallazgo clave (orden corregido)
 
@@ -117,7 +122,21 @@ ui/lib/run-store/runs.js      Orquestación de runs (9 públicas: listRunRecords
                               markdownAgentSchema, coerceCasesPayload, normalizationWarnings, resolveRunIdentity +
                               identity/config/markdown-source helpers, MARKDOWN_AGENT_PROMPT).
 ui/proguide-service.js        FACHADA (barrel, 21 líneas): re-exporta las 13 públicas desde lib/.
+ui/assets/styles.js           styles() — CSS de la app (~705 líneas), inline en layout().
+ui/assets/scripts.js          codeTabsScript, clientRunScript — JS de navegador, inline en <script>.
+ui/views/format.js            primitivas de vista: renderBadge/statusClass/isActiveStatus, renderPriorityBadge/
+                              priorityMeta, renderList, formatSeconds/formatTokens/formatUsd/shortDate.
+ui/views/code.js              highlightCode, buildTypeScriptCode (+ helpers TS/highlight internos).
+ui/views/pages.js             páginas SSR (5 entradas: layout, renderRunsIndex, renderUsageDashboard,
+                              renderRunDetail, renderCaseDetail) + render* internos + attr/safeName.
+ui/server.js                  ~270 líneas: Fastify + rutas + idle-shutdown + readStepLog + utils de request.
 ```
+
+## Fase 3 COMPLETA ✅
+
+server.js (2468 líneas) → 270 (solo rutas + orquestación). Assets CSS/JS a `ui/assets/`, vistas SSR a
+`ui/views/`. `cleanCaseTitle` reubicado a lib/shared/text.js. Eliminado código muerto (scriptJson,
+renderPriorityBadge en server). Smoke test de render OK + suite 36/36 + lint 0 errores.
 
 ## Fase 2 COMPLETA ✅
 
@@ -140,9 +159,10 @@ cada commit. API pública intacta (cli/mcp/server/viewer/tests no cambian sus im
 
 ## Próxima fase
 
-**Fase 3** — partir `server.js` (~2476 líneas): extraer assets (CSS/JS embebidos) y vistas (render*)
-a `assets/` y `views/`, dejando `server.js` como orquestador de endpoints. Mismo patrón: golden/lint
-verde en cada commit, API HTTP intacta.
+**Fase 4** — funciones gigantes / sub-división fina: partir `lib/run-store/runs.js` (~1099 líneas) en
+identity.js / config.js / markdown-sources.js / normalize-storage; revisar `generateApiTestSpec`. Y
+**Fase 5** — endurecer (config central, tests unitarios por módulo, subir reglas lint). Limpieza
+pendiente menor: `views/code.js` tiene un warning `language` sin usar (param muerto en renderTypeScript*).
 
 ## Técnica para mover un bloque grande
 
@@ -172,8 +192,9 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Fase 2 ✅ COMPLETA. Siguiente: **Fase 3** — partir `server.js` (assets + vistas). `cd ui && npm run check`
-sigue verde (lint + 36 tests). proguide-service.js es ahora una fachada de 21 líneas.
+Fases 2 y 3 ✅ COMPLETAS. proguide-service.js = fachada 21 líneas; server.js = 270 líneas (solo rutas).
+Siguiente: **Fase 4** (sub-dividir runs.js + generateApiTestSpec). `cd ui && npm run check` sigue verde
+(lint 0 errores, 7 warnings, 36 tests).
 
 ## Comandos de verificación
 
