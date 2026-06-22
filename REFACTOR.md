@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (usage/record + llm/anthropic extraídos; service ~1545 líneas, −64%).
+> Última actualización: 2026-06-22 (codegen+runner+I/O+usage/llm extraídos; service ~1101 líneas, −75%).
 
 ## Objetivo
 
@@ -51,9 +51,10 @@ dfda471  Phase 2: extract REST API spec generation into lib/codegen/api-spec.js
 cd99ad2  Phase 2: extract low-level run-store I/O into lib/run-store/io.js
 23ead9a  Phase 2: extract Playwright runner shells into lib/runner/{playwright,evidence}.js
 ed1efb4  Phase 2: extract LLM usage accounting + Anthropic call into lib/usage/record.js + lib/llm/anthropic.js
+db3dce2  Phase 2: extract agent codegen + DOM-context probe into lib/codegen/{agent,dom-context}.js
 ```
 
-`proguide-service.js`: 4333 → **1545 líneas**.
+`proguide-service.js`: 4333 → **1101 líneas**.
 
 ## Hallazgo clave (orden corregido)
 
@@ -106,20 +107,27 @@ ui/lib/usage/record.js        recordLlmUsage, loadUsageSummary (re-exportados, A
                               usageTotals, groupUsage, formatUsageTokensForEvent, finiteOrNull) internos.
 ui/lib/llm/anthropic.js       callJsonModel (+ anthropicApiKey/anthropicErrorDetails/extractJson internos).
                               Importa recordLlmUsage de usage/record (one-way). El SDK Anthropic vive solo aquí.
+ui/lib/codegen/agent.js       generateTestsWithAgent, loadExistingTestPlan, extractCaseCode (+ helpers y
+                              PLAYWRIGHT_CODE_AGENT_PROMPT internos). Importa callJsonModel/api-spec/test-plan/io.
+ui/lib/codegen/dom-context.js collectDomContext (+ DOM_CONTEXT_PROBE_SCRIPT interno). Importa runProcess/io/api-spec.
 ```
 
 ## Pendiente de Fase 2 (orden sugerido)
 
-> ✅ **Hecho:** leaves puros, codegen puro (api-spec, test-plan), runner completo
-> (results, config, playwright shells, evidence), cimiento I/O (run-store/io) y la
-> capa usage/record + llm/anthropic. Service: 4333 → 1545 líneas (−64%).
+> ✅ **Hecho:** leaves puros, codegen completo (api-spec, test-plan, agent, dom-context),
+> runner completo (results, config, playwright shells, evidence), cimiento I/O (run-store/io)
+> y la capa usage/record + llm/anthropic. Service: 4333 → 1101 líneas (−75%).
 
-1. **agent-codegen + dom-context** (dependen de usage/llm + io, ya extraídos): generateTestsWithAgent, buildCodeGenerationPayload,
-   extractCaseCode, normalizeGeneratedFiles, safe/targetGeneratedPath, validateGeneratedCode,
-   loadExistingTestPlan, writePlaywrightRuntimeShim; collectDomContext + DOM_CONTEXT_PROBE_SCRIPT/DOM_SNAPSHOT_JS.
-2. **store alto nivel** (prepare*/append*/save*/executePreparedRun/loadRunBundle/listRunRecords/
-   resolveRunIdentity + interpretMarkdownWithAgent/normalizeCaseForStorage/markdownAgentSchema + identity helpers)
-   y dejar `proguide-service.js` como **fachada** que re-exporta las 13 públicas.
+1. **store alto nivel + fachada (ÚLTIMO PASO)**: lo que queda en proguide-service.js son las
+   funciones públicas de orquestación (prepareMarkdownRun, prepareCasesRun, previewMarkdownRun,
+   saveCasesForRun, appendCasesToRun, executePreparedRun, listRunRecords, loadRunBundle,
+   loadGeneratedCaseCode, recordLlmUsage/loadUsageSummary ya re-exportadas) + helpers que aún viven
+   ahí (interpretMarkdownWithAgent, normalizeCaseForStorage, markdownAgentSchema, coerceCasesPayload,
+   normalizationWarnings, resolveRunIdentity + identity helpers gitIdentity/packageProjectName/etc.,
+   loadUiConfig, parseYamlScalar, readMarkdownSources/combineMarkdownSources, MARKDOWN_AGENT_PROMPT).
+   Mover a `lib/run-store/runs.js` (+ posible `lib/run-store/identity.js`, `lib/config/`) y dejar
+   `proguide-service.js` como fachada (barrel) que re-exporta las 13 públicas. OJO ciclos: estas
+   funciones se llaman entre sí; conviene moverlas JUNTAS a un módulo de orquestación.
 
 ## Técnica para mover un bloque grande
 
@@ -149,8 +157,8 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Siguiente módulo a extraer: **agent-codegen + dom-context** (punto 1) — generateTestsWithAgent y
-collectDomContext. Ya pueden importar callJsonModel (llm/anthropic), io y codegen/{api-spec,test-plan}.
+Siguiente (ÚLTIMO) paso: **store alto nivel + fachada** — mover la orquestación pública que queda en
+proguide-service.js a `lib/run-store/` y dejar el archivo como fachada (barrel) de las 13 públicas.
 
 ## Comandos de verificación
 
