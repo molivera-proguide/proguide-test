@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (FASES 2-4 COMPLETAS: service → 21, server.js → 270, runs.js → 544).
+> Última actualización: 2026-06-22 (REFACTOR COMPLETO, Fases 0-5: service → 21, server.js → 270, runs.js → 544; 0 warnings, 50 tests).
 
 ## Objetivo
 
@@ -32,7 +32,7 @@ convierte en **fachada (barrel)** que re-exporta desde los módulos nuevos. Así
 | 2 | Partir `proguide-service.js` en módulos de dominio | ✅ Hecha (4333 → 21 líneas, fachada) |
 | 3 | Partir `server.js` (assets CSS/JS + vistas) | ✅ Hecha (2468 → 270 líneas, solo rutas) |
 | 4 | Funciones gigantes / sub-split de `runs.js` | ✅ Hecha (runs.js 1099 → 544; ver nota generateApiTestSpec) |
-| 5 | Endurecer (config central, tests unitarios, reglas lint) | ⬜ Pendiente |
+| 5 | Endurecer (config central, tests unitarios, reglas lint) | ✅ Hecha (0 warnings, reglas a error, 50 tests) |
 
 ## Commits del refactor (orden cronológico)
 
@@ -59,6 +59,9 @@ c00c89e  Phase 3: extract shared view primitives into ui/views/format.js
 c945520  Phase 3: extract server-rendered pages into ui/views/pages.js (server.js routes-only)
 c891fae  Phase 4: split runs.js leaves into run-store/{identity,config} + markdown/sources
 37cf0cb  Phase 4: extract case storage normalization into lib/cases/storage.js
+1ee7395  Phase 5: clear all lint warnings and promote the deferred rules to errors
+05dc926  Phase 5: add unit tests for the extracted pure lib/ modules (36 -> 50 tests)
+df36286  Phase 5: centralize default config in lib/config/defaults.js
 ```
 
 `proguide-service.js`: 4333 → **21 líneas (fachada)**. `server.js`: 2468 → **270 líneas (solo rutas)**.
@@ -174,10 +177,19 @@ lint 0 errores.
 > (solo se valida por e2e) sin reducir acoplamiento. Mejora futura opcional: mover el runtime embebido
 > a un `.mjs` asset.
 
-## Próxima fase
+## Fase 5 COMPLETA ✅ — refactor terminado
 
-**Fase 5** — endurecer: config central, tests unitarios por módulo, subir reglas de lint. Limpieza
-menor pendiente: warning `language` sin usar en `views/code.js` (param muerto en renderTypeScript*).
+- **Lint endurecido:** 0 warnings; `no-unused-vars`, `no-empty`, `no-useless-assignment` y
+  `preserve-caught-error` promovidos a **error** (bloquean CI). `{ cause }` encadenado en los
+  errores envoltorio de anthropic.js; inits muertos eliminados.
+- **Tests unitarios:** `test/lib-units.test.js` (14 tests) cubre los módulos puros de `lib/`.
+  Suite total 36 → **50**.
+- **Config central:** `lib/config/defaults.js` (`defaultConfig()` factory) — única fuente de
+  defaults runner/identity/llm; consumido por cli `readConfig` y run-store `loadUiConfig`.
+
+**Refactor completo (Fases 0-5).** Próximos pasos opcionales (no planificados): mover el runtime
+embebido de `generateApiTestSpec` a un `.mjs` asset; ampliar cobertura unitaria de runs.js/server
+routes; integrar Prettier en CI si se desea formato uniforme.
 
 ## Técnica para mover un bloque grande
 
@@ -207,9 +219,9 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Fases 2, 3 y 4 ✅ COMPLETAS. proguide-service.js = fachada 21 líneas; server.js = 270 (solo rutas);
-runs.js = 544 (solo orquestación). Siguiente: **Fase 5** (endurecer). `cd ui && npm run check` verde
-(lint 0 errores, 7 warnings, 36 tests).
+**REFACTOR COMPLETO (Fases 0-5).** proguide-service.js = fachada 21 líneas; server.js = 270 (solo
+rutas); runs.js = 544 (solo orquestación). `cd ui && npm run check` verde: lint **0 errores / 0
+warnings** (reglas a error), **50 tests**. Pendiente sólo el merge a `main`.
 
 ## Comandos de verificación
 
