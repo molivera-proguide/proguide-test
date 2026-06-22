@@ -1,7 +1,7 @@
 # Refactor de ProGuide Test — Plan y Progreso
 
 > Documento vivo. Rama de trabajo: **`code-refactor`**. Se actualiza al cerrar cada módulo.
-> Última actualización: 2026-06-22 (FASES 2 y 3 COMPLETAS: proguide-service.js → 21 líneas, server.js → 270).
+> Última actualización: 2026-06-22 (FASES 2-4 COMPLETAS: service → 21, server.js → 270, runs.js → 544).
 
 ## Objetivo
 
@@ -31,7 +31,7 @@ convierte en **fachada (barrel)** que re-exporta desde los módulos nuevos. Así
 | 1 | Utilidades duplicadas → `lib/shared/{env,paths,html,cases}.js` | ✅ Hecha |
 | 2 | Partir `proguide-service.js` en módulos de dominio | ✅ Hecha (4333 → 21 líneas, fachada) |
 | 3 | Partir `server.js` (assets CSS/JS + vistas) | ✅ Hecha (2468 → 270 líneas, solo rutas) |
-| 4 | Funciones gigantes (`generateApiTestSpec`, etc.) | ⬜ Pendiente |
+| 4 | Funciones gigantes / sub-split de `runs.js` | ✅ Hecha (runs.js 1099 → 544; ver nota generateApiTestSpec) |
 | 5 | Endurecer (config central, tests unitarios, reglas lint) | ⬜ Pendiente |
 
 ## Commits del refactor (orden cronológico)
@@ -57,6 +57,8 @@ db3dce2  Phase 2: extract agent codegen + DOM-context probe into lib/codegen/{ag
 0b346c7  Phase 3: extract code views (highlight + TS snippet) into ui/views/code.js
 c00c89e  Phase 3: extract shared view primitives into ui/views/format.js
 c945520  Phase 3: extract server-rendered pages into ui/views/pages.js (server.js routes-only)
+c891fae  Phase 4: split runs.js leaves into run-store/{identity,config} + markdown/sources
+37cf0cb  Phase 4: extract case storage normalization into lib/cases/storage.js
 ```
 
 `proguide-service.js`: 4333 → **21 líneas (fachada)**. `server.js`: 2468 → **270 líneas (solo rutas)**.
@@ -116,11 +118,14 @@ ui/lib/llm/anthropic.js       callJsonModel (+ anthropicApiKey/anthropicErrorDet
 ui/lib/codegen/agent.js       generateTestsWithAgent, loadExistingTestPlan, extractCaseCode (+ helpers y
                               PLAYWRIGHT_CODE_AGENT_PROMPT internos). Importa callJsonModel/api-spec/test-plan/io.
 ui/lib/codegen/dom-context.js collectDomContext (+ DOM_CONTEXT_PROBE_SCRIPT interno). Importa runProcess/io/api-spec.
-ui/lib/run-store/runs.js      Orquestación de runs (9 públicas: listRunRecords/loadRunBundle/loadGeneratedCaseCode/
-                              prepareMarkdownRun/prepareCasesRun/previewMarkdownRun/saveCasesForRun/appendCasesToRun/
-                              executePreparedRun) + helpers internos (interpretMarkdownWithAgent, normalizeCaseForStorage,
-                              markdownAgentSchema, coerceCasesPayload, normalizationWarnings, resolveRunIdentity +
-                              identity/config/markdown-source helpers, MARKDOWN_AGENT_PROMPT).
+ui/lib/run-store/runs.js      Orquestación de runs (~544 líneas): SOLO las 9 públicas (listRunRecords/
+                              loadRunBundle/loadGeneratedCaseCode/prepareMarkdownRun/prepareCasesRun/
+                              previewMarkdownRun/saveCasesForRun/appendCasesToRun/executePreparedRun).
+ui/lib/run-store/identity.js  resolveRunIdentity (+ git/project/email helpers internos).
+ui/lib/run-store/config.js    loadUiConfig (+ parseYamlScalar) — defaults + config.yaml.
+ui/lib/markdown/sources.js    readMarkdownSources/markdownSourceFilename/combineMarkdownSources (decode BOM-aware).
+ui/lib/cases/storage.js       normalizeCaseForStorage, interpretMarkdownWithAgent, normalizationWarnings
+                              (+ markdownAgentSchema/coerceCasesPayload/MARKDOWN_AGENT_PROMPT internos).
 ui/proguide-service.js        FACHADA (barrel, 21 líneas): re-exporta las 13 públicas desde lib/.
 ui/assets/styles.js           styles() — CSS de la app (~705 líneas), inline en layout().
 ui/assets/scripts.js          codeTabsScript, clientRunScript — JS de navegador, inline en <script>.
@@ -157,12 +162,22 @@ cada commit. API pública intacta (cli/mcp/server/viewer/tests no cambian sus im
    readMarkdownSources/combineMarkdownSources, MARKDOWN_AGENT_PROMPT). Se movieron JUNTAS a runs.js
    para evitar ciclos (se llaman entre sí).
 
+## Fase 4 COMPLETA ✅
+
+`lib/run-store/runs.js` 1099 → 544 líneas (solo las 9 funciones públicas de orquestación). Extraídos:
+`run-store/identity.js`, `run-store/config.js`, `markdown/sources.js`, `cases/storage.js`. Suite 36/36,
+lint 0 errores.
+
+> **Nota generateApiTestSpec:** revisado y **conservado intacto**. No es un monolito de
+> responsabilidades mezcladas: es un único *template builder* (ya aislado en `lib/codegen/api-spec.js`)
+> cuyo grueso es el runtime de tests API embebido como strings literales. Partirlo añadiría riesgo
+> (solo se valida por e2e) sin reducir acoplamiento. Mejora futura opcional: mover el runtime embebido
+> a un `.mjs` asset.
+
 ## Próxima fase
 
-**Fase 4** — funciones gigantes / sub-división fina: partir `lib/run-store/runs.js` (~1099 líneas) en
-identity.js / config.js / markdown-sources.js / normalize-storage; revisar `generateApiTestSpec`. Y
-**Fase 5** — endurecer (config central, tests unitarios por módulo, subir reglas lint). Limpieza
-pendiente menor: `views/code.js` tiene un warning `language` sin usar (param muerto en renderTypeScript*).
+**Fase 5** — endurecer: config central, tests unitarios por módulo, subir reglas de lint. Limpieza
+menor pendiente: warning `language` sin usar en `views/code.js` (param muerto en renderTypeScript*).
 
 ## Técnica para mover un bloque grande
 
@@ -192,8 +207,8 @@ cat REFACTOR.md                     # este archivo: estado y siguiente módulo
 cd ui && npm run check              # confirmar verde (lint + 35 tests) antes de seguir
 ```
 
-Fases 2 y 3 ✅ COMPLETAS. proguide-service.js = fachada 21 líneas; server.js = 270 líneas (solo rutas).
-Siguiente: **Fase 4** (sub-dividir runs.js + generateApiTestSpec). `cd ui && npm run check` sigue verde
+Fases 2, 3 y 4 ✅ COMPLETAS. proguide-service.js = fachada 21 líneas; server.js = 270 (solo rutas);
+runs.js = 544 (solo orquestación). Siguiente: **Fase 5** (endurecer). `cd ui && npm run check` verde
 (lint 0 errores, 7 warnings, 36 tests).
 
 ## Comandos de verificación
