@@ -104,6 +104,65 @@ test('source paths outside root are rejected', () => {
   }
 });
 
+test('update skills installs packaged Claude Code skill', () => {
+  const root = makeTempRoot();
+  const skillsRoot = path.join(root, 'claude-skills');
+  try {
+    const result = runCli(['update', 'skills', '--json'], {
+      env: { PROGUIDE_CLAUDE_SKILLS_DIR: skillsRoot }
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseJson(result.stdout);
+    const destination = path.join(skillsRoot, 'qa-test-cases');
+    assert.equal(payload.status, 'ok');
+    assert.equal(payload.updated, true);
+    assert.equal(payload.target, 'claude-code');
+    assert.equal(payload.skill, 'qa-test-cases');
+    assert.equal(payload.destination_dir, destination);
+    assert.deepEqual(payload.files, ['SKILL.md', 'TEMPLATE.md']);
+    assert.match(fs.readFileSync(path.join(destination, 'SKILL.md'), 'utf8'), /qa-test-cases|ProGuide/);
+    assert.match(fs.readFileSync(path.join(destination, 'TEMPLATE.md'), 'utf8'), /ProGuide|Markdown/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('packaged Claude Code skill mirrors repository skill source', () => {
+  const repoRoot = path.resolve(UI_ROOT, '..');
+  assert.equal(
+    fs.readFileSync(path.join(UI_ROOT, 'skills', 'qa-test-cases', 'SKILL.md'), 'utf8'),
+    fs.readFileSync(path.join(repoRoot, 'skills', 'SKILL.md'), 'utf8')
+  );
+  assert.equal(
+    fs.readFileSync(path.join(UI_ROOT, 'skills', 'qa-test-cases', 'TEMPLATE.md'), 'utf8'),
+    fs.readFileSync(path.join(repoRoot, 'skills', 'TEMPLATE.md'), 'utf8')
+  );
+});
+
+test('help exposes human and machine-readable command guidance', () => {
+  const human = runCli(['help']);
+  assert.equal(human.status, 0, human.stderr);
+  assert.match(human.stdout, /Comandos:/);
+  assert.match(human.stdout, /create\s+Crea un run/);
+  assert.match(human.stdout, /update skills\s+Instala o actualiza/);
+  assert.match(human.stdout, /Notas para agentes:/);
+
+  const json = runCli(['help', 'run', '--json']);
+  assert.equal(json.status, 0, json.stderr);
+  const payload = parseJson(json.stdout);
+  assert.equal(payload.status, 'ok');
+  assert.equal(payload.command, 'run');
+  assert.match(payload.usage, /proguide run/);
+  assert.ok(payload.options.some((item) => item.option === '--base-url <url>'));
+  assert.ok(payload.common_options.some((item) => item.option === '--json'));
+
+  const commandHelp = runCli(['update', 'skills', '--help']);
+  assert.equal(commandHelp.status, 0, commandHelp.stderr);
+  assert.match(commandHelp.stdout, /ProGuide update skills/);
+  assert.match(commandHelp.stdout, /--scope user\|project/);
+});
+
 test('markdown parser ignores sections and keeps TC cases', () => {
   const root = makeTempRoot();
   try {

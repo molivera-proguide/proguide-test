@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.9.tgz
+npm install -g ./proguide-test-0.2.0-ts.10.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.9/proguide-test-0.2.0-ts.9.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.10/proguide-test-0.2.0-ts.10.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
@@ -54,6 +54,8 @@ proguide run casos.md --base-url http://localhost:3000 --json
 Comandos utiles:
 
 ```bash
+proguide help
+proguide help run --json
 proguide execute <run_id> --json
 proguide get-run <run_id> --json
 proguide get-code <run_id> <case_id> --json
@@ -252,7 +254,19 @@ Este repositorio incluye instrucciones reutilizables para agentes:
 
 ### Usarlo En Claude Code
 
-Para instalarlo como project skill en el workspace de la app bajo prueba:
+Si `proguide` ya esta instalado, podes instalar o actualizar la skill de Claude Code con:
+
+```bash
+proguide update skills
+```
+
+Por defecto copia la skill empaquetada a `~/.claude/skills/qa-test-cases`. Para instalarla como project skill en el workspace de la app bajo prueba:
+
+```powershell
+proguide update skills --scope project --root C:\ruta\a\app-bajo-prueba
+```
+
+Si estas trabajando desde el repositorio de ProGuide sin paquete instalado, tambien podes copiarla manualmente:
 
 ```powershell
 $proguideRepo = "C:\ruta\a\proguide-test"

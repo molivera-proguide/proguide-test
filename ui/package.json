@@ -1,6 +1,6 @@
 {
   "name": "@proguide/test",
-  "version": "0.2.0-ts.9",
+  "version": "0.2.0-ts.10",
   "private": false,
   "type": "module",
   "bin": {
@@ -15,7 +15,8 @@
     "viewer.js",
     "lib/",
     "assets/",
-    "views/"
+    "views/",
+    "skills/"
   ],
   "scripts": {
     "start": "node server.js",

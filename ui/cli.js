@@ -2,8 +2,10 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import net from 'node:net';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import {
   executePreparedRun,
   listRunRecords,
@@ -23,6 +25,9 @@ import { defaultConfig } from './lib/config/defaults.js';
 const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
 const DEFAULT_VIEWER_PORT_ATTEMPTS = Number(process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS || 20);
+const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
+const QA_SKILL_NAME = 'qa-test-cases';
+const PACKAGED_SKILLS_ROOT = path.join(PACKAGE_ROOT, 'skills');
 
 const EXIT = {
   ok: 0,
@@ -33,6 +38,164 @@ const EXIT = {
   invalidInput: 5
 };
 
+const HELP_COMMON_OPTIONS = [
+  { option: '--root <path>', description: 'Workspace root. Por defecto usa variables del cliente MCP o el directorio actual.' },
+  { option: '--json', description: 'Salida JSON estable para automatizacion y otros LLMs.' },
+  { option: '--stdin', description: 'Lee casos Markdown desde stdin cuando el comando acepta Markdown.' },
+  { option: '--no-viewer', description: 'No levanta el viewer local automaticamente al crear o ejecutar runs.' },
+  { option: '--email <value>', description: 'Credencial opcional disponible como {{email}} en casos.' },
+  { option: '--username <value>', description: 'Credencial opcional disponible como {{username}} en casos.' },
+  { option: '--password <value>', description: 'Credencial opcional disponible como {{password}} en casos.' },
+  { option: '--run-user-email <email>', description: 'Email del usuario que crea o ejecuta el run.' },
+  { option: '--run-user-name <name>', description: 'Nombre del usuario que crea o ejecuta el run.' },
+  { option: '--project-name <name>', description: 'Nombre del proyecto bajo prueba para metadata del run.' },
+  { option: '--project-key <key>', description: 'Clave corta del proyecto bajo prueba para metadata del run.' }
+];
+
+const HELP_COMMANDS = [
+  {
+    command: 'create',
+    description: 'Crea un run desde casos Markdown y deja el plan listo para revisar o ejecutar despues.',
+    usage: 'proguide create [casos.md] --base-url <url> [--json|--stdin|--dry-run]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base de la app o API bajo prueba.' },
+      { option: '--dry-run', description: 'Normaliza y valida los casos sin crear un run persistido.' },
+      { option: '--stdin', description: 'Lee el Markdown desde stdin.' },
+      { option: '--no-viewer', description: 'No inicia ni reutiliza el viewer local.' }
+    ],
+    examples: [
+      'proguide create casos.md --base-url http://localhost:3000 --json',
+      'proguide create --stdin --dry-run --json'
+    ]
+  },
+  {
+    command: 'run',
+    description: 'Crea y ejecuta un run desde Markdown usando Playwright y guarda evidencia.',
+    usage: 'proguide run [casos.md] --base-url <url> [--json|--stdin]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base obligatoria para resolver rutas relativas.' },
+      { option: '--from-plan', description: 'Ejecuta desde el plan generado sin regenerar codigo cuando aplica.' },
+      { option: '--stdin', description: 'Lee el Markdown desde stdin.' },
+      { option: '--no-viewer', description: 'No inicia ni reutiliza el viewer local.' }
+    ],
+    examples: [
+      'proguide run casos.md --base-url http://localhost:3000 --json',
+      'proguide run --stdin --base-url http://localhost:3000 --email qa@example.test --password secret --json'
+    ]
+  },
+  {
+    command: 'execute',
+    description: 'Ejecuta un run existente por run_id.',
+    usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--json]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base para la ejecucion si el run la necesita.' },
+      { option: '--from-plan', description: 'Usa el plan guardado como fuente de ejecucion.' }
+    ],
+    examples: ['proguide execute 2026-06-23_10-30-00 --base-url http://localhost:3000 --json']
+  },
+  {
+    command: 'get-run',
+    description: 'Lee estado, casos, resumen, resultados y eventos de un run.',
+    usage: 'proguide get-run <run_id> [--json]',
+    examples: ['proguide get-run 2026-06-23_10-30-00 --json']
+  },
+  {
+    command: 'get-code',
+    description: 'Devuelve el codigo TypeScript generado para un caso de un run.',
+    usage: 'proguide get-code <run_id> <case_id> [--json]',
+    examples: ['proguide get-code 2026-06-23_10-30-00 login_valido --json']
+  },
+  {
+    command: 'list-runs',
+    description: 'Lista los runs locales mas recientes del workspace.',
+    usage: 'proguide list-runs [--limit 20] [--json]',
+    options: [{ option: '--limit <n>', description: 'Cantidad maxima de runs a devolver.' }],
+    examples: ['proguide list-runs --limit 10 --json']
+  },
+  {
+    command: 'usage',
+    description: 'Muestra uso y costo estimado de llamadas LLM registradas por ProGuide.',
+    usage: 'proguide usage [--run <run_id>] [--json]',
+    options: [{ option: '--run <run_id>', description: 'Filtra el uso por run.' }],
+    examples: ['proguide usage --json', 'proguide usage --run 2026-06-23_10-30-00 --json']
+  },
+  {
+    command: 'viewer',
+    description: 'Inicia o reutiliza el viewer local para inspeccionar runs y evidencia.',
+    usage: 'proguide viewer [--port 8787] [--json]',
+    options: [
+      { option: '--host <host>', description: 'Host del viewer. Por defecto 127.0.0.1.' },
+      { option: '--port <port>', description: 'Puerto inicial del viewer. Por defecto 8787.' }
+    ],
+    examples: ['proguide viewer --json']
+  },
+  {
+    command: 'stop-viewer',
+    description: 'Detiene viewers de ProGuide asociados al workspace actual.',
+    usage: 'proguide stop-viewer [--port 8787] [--json]',
+    options: [
+      { option: '--host <host>', description: 'Host del viewer a detener.' },
+      { option: '--port <port>', description: 'Puerto inicial a revisar.' }
+    ],
+    examples: ['proguide stop-viewer --json']
+  },
+  {
+    command: 'mcp',
+    description: 'Arranca el servidor MCP stdio de ProGuide para Claude Code, Cursor u otros clientes.',
+    usage: 'proguide mcp',
+    examples: ['claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp']
+  },
+  {
+    command: 'doctor',
+    description: 'Verifica runtime, Playwright, Chromium, permisos de runs y puerto del viewer.',
+    usage: 'proguide doctor [--json] [--fix]',
+    options: [{ option: '--fix', description: 'Intenta reparar dependencias administradas como Chromium.' }],
+    examples: ['proguide doctor --json', 'proguide doctor --fix']
+  },
+  {
+    command: 'config',
+    description: 'Lee o actualiza configuracion local no secreta en proguide_tests/config.yaml.',
+    usage: 'proguide config get [clave] [--json]\n  proguide config set <seccion.campo> <valor> [--json]',
+    examples: ['proguide config get --json', 'proguide config set runner.workers 4']
+  },
+  {
+    command: 'update skills',
+    aliases: ['update-skills'],
+    description: 'Instala o actualiza la skill qa-test-cases de Claude Code desde el paquete ProGuide.',
+    usage: 'proguide update skills [--scope user|project] [--skills-dir <path>] [--json]',
+    options: [
+      { option: '--scope user|project', description: 'user instala en ~/.claude/skills; project instala en <root>/.claude/skills.' },
+      { option: '--skills-dir <path>', description: 'Directorio de skills de Claude. Tiene prioridad sobre --scope.' },
+      { option: '--target claude-code', description: 'Target soportado actualmente.' },
+      { option: '--dry-run', description: 'Muestra destino y archivos sin copiar.' }
+    ],
+    examples: [
+      'proguide update skills',
+      'proguide update skills --scope project --root C:\\ruta\\a\\app --json'
+    ]
+  },
+  {
+    command: 'agent-setup',
+    aliases: ['agents'],
+    description: 'Muestra snippets para registrar ProGuide como MCP en Claude Code, Cursor o cliente generico.',
+    usage: 'proguide agent-setup [--client claude-code|cursor|generic] [--json]',
+    options: [{ option: '--client <name>', description: 'Filtra snippets por claude-code, cursor, generic o all.' }],
+    examples: ['proguide agent-setup --client claude-code', 'proguide agent-setup --json']
+  },
+  {
+    command: 'help',
+    description: 'Muestra esta ayuda o la ayuda detallada de un comando. Con --json devuelve metadata para agentes.',
+    usage: 'proguide help [comando] [--json]\n  proguide <comando> --help',
+    examples: ['proguide help', 'proguide help run --json', 'proguide run --help']
+  },
+  {
+    command: 'version',
+    description: 'Muestra nombre y version instalada del paquete.',
+    usage: 'proguide version [--json]\n  proguide --version',
+    examples: ['proguide version --json']
+  }
+];
+
 async function main(argv) {
   const parsed = parseArgv(argv);
 
@@ -42,7 +205,8 @@ async function main(argv) {
   }
 
   if (parsed.options.help || !parsed.command || parsed.command === 'help') {
-    commandHelp();
+    const exitCode = commandHelp(parsed);
+    process.exitCode = exitCode;
     return;
   }
 
@@ -94,6 +258,10 @@ async function dispatch(parsed) {
       return commandDoctor(parsed);
     case 'config':
       return commandConfig(parsed);
+    case 'update':
+      return commandUpdate(parsed);
+    case 'update-skills':
+      return commandUpdateSkills(parsed);
     case 'agent-setup':
     case 'agents':
       return commandAgentSetup(parsed);
@@ -399,6 +567,46 @@ async function commandAgentSetup(parsed) {
   return EXIT.ok;
 }
 
+async function commandUpdate(parsed) {
+  const subcommand = String(parsed.positionals[0] || '').toLowerCase();
+  if (subcommand === 'skills' || subcommand === 'skill') {
+    return commandUpdateSkills(parsed);
+  }
+  throw cliError('Uso: proguide update skills [--scope user|project] [--json]', EXIT.invalidInput);
+}
+
+async function commandUpdateSkills(parsed) {
+  const target = normalizeClientKey(optionText(parsed.options, 'target', 'client') || 'claude-code');
+  if (target !== 'claude_code') {
+    throw cliError(`Target no soportado: ${target}. Usa --target claude-code.`, EXIT.invalidInput);
+  }
+
+  const scope = normalizeSkillScope(optionText(parsed.options, 'scope') || 'user');
+  const sourceDir = path.join(PACKAGED_SKILLS_ROOT, QA_SKILL_NAME);
+  const files = await listRelativeFiles(sourceDir);
+  const skillsRoot = resolveClaudeSkillsRoot(parsed.options, scope);
+  const destinationDir = path.join(skillsRoot, QA_SKILL_NAME);
+  const dryRun = Boolean(parsed.options['dry-run']);
+
+  if (!dryRun) {
+    await fs.mkdir(skillsRoot, { recursive: true });
+    await fs.cp(sourceDir, destinationDir, { recursive: true, force: true });
+  }
+
+  const payload = {
+    status: dryRun ? 'dry_run' : 'ok',
+    updated: !dryRun,
+    target: 'claude-code',
+    scope,
+    skill: QA_SKILL_NAME,
+    source_dir: sourceDir,
+    destination_dir: destinationDir,
+    files
+  };
+  emit(payload, parsed.options, renderUpdateSkills(payload));
+  return EXIT.ok;
+}
+
 async function commandVersion(parsed) {
   try {
     const packagePath = new URL('./package.json', import.meta.url);
@@ -406,40 +614,151 @@ async function commandVersion(parsed) {
     const payload = { name: data.name, version: data.version };
     emit(payload, parsed.options, `${data.name} ${data.version}`);
   } catch {
-    emit({ version: '0.2.0-ts.7' }, parsed.options, '0.2.0-ts.7');
+    emit({ version: '0.2.0-ts.10' }, parsed.options, '0.2.0-ts.10');
   }
 }
 
-function commandHelp() {
-  console.log(`ProGuide Test
+function commandHelp(parsed = { command: '', options: {}, positionals: [] }) {
+  const target = helpTargetFromParsed(parsed);
+  const command = target ? findHelpCommand(target) : null;
+  if (target && !command) {
+    const payload = {
+      status: 'error',
+      error: `Comando no documentado: ${target}`,
+      available_commands: HELP_COMMANDS.map((item) => item.command)
+    };
+    emit(payload, parsed.options, `${payload.error}\n\nUsa proguide help para ver comandos disponibles.`);
+    return EXIT.invalidInput;
+  }
 
-Uso:
-  proguide create [casos.md] --base-url <url> [--json|--stdin|--dry-run]
-  proguide run [casos.md] --base-url <url> [--json|--stdin]
-  proguide execute <run_id> [--base-url <url>] [--from-plan] [--json]
-  proguide get-run <run_id> [--json]
-  proguide get-code <run_id> <case_id> [--json]
-  proguide list-runs [--limit 20] [--json]
-  proguide usage [--run <run_id>] [--json]
-  proguide viewer [--port 8787] [--json]
-  proguide stop-viewer [--port 8787] [--json]
-  proguide mcp
-  proguide doctor [--json] [--fix]
-  proguide config get|set ...
-  proguide agent-setup [--client claude-code|cursor|generic] [--json]
+  const payload = command ? commandHelpPayload(command) : generalHelpPayload();
+  emit(payload, parsed.options, command ? renderCommandHelp(payload) : renderGeneralHelp(payload));
+  return EXIT.ok;
+}
 
-Opciones comunes:
-  --root <path>       workspace root
-  --stdin             leer Markdown desde stdin
-  --json              salida JSON estable
-  --no-viewer         no levantar visor automaticamente
-  --email <value>     credencial opcional
-  --username <value>  credencial opcional
-  --password <value>  credencial opcional
-  --run-user-email <email>  usuario que crea/ejecuta el run
-  --run-user-name <name>    nombre del usuario del run
-  --project-name <name>     proyecto bajo prueba
-  --project-key <key>       clave corta del proyecto`);
+function helpTargetFromParsed(parsed) {
+  if (parsed.command === 'help') return parsed.positionals.join(' ').trim();
+  if (!parsed.options.help || !parsed.command) return '';
+  if (parsed.command === 'update' && ['skill', 'skills'].includes(String(parsed.positionals[0] || '').toLowerCase())) {
+    return 'update skills';
+  }
+  return parsed.command;
+}
+
+function findHelpCommand(target) {
+  const normalized = normalizeHelpName(target);
+  return HELP_COMMANDS.find((item) => {
+    if (normalizeHelpName(item.command) === normalized) return true;
+    return (item.aliases || []).some((alias) => normalizeHelpName(alias) === normalized);
+  }) || null;
+}
+
+function normalizeHelpName(value) {
+  return String(value || '').toLowerCase().trim().replace(/[-_\s]+/g, ' ');
+}
+
+function generalHelpPayload() {
+  return {
+    status: 'ok',
+    name: 'ProGuide Test',
+    purpose: 'Herramienta local-first para crear, ejecutar e inspeccionar casos QA E2E/API con Playwright.',
+    usage: 'proguide <comando> [opciones]',
+    help_usage: [
+      'proguide help',
+      'proguide help <comando>',
+      'proguide <comando> --help',
+      'proguide help --json'
+    ],
+    llm_usage_notes: [
+      'Usa --json para salidas estables cuando automatices desde agentes.',
+      'Usa create --dry-run antes de run si estas convirtiendo Markdown incierto.',
+      'Usa get-run, get-code y list-runs para inspeccionar resultados sin reejecutar.',
+      'Usa update skills para instalar la skill qa-test-cases en Claude Code.'
+    ],
+    commands: HELP_COMMANDS.map((item) => ({
+      command: item.command,
+      aliases: item.aliases || [],
+      description: item.description,
+      usage: item.usage
+    })),
+    common_options: HELP_COMMON_OPTIONS
+  };
+}
+
+function commandHelpPayload(command) {
+  const commandOptions = command.options || [];
+  return {
+    status: 'ok',
+    name: 'ProGuide Test',
+    command: command.command,
+    aliases: command.aliases || [],
+    description: command.description,
+    usage: command.usage,
+    options: commandOptions,
+    common_options: HELP_COMMON_OPTIONS.filter((common) => !commandOptions.some((item) => item.option === common.option)),
+    examples: command.examples || []
+  };
+}
+
+function renderGeneralHelp(payload) {
+  const lines = [
+    payload.name,
+    '',
+    payload.purpose,
+    '',
+    'Uso:',
+    `  ${payload.usage}`,
+    '  proguide help [comando] [--json]',
+    '  proguide <comando> --help',
+    '',
+    'Comandos:'
+  ];
+  for (const command of payload.commands) {
+    lines.push(`  ${command.command.padEnd(14)} ${command.description}`);
+  }
+  lines.push('', 'Opciones comunes:');
+  for (const optionItem of payload.common_options) {
+    lines.push(`  ${optionItem.option.padEnd(24)} ${optionItem.description}`);
+  }
+  lines.push(
+    '',
+    'Notas para agentes:',
+    ...payload.llm_usage_notes.map((note) => `  - ${note}`),
+    '',
+    'Ejemplos:',
+    '  proguide help run',
+    '  proguide help --json',
+    '  proguide create casos.md --base-url http://localhost:3000 --dry-run --json'
+  );
+  return lines.join('\n');
+}
+
+function renderCommandHelp(payload) {
+  const lines = [
+    `ProGuide ${payload.command}`,
+    '',
+    payload.description,
+    '',
+    'Uso:',
+    ...String(payload.usage).split('\n').map((line) => `  ${line}`)
+  ];
+  const options = [...payload.options, ...payload.common_options];
+  if (options.length) {
+    lines.push('', 'Opciones:');
+    for (const optionItem of options) {
+      lines.push(`  ${optionItem.option.padEnd(24)} ${optionItem.description}`);
+    }
+  }
+  if (payload.examples.length) {
+    lines.push('', 'Ejemplos:');
+    for (const example of payload.examples) {
+      lines.push(`  ${example}`);
+    }
+  }
+  if (payload.aliases.length) {
+    lines.push('', `Aliases: ${payload.aliases.join(', ')}`);
+  }
+  return lines.join('\n');
 }
 
 async function resolveMarkdownSource(root, parsed) {
@@ -846,6 +1165,11 @@ function option(options, ...names) {
   return undefined;
 }
 
+function optionText(options, ...names) {
+  const value = option(options, ...names);
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function numberOption(options, name, fallback) {
   const value = Number(option(options, name));
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -957,6 +1281,57 @@ function renderAgentSetup(payload) {
   if (payload.clients.generic) {
     lines.push('', 'Generic MCP stdio:', JSON.stringify(payload.clients.generic, null, 2));
   }
+  return lines.join('\n');
+}
+
+function resolveClaudeSkillsRoot(options, scope) {
+  const explicit = optionText(options, 'skills-dir', 'claude-skills-dir');
+  if (explicit) return path.resolve(expandHomePath(explicit));
+  if (process.env.PROGUIDE_CLAUDE_SKILLS_DIR) {
+    return path.resolve(expandHomePath(process.env.PROGUIDE_CLAUDE_SKILLS_DIR));
+  }
+  if (scope === 'project') {
+    return path.join(resolveRoot(options), '.claude', 'skills');
+  }
+  return path.join(os.homedir(), '.claude', 'skills');
+}
+
+function normalizeSkillScope(value) {
+  const normalized = String(value || 'user').toLowerCase().replace(/[-\s]+/g, '_');
+  if (normalized === 'user' || normalized === 'global') return 'user';
+  if (normalized === 'project' || normalized === 'workspace') return 'project';
+  throw cliError(`Scope no soportado: ${value}. Usa user o project.`, EXIT.invalidInput);
+}
+
+function expandHomePath(value) {
+  const text = String(value || '');
+  if (text === '~') return os.homedir();
+  if (text.startsWith('~/') || text.startsWith('~\\')) return path.join(os.homedir(), text.slice(2));
+  return text;
+}
+
+async function listRelativeFiles(root, current = root) {
+  const entries = await fs.readdir(current, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const absolute = path.join(current, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await listRelativeFiles(root, absolute)));
+    } else if (entry.isFile()) {
+      files.push(path.relative(root, absolute).split(path.sep).join('/'));
+    }
+  }
+  return files.sort();
+}
+
+function renderUpdateSkills(payload) {
+  const action = payload.updated ? 'actualizada' : 'lista para actualizar';
+  const lines = [
+    `Skill ${payload.skill} ${action} para Claude Code.`,
+    `Destino: ${payload.destination_dir}`,
+    `Archivos: ${payload.files.join(', ')}`
+  ];
+  if (!payload.updated) lines.push('Dry-run: no se escribieron archivos.');
   return lines.join('\n');
 }
 
