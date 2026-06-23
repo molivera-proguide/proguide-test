@@ -140,6 +140,47 @@ Resultado esperado:
   }
 });
 
+test('prepareMarkdownRun maps multi-step expected statuses to the matching API request', async () => {
+  const root = makeTempRoot();
+  try {
+    const source = path.join(root, 'multi-step-status.md');
+    fs.writeFileSync(source, `## TC-API-STATUS Login y status por paso
+
+Tipo: API
+Route: /scan/proceso-inexistente-000/status
+Steps:
+1. POST https://api-user.tst.proguidemc.com/user/login con body {"username":"x","password":"y"} â€” capturar campo \`token\`
+2. GET /scan/proceso-inexistente-000/status con header Authorization: Bearer {{token}}
+
+Expected Results:
+- El paso 1 retorna status 201 con JWT en campo \`token\`
+- Step 1: body.token exists
+- El paso 2 retorna status 500
+- Step 2: body.message contains inexistente
+`, 'utf8');
+
+    const prepared = await prepareMarkdownRun({
+      root,
+      sourceMd: source,
+      baseUrl: 'https://api-vulnops.tst.proguidemc.com'
+    });
+
+    const [testCase] = prepared.cases;
+    assert.equal(testCase.requests.length, 2);
+    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'status' && item.expected === 201), true);
+    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'body_path' && item.path === 'token' && item.operator === 'exists'), true);
+    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 500), true);
+    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'body_path' && item.path === 'message' && item.operator === 'contains' && item.expected === 'inexistente'), true);
+    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 201), false);
+    assert.deepEqual(
+      testCase.assertions.filter((item) => item.type === 'status').map((item) => item.expected),
+      [201, 500]
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('prepareMarkdownRun preserves body and capture suffix in single-step API Markdown', async () => {
   const root = makeTempRoot();
   try {

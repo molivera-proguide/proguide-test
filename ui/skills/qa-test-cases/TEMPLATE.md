@@ -80,12 +80,16 @@ a un servicio distinto del `base_url`.
 2. GET /ruta-del-endpoint con header Authorization: Bearer {{token}}
 
 **Expected Results:**
-- Status 200
-- body.estado = OK
+- Step 1: status 200
+- Step 1: body.token exists
+- Step 2: status 200
+- Step 2: body.estado = OK
 ```
 
 Usar esta forma cuando el caso no necesita UI. Para flujos con login/token, poner todos
-los requests dentro del mismo caso y capturar variables con `captures`.
+los requests dentro del mismo caso y capturar variables con `captures`. En API
+multi-step, prefijar aserciones con `Step N:` cuando cada request tenga status o body
+esperado distinto; las aserciones sin `Step N:` se aplican al ultimo request.
 
 ```json
 {
@@ -125,6 +129,7 @@ los requests dentro del mismo caso y capturar variables con `captures`.
 - [ ] Si es API, usar `type: "api"` con `request`/`requests`, no pasos de UI
 - [ ] Si es API autenticada, capturar token con `captures` y reutilizar `{{variable}}`
 - [ ] Si es API cross-service, usar URL absoluta en el step/request del servicio externo
+- [ ] Si es API multi-step y cada request tiene expected distinto, usar `Step N:` en `Expected Results`
 - [ ] Si es API, usar solo aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `equals`, `exists`, `contains`, `isArray`
 - [ ] Si el body raiz es array, usar `{ "path": "$", "isArray": true }`
 - [ ] Si crea recursos (`register`, `orders`, `products`), usar datos idempotentes o cleanup

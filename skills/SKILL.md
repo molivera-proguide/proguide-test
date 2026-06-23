@@ -79,7 +79,10 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - **API multi-step desde Markdown:** cada step HTTP numerado genera un request del
   flujo. ProGuide preserva URLs absolutas cross-service aunque el caso tenga `Route`.
   Usa `con body {...}`, `con header Authorization: Bearer {{token}}` y
-  `capturar campo token` cuando necesites login -> endpoint.
+  `capturar campo token` cuando necesites login -> endpoint. Si cada request tiene
+  un status/assert distinto, escribe `Step 1: status 201`, `Step 2: status 500` o
+  `Step 2: body.message contains inexistente` en `Expected Results`; las aserciones
+  sin `Step N` se aplican al ultimo request del flujo.
 - **API multi-step estructurada:** para casos generados por tooling o muy largos,
   puedes pasar `cases` con `requests: [...]` directamente. `captures` es un objeto
   `{ "variable": "campo_del_body" }` y se reutiliza como `{{variable}}`.

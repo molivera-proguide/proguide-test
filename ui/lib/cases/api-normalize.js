@@ -116,13 +116,45 @@ export function normalizeApiRequestsFromSteps(steps, { expected = [] } = {}) {
   if (!entries.length) return [];
 
   const expectedLines = cleanList(expected);
-  const expectedStatus = parseExpectedStatus(expectedLines.join('\n'));
-  const last = entries.at(-1);
-  if (last && expectedLines.length) last.expected_results = expectedLines;
-  if (last && expectedStatus !== null && last.expected_status === undefined) {
-    last.expected_status = expectedStatus;
-  }
+  applyExpectedResultsToStepEntries(entries, expectedLines);
   return normalizeApiRequests(entries);
+}
+
+function applyExpectedResultsToStepEntries(entries, expectedLines) {
+  if (!entries.length || !expectedLines.length) return;
+  const unscopedLines = [];
+  for (const line of expectedLines) {
+    const stepIndex = expectedStepIndex(line, entries.length);
+    if (stepIndex === null) {
+      unscopedLines.push(line);
+      continue;
+    }
+    appendExpectedLine(entries[stepIndex], line);
+  }
+
+  if (unscopedLines.length) {
+    const last = entries.at(-1);
+    for (const line of unscopedLines) appendExpectedLine(last, line);
+  }
+}
+
+function appendExpectedLine(entry, line) {
+  if (!entry) return;
+  entry.expected_results = [...cleanList(entry.expected_results || []), line];
+  const status = parseExpectedStatus(line);
+  if (status !== null && entry.expected_status === undefined) {
+    entry.expected_status = status;
+  }
+}
+
+function expectedStepIndex(line, entriesCount) {
+  const text = stripAccents(stripMarkdownEmphasis(stripListMarker(String(line || '')))).toLowerCase();
+  const match = text.match(/\b(?:paso|step|request|peticion|solicitud|llamada)\s*#?\s*(\d{1,3})\b/) ||
+    text.match(/^\s*(\d{1,3})[).:-]\s+/);
+  if (!match) return null;
+  const number = Number(match[1]);
+  if (!Number.isInteger(number) || number < 1 || number > entriesCount) return null;
+  return number - 1;
 }
 
 export function normalizeApiRequests(value) {
@@ -564,13 +596,14 @@ function unsupportedApiAssertion(assertion, reason) {
 }
 
 export function parseExpectedApiAssertion(line) {
-  const text = stripMarkdownEmphasis(stripListMarker(String(line || '').trim()));
+  const text = stripExpectedStepPrefix(stripMarkdownEmphasis(stripListMarker(String(line || '').trim()))).trim();
   if (!text) return null;
   const status = parseExpectedStatus(text);
   if (status !== null) return { type: 'status', expected: status };
 
   const ascii = stripAccents(text).replace(/^(?:expect|validar|verificar|comprobar)\s+/i, '').trim();
-  let match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s*(?:=|==|equals?|es|sea)\s*(.+)$/i);
+  let match = ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s*(?:=|==)\s*(.+)$/i) ||
+    ascii.match(/^(?:body|response|json)\.([A-Za-z0-9_$.[\]-]+)\s+(?:equals?|es|sea)\s+(.+)$/i);
   if (match) {
     return {
       type: 'body_path',
@@ -587,7 +620,8 @@ export function parseExpectedApiAssertion(line) {
       operator: 'exists'
     };
   }
-  match = ascii.match(/^(?:response\s+)?body\s+field\s+([A-Za-z0-9_$.[\]-]+)\s*(?:=|==|equals?|es|sea)\s*(.+)$/i);
+  match = ascii.match(/^(?:response\s+)?body\s+field\s+([A-Za-z0-9_$.[\]-]+)\s*(?:=|==)\s*(.+)$/i) ||
+    ascii.match(/^(?:response\s+)?body\s+field\s+([A-Za-z0-9_$.[\]-]+)\s+(?:equals?|es|sea)\s+(.+)$/i);
   if (match) {
     return {
       type: 'body_path',
@@ -650,13 +684,21 @@ export function parseExpectedApiAssertion(line) {
 }
 
 function parseExpectedStatus(value) {
-  const text = String(value || '');
+  const text = stripExpectedStepPrefix(String(value || ''));
   const normalized = norm(text);
   if (!/\b(status|estado|codigo|http)\b/.test(normalized) && !/^\s*[1-5][0-9]{2}\s*$/.test(text)) {
     return null;
   }
   const match = text.match(/\b([1-5][0-9]{2})\b/);
   return match ? normalizeExpectedStatus(match[1]) : null;
+}
+
+function stripExpectedStepPrefix(value) {
+  const text = String(value || '');
+  const ascii = stripAccents(text);
+  const match = ascii.match(/^\s*(?:paso|step|request|peticion|solicitud|llamada)\s*#?\s*\d{1,3}\s*[:.)-]?\s*/i) ||
+    ascii.match(/^\s*\d{1,3}[).:-]\s+/);
+  return match ? text.slice(match[0].length) : text;
 }
 
 function normalizeExpectedStatus(value) {

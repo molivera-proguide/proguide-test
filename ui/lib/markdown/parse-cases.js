@@ -251,10 +251,14 @@ function parseBlock(block, number) {
   });
   const effectiveRequest = requests[0]?.request || request;
   const executableSteps = buildSteps(fields.original_steps, { type });
-  const assertions = type === 'api' ? normalizeApiAssertions({
-    expected: fields.expected_results,
-    expectedStatus: effectiveRequest.expected_status
-  }) : [];
+  const assertions = type === 'api'
+    ? (requests.length
+        ? uniqueApiCaseAssertions(requests.flatMap((entry) => entry.assertions || []))
+        : normalizeApiAssertions({
+            expected: fields.expected_results,
+            expectedStatus: effectiveRequest.expected_status
+          }))
+    : [];
 
   const title = String(fields.title || `Caso ${number}`).trim();
   const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, {
@@ -297,6 +301,18 @@ function parseBlock(block, number) {
     duration_seconds: 0,
     artifacts: []
   };
+}
+
+function uniqueApiCaseAssertions(assertions) {
+  const seen = new Set();
+  const unique = [];
+  for (const assertion of assertions || []) {
+    const key = JSON.stringify(assertion);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(assertion);
+  }
+  return unique;
 }
 
 function extractLabel(line) {
