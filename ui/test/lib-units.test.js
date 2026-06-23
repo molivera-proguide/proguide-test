@@ -26,7 +26,9 @@ import { inferCaseType } from '../lib/cases/api-normalize.js';
 import { parseMarkdownCases } from '../lib/markdown/parse-cases.js';
 import { collectPlaywrightSpecs, normalizePlaywrightSpecResult } from '../lib/runner/results.js';
 import { playwrightWorkerArgs } from '../lib/runner/config.js';
+import { expectTimeoutForPlan } from '../lib/runner/playwright.js';
 import { normalizeLlmUsage, estimateLlmCost } from '../lib/usage/pricing.js';
+import { buildTypeScriptCode } from '../views/code.js';
 
 test('shared/text: norm folds accents, lowercases, strips emphasis, collapses space', () => {
   assert.equal(norm('  Hóla   MÚNDO *x* '), 'hola mundo x');
@@ -92,6 +94,18 @@ test('cases/normalize: normalizeStep and inferCaseRoute', () => {
   assert.equal(inferCaseRoute('/home', []), '/home');
 });
 
+test('cases/normalize: feedback DSL regressions stay explicit', () => {
+  assert.equal(normalizeStep("expect text 'Afiliado elegible' to be visible"), 'expect text "Afiliado elegible"');
+  assert.equal(normalizeStep("expect URL to contain '/elegibility'"), 'expect url to contain "/elegibility"');
+  assert.equal(normalizeStep('click .MiClase'), 'click [.MiClase]');
+  assert.equal(normalizeStep("click :has-text('X')"), "click [:has-text('X')]");
+  assert.equal(normalizeStep("click X inside [role='list']"), 'click text "X" inside [role=\'list\']');
+  assert.equal(normalizeStep("click listitem 'Modulo Salud'"), 'click [li:has-text("Modulo Salud")]');
+  assert.equal(normalizeStep('wait 30 seconds'), 'wait 30 seconds');
+  assert.equal(normalizeStep('set test timeout to 900 seconds'), 'set test timeout to 900 seconds');
+  assert.equal(inferCaseRoute('/', ["expect URL to contain '/elegibility'"], []), '/');
+});
+
 test('cases/api-normalize: inferCaseType detects api vs ui', () => {
   assert.equal(inferCaseType({ type: 'api' }), 'api');
   assert.equal(
@@ -132,6 +146,47 @@ test('runner/config: playwrightWorkerArgs', () => {
   assert.deepEqual(playwrightWorkerArgs({ runner: { parallel_workers: 3 } }), ['--workers=3']);
   assert.deepEqual(playwrightWorkerArgs({ runner: { parallel_workers: '1' } }), ['--workers=1']);
   assert.throws(() => playwrightWorkerArgs({ runner: { parallel_workers: 'many' } }));
+});
+
+test('runner/playwright: expectTimeoutForPlan honors slow UI timeout DSL', () => {
+  assert.equal(expectTimeoutForPlan({ cases: [] }), 30000);
+  assert.equal(expectTimeoutForPlan({
+    cases: [{ steps: ['set test timeout to 900 seconds'] }]
+  }), 900000);
+  assert.equal(expectTimeoutForPlan({
+    cases: [{ steps: ['set assertion timeout to 45 seconds'] }]
+  }), 45000);
+});
+
+test('views/code: TypeScript preview renders feedback DSL without navigation/assertion regressions', () => {
+  const code = buildTypeScriptCode({
+    id: 'TC-UI-009',
+    title: 'Consulta de elegibilidad',
+    route: '/',
+    executable_steps: [
+      { normalized_action: 'set test timeout to 900 seconds' },
+      { normalized_action: 'wait 30 seconds' },
+      { normalized_action: 'expect url to contain "/elegibility"' },
+      { normalized_action: 'click [.MiClase]' },
+      { normalized_action: "click [:has-text('X')]" },
+      { normalized_action: 'click text "X" inside [role=\'list\']' },
+      { normalized_action: 'click [li:has-text("Modulo Salud")]' },
+      { normalized_action: 'expect text "Afiliado elegible"' }
+    ],
+    expected_results: [],
+    data: {}
+  }, { base_url: 'https://example.test' });
+
+  assert.ok(code.indexOf('test.setTimeout(900000);') < code.indexOf('await goto(page, baseUrl, "/");'));
+  assert.match(code, /toHaveURL/);
+  assert.doesNotMatch(code, /goto\(page, baseUrl, "\\\/elegibility"\)/);
+  assert.match(code, /waitForTimeout\(30000\)/);
+  assert.ok(code.includes('page.locator(".MiClase")'));
+  assert.ok(code.includes('page.locator(":has-text(\'X\')")'));
+  assert.ok(code.includes('page.locator("[role=\\"list\\"]")'));
+  assert.ok(code.includes('page.locator("li:has-text'));
+  assert.match(code, /toHaveURL\(new RegExp\(".\*\/elegibility.\*", 'i'\), \{ timeout: 900000 \}\)/);
+  assert.match(code, /toBeVisible\(\{ timeout: 900000 \}\)/);
 });
 
 test('usage/pricing: normalizeLlmUsage sums totals; estimateLlmCost returns a cost', () => {

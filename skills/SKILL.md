@@ -76,6 +76,13 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
   headers y reutilizarlos como `{{variable}}` en requests posteriores. Usa
   `{{email}}`, `{{username}}` y `{{password}}` solo para credenciales pasadas por
   CLI/MCP; no escribas secretos productivos literales.
+- **API multi-step desde Markdown:** cada step HTTP numerado genera un request del
+  flujo. ProGuide preserva URLs absolutas cross-service aunque el caso tenga `Route`.
+  Usa `con body {...}`, `con header Authorization: Bearer {{token}}` y
+  `capturar campo token` cuando necesites login -> endpoint.
+- **API multi-step estructurada:** para casos generados por tooling o muy largos,
+  puedes pasar `cases` con `requests: [...]` directamente. `captures` es un objeto
+  `{ "variable": "campo_del_body" }` y se reutiliza como `{{variable}}`.
 - **Debug API:** si un fallo necesita confirmar el request real enviado, agrega
   `"debug": true` solo en entornos locales o con datos no sensibles. El resultado
   incluira `actual_response` y, con debug, tambien `actual_response.request`.
@@ -120,14 +127,19 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - **Si conoces el `data-testid` o `id`, inclúyelo en el paso**:
   preferir `click [data-testid="quick-login-admin"]` o `click [id="quick-login-admin"]`
   sobre lenguaje natural. Es la forma más robusta para la normalización.
-- **Nunca uses el selector de clase con punto (`.btn-primary`, `.success-btn`) en pasos
-  `click`.** El normalizador lo reescribe a `[data-testid="btn-primary"]`; si la app no
-  tiene ese `data-testid` (muy común), el clic hace timeout de 30s y el caso falla. Esto
-  **no** se detecta en el dry-run: el paso aparece con confianza alta porque la sintaxis
-  es válida; el fallo solo se ve al ejecutar. Para botones usa **texto literal**
+- **Evita selectores de clase con punto (`.btn-primary`, `.success-btn`) salvo que sean
+  realmente estables.** ProGuide los respeta como CSS, pero suelen cambiar más que un
+  `data-testid`, `id`, `name` o texto literal. Para botones usa **texto literal**
   (`Click the "Next" button`, verificado: pasa aunque el dry-run lo marque en 0.7) o un
   `data-testid`/`id` que exista de verdad. Los atributos reales con corchetes
-  (`[placeholder="..."]`, `[name="..."]`, `[id="..."]`) sí funcionan en `fill`/`expect`/`click`.
+  (`[placeholder="..."]`, `[name="..."]`, `[id="..."]`) funcionan en `fill`/`expect`/`click`.
+- **Para SSO multi-app lento en TST, el primer paso debe ser timeout largo**:
+  `set test timeout to 900 seconds`. ProGuide lo coloca a nivel de función del test.
+- **Si el último assert depende de una API lenta, agrega una espera explícita antes**:
+  `wait 30 seconds` como penúltimo paso y luego `expect text "..."`.
+- **Si dos o más casos usan el mismo usuario de prueba, ejecútalos en runs separados**.
+  El runner usa `fullyParallel: true`; compartir sesión SSO puede hacer que un caso pase
+  y otro falle por timeout de login.
 - **Verificaciones con texto único en la página.** Verificar nombres/títulos, no precios
   ni números (un precio puede aparecer en item, subtotal y total a la vez → strict mode
   violation de Playwright).
@@ -200,10 +212,14 @@ visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real 
 |---|---|---|
 | `strict mode violation: resolved to N elements` | Texto/rol ambiguo | Usar data-testid o contexto posicional ("in the X row...") |
 | `Timeout waiting for get_by_placeholder("...")` | El placeholder real es otro | Mirar el árbol del error o el código; usar el placeholder/label exacto |
-| `click` hace timeout 30s y el dry-run se veía en 0.95 | Selector de clase `.btn` reescrito a `[data-testid="btn"]` inexistente | Usar texto literal del botón (`Click the "X" button`) o un `data-testid`/`id` real |
+| `click` hace timeout 30s y el dry-run se veía en 0.95 | Selector real no existe o clase CSS cambiante | Usar texto literal del botón (`Click the "X" button`) o un `data-testid`/`id` real |
+| Aserción final falla con `5000ms exceeded` aunque el elemento aparece después | El assert dependía del timeout default de Playwright o de una respuesta lenta | Usar `wait N seconds` antes del assert y/o `set assertion timeout to N seconds` |
+| Un TC pasa y otro falla en login al ejecutarlos juntos | `fullyParallel: true` + mismo usuario → contención SSO | Ejecutar cada TC en un `execute_run` separado |
+| Flujo web-suite → web-health queda esperando SSO en TST | Validación de token fría puede tardar 300-600s | Poner `set test timeout to 900 seconds` como primer paso |
 | Falla un paso compuesto | Varias acciones en un paso | Dividir en pasos atómicos |
 | Verificación de precio/número falla | El valor aparece varias veces | Verificar por texto único (nombre/título) |
 | Caso pasa solo / falla en suite | Dependencia entre casos | Hacer cada caso autocontenido |
-| API login pasa pero el siguiente request da 401 | Token hardcodeado o no capturado | Usar `requests` + `captures` y `Authorization: Bearer {{access_token}}` |
+| API login pasa pero el siguiente request da 401 | Token hardcodeado o no capturado | Usar `capturar campo access_token` en Markdown o `requests` + `captures` en JSON |
+| API cross-service pega al host equivocado | URL relativa con `base_url` incorrecto o caso viejo sin parser multi-step | Usar URL absoluta en el step/request de ese servicio |
 | API create_run falla por aserción no soportada | Operador fuera del contrato | Cambiar a `equals`, `exists`, `contains`, `isArray`, `status`, `ok`, `header` o `body_contains` |
 | API register/create falla en el segundo run | Datos no idempotentes | Usar sufijo dinamico, teardown o setup separado |

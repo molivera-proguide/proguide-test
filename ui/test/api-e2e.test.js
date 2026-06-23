@@ -96,6 +96,82 @@ Resultado esperado:
   }
 });
 
+test('prepareMarkdownRun builds cross-service API flows from Markdown steps', async () => {
+  const root = makeTempRoot();
+  try {
+    const source = path.join(root, 'cross-service.md');
+    fs.writeFileSync(source, `## TC-API-CROSS Login y status cross-service
+
+Tipo: API
+Route: /user/login
+Steps:
+1. POST https://api-user.tst.proguidemc.com/user/login con body {"username":"x","password":"y"} — capturar campo \`token\`
+2. GET /scan/proceso-inexistente-000/status con header Authorization: Bearer {{token}}
+
+Resultado esperado:
+- Status 404
+- body.message contiene inexistente
+`, 'utf8');
+
+    const prepared = await prepareMarkdownRun({
+      root,
+      sourceMd: source,
+      baseUrl: 'https://api-vulnops.tst.proguidemc.com'
+    });
+
+    const [testCase] = prepared.cases;
+    assert.equal(testCase.type, 'api');
+    assert.equal(testCase.request.path, 'https://api-user.tst.proguidemc.com/user/login');
+    assert.deepEqual(testCase.request.body, { username: 'x', password: 'y' });
+    assert.equal(testCase.requests.length, 2);
+    assert.equal(testCase.requests[0].request.path, 'https://api-user.tst.proguidemc.com/user/login');
+    assert.deepEqual(testCase.requests[0].captures, [{ name: 'token', source: 'body', path: 'token' }]);
+    assert.equal(testCase.requests[1].request.path, '/scan/proceso-inexistente-000/status');
+    assert.equal(testCase.requests[1].request.headers.Authorization, 'Bearer {{token}}');
+    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 404), true);
+
+    const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.equal(plan.cases[0].requests.length, 2);
+    assert.equal(plan.cases[0].requests[0].request.path, 'https://api-user.tst.proguidemc.com/user/login');
+    assert.equal(plan.cases[0].requests[1].request.headers.Authorization, 'Bearer {{token}}');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('prepareMarkdownRun preserves body and capture suffix in single-step API Markdown', async () => {
+  const root = makeTempRoot();
+  try {
+    const source = path.join(root, 'single-login.md');
+    fs.writeFileSync(source, `## TC-API-LOGIN Login token
+
+Tipo: API
+Steps:
+1. POST https://api-user.tst.proguidemc.com/user/login con body {"username":"x","password":"y"} — capturar campo \`token\`
+
+Resultado esperado:
+- Status 201
+- body.token exists
+`, 'utf8');
+
+    const prepared = await prepareMarkdownRun({
+      root,
+      sourceMd: source,
+      baseUrl: 'https://api-vulnops.tst.proguidemc.com'
+    });
+
+    const [testCase] = prepared.cases;
+    assert.equal(testCase.request.path, 'https://api-user.tst.proguidemc.com/user/login');
+    assert.deepEqual(testCase.request.body, { username: 'x', password: 'y' });
+    assert.equal(testCase.requests.length, 1);
+    assert.deepEqual(testCase.requests[0].captures, [{ name: 'token', source: 'body', path: 'token' }]);
+    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'status' && item.expected === 201), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('executePreparedRun runs REST API cases through Playwright request', async () => {
   const root = makeTempRoot();
   const api = await startSampleApi();
@@ -171,6 +247,47 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
     assert.match(generated.code, /"name": "Mario"/);
   } finally {
     await api.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('API structured flows do not require expected_status on intermediate login request', async () => {
+  const root = makeTempRoot();
+  try {
+    const prepared = await prepareCasesRun({
+      root,
+      baseUrl: 'https://api-vulnops.tst.proguidemc.com',
+      cases: [{
+        id: 'api_flow_without_login_status',
+        type: 'api',
+        title: 'Login intermedio sin status explicito',
+        requests: [
+          {
+            id: 'login',
+            method: 'POST',
+            path: 'https://api-user.tst.proguidemc.com/user/login',
+            body: { username: 'x', password: 'y' },
+            captures: { token: 'token' }
+          },
+          {
+            id: 'endpoint',
+            method: 'GET',
+            path: '/scan/status',
+            headers: { Authorization: 'Bearer {{token}}' },
+            expected_status: 200
+          }
+        ]
+      }]
+    });
+
+    assert.equal(prepared.cases[0].automation_state, 'listo');
+    assert.equal(prepared.cases[0].requests[0].request.expected_status, null);
+    assert.equal(prepared.cases[0].requests[1].request.expected_status, 200);
+    const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    assert.equal(plan.cases.length, 1);
+    assert.equal(plan.cases[0].requests.length, 2);
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

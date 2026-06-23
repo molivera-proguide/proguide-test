@@ -51,7 +51,7 @@ function formatApiAssertion(assertion) {
   return JSON.stringify(assertion);
 }
 
-function apiRequestFromStep(step) {
+export function apiRequestFromStep(step) {
   const text = String(step || '').trim();
   const match = text.match(/^(?:(?:api|rest|http|request|llamar|invocar)\s+)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)(.*)$/i);
   if (!match) return null;
@@ -59,9 +59,11 @@ function apiRequestFromStep(step) {
   const requestPath = normalizeApiPath(match[2]);
   if (!method || !requestPath) return null;
   const tail = String(match[3] || '').trim();
-  const bodyMatch = tail.match(/(?:body|payload|cuerpo)\s*[:=]\s*(.+)$/i);
-  const body = bodyMatch ? parseLooseValue(bodyMatch[1]) : undefined;
-  return { method, path: requestPath, body };
+  return {
+    method,
+    path: requestPath,
+    ...apiRequestDecorationsFromStepTail(tail)
+  };
 }
 
 export function normalizeApiRequest(input = {}) {
@@ -79,31 +81,48 @@ export function normalizeApiRequest(input = {}) {
   );
   const requestPath = normalizeApiPath(
     explicitPath ||
-    (explicitType ? input.route : '') ||
     stepRequest.path ||
+    (explicitType ? input.route : '') ||
     ''
   );
-  const body = normalizeRequestBody(
-    input.body ??
-    input.payload ??
-    input.request_body ??
+  const body = firstNormalizedBody(
+    input.body,
+    input.payload,
+    input.request_body,
     stepRequest.body
   );
   const expectedStatus = normalizeExpectedStatus(
     input.expected_status ??
     input.status_code ??
     input.status ??
+    stepRequest.expected_status ??
     parseExpectedStatus(cleanList(input.expected || []).join('\n'))
   );
   const request = {
     method: method || (requestPath && (explicitType || explicitPath || stepRequest.path) ? 'GET' : ''),
     path: requestPath,
-    headers: normalizeKeyValueObject(input.headers || input.request_headers, { preserveSecrets: true }),
-    query: normalizeKeyValueObject(input.query || input.params || input.request_query, { preserveSecrets: true }),
+    headers: firstNormalizedKeyValue(input.headers, input.request_headers, stepRequest.headers),
+    query: firstNormalizedKeyValue(input.query, input.params, input.request_query, stepRequest.query),
     expected_status: expectedStatus
   };
   if (body !== undefined) request.body = body;
   return request;
+}
+
+export function normalizeApiRequestsFromSteps(steps, { expected = [] } = {}) {
+  const entries = cleanList(steps)
+    .map((step, index) => apiRequestEntryFromStep(step, index))
+    .filter(Boolean);
+  if (!entries.length) return [];
+
+  const expectedLines = cleanList(expected);
+  const expectedStatus = parseExpectedStatus(expectedLines.join('\n'));
+  const last = entries.at(-1);
+  if (last && expectedLines.length) last.expected_results = expectedLines;
+  if (last && expectedStatus !== null && last.expected_status === undefined) {
+    last.expected_status = expectedStatus;
+  }
+  return normalizeApiRequests(entries);
 }
 
 export function normalizeApiRequests(value) {
@@ -173,9 +192,148 @@ function normalizeApiRequestEntry(entry, index) {
     title: String(source.title || source.description || `${request.method || 'REQUEST'} ${request.path || ''}`).trim(),
     request,
     assertions,
-    captures: normalizeApiCaptures(source.captures ?? source.save ?? source.extract ?? source.exports),
+    captures: normalizeApiCaptures(source.captures ?? source.save ?? source.extract ?? source.exports ?? nestedRequest.captures),
     debug: Boolean(source.debug ?? nestedRequest.debug)
   };
+}
+
+function apiRequestEntryFromStep(step, index) {
+  const request = apiRequestFromStep(step);
+  if (!request) return null;
+  const entry = {
+    id: `request_${index + 1}`,
+    title: `${request.method} ${request.path}`,
+    method: request.method,
+    path: request.path,
+    headers: request.headers,
+    query: request.query,
+    expected_status: request.expected_status,
+    captures: request.captures
+  };
+  if (request.body !== undefined) entry.body = request.body;
+  return entry;
+}
+
+function apiRequestDecorationsFromStepTail(tail) {
+  const text = String(tail || '').trim();
+  const cleanTail = stripCaptureClauses(text);
+  const body = parseInlineBody(cleanTail);
+  const headers = parseInlineKeyValueSegment(cleanTail, /(?:headers?|cabeceras?)/i);
+  const query = parseInlineKeyValueSegment(cleanTail, /(?:query|params?|parametros?)/i);
+  const expectedStatus = parseExpectedStatus(cleanTail);
+  const captures = parseInlineCaptures(text);
+  const decorations = {
+    headers,
+    query,
+    expected_status: expectedStatus
+  };
+  if (body !== undefined) decorations.body = body;
+  if (captures.length) decorations.captures = captures;
+  return decorations;
+}
+
+function parseInlineBody(tail) {
+  const text = String(tail || '');
+  const match = text.match(/\b(?:con\s+)?(?:body|payload|cuerpo)\b\s*(?::|=)?\s*/i);
+  if (!match) return undefined;
+  const rest = text.slice((match.index || 0) + match[0].length).trim();
+  const bodyText = readInlineValue(rest);
+  return bodyText ? parseLooseValue(bodyText) : undefined;
+}
+
+function parseInlineKeyValueSegment(tail, keywordPattern) {
+  const text = String(tail || '');
+  const pattern = new RegExp(`\\b(?:con\\s+)?${keywordPattern.source}\\b\\s*(?::|=)?\\s*(.+)$`, 'i');
+  const match = text.match(pattern);
+  if (!match) return {};
+  const value = readInlineValue(match[1]);
+  if (!value) return {};
+  const parsed = parseLooseValue(value);
+  if (isPlainObject(parsed)) return normalizeKeyValueObject(parsed, { preserveSecrets: true });
+  const normalized = normalizeKeyValueObject(value, { preserveSecrets: true });
+  if (Object.keys(normalized).length) return normalized;
+  const pair = value.match(/^([A-Za-z0-9_-]+)\s+(.+)$/);
+  return pair ? { [pair[1]]: parseLooseValue(pair[2]) } : {};
+}
+
+function parseInlineCaptures(tail) {
+  const captures = [];
+  const text = String(tail || '');
+  const pattern = /(?:capturar|capture|save|guardar|extraer|extract)\s+(?:campo|field|valor|value)?\s*`?([A-Za-z_][A-Za-z0-9_]*)`?(?:\s+(?:como|as)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?)?/ig;
+  for (const match of text.matchAll(pattern)) {
+    const path = match[1];
+    const name = match[2] || path;
+    captures.push({ name, path });
+  }
+  return normalizeApiCaptures(captures);
+}
+
+function stripCaptureClauses(value) {
+  return String(value || '')
+    .replace(/\s*(?:[\u2013\u2014-]\s*)?(?:capturar|capture|save|guardar|extraer|extract)\s+(?:campo|field|valor|value)?\s*`?[A-Za-z_][A-Za-z0-9_]*`?(?:\s+(?:como|as)\s+`?[A-Za-z_][A-Za-z0-9_]*`?)?/ig, '')
+    .trim();
+}
+
+function readInlineValue(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const balanced = readBalancedJsonLike(text);
+  if (balanced) return balanced;
+  return text
+    .split(/\s+\b(?:con\s+)?(?:headers?|cabeceras?|query|params?|parametros?|body|payload|cuerpo|status|estado|codigo)\b/i)[0]
+    .replace(/[.;]+$/, '')
+    .trim();
+}
+
+function readBalancedJsonLike(value) {
+  const text = String(value || '').trim();
+  const opener = text[0];
+  const closer = opener === '{' ? '}' : (opener === '[' ? ']' : '');
+  if (!closer) return '';
+  let depth = 0;
+  let quote = '';
+  let escaped = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = '';
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === opener) depth += 1;
+    if (char === closer) {
+      depth -= 1;
+      if (depth === 0) return text.slice(0, index + 1);
+    }
+  }
+  return '';
+}
+
+function firstNormalizedBody(...values) {
+  for (const value of values) {
+    const normalized = normalizeRequestBody(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
+}
+
+function firstNormalizedKeyValue(...values) {
+  for (const value of values) {
+    const normalized = normalizeKeyValueObject(value, { preserveSecrets: true });
+    if (Object.keys(normalized).length) return normalized;
+  }
+  return {};
 }
 
 export function normalizeApiCaptures(value) {

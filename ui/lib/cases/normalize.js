@@ -43,6 +43,8 @@ export function normalizeStep(step) {
   const apiStep = normalizeApiStep(step);
   if (apiStep) return apiStep;
   const isAssertion = /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(normalized);
+  const urlAssertion = normalizeUrlAssertion(step);
+  if (urlAssertion) return urlAssertion;
   const route = extractRoute(step);
   const clickTarget = extractClickTarget(step);
   if (clickTarget) return `click button ${clickTarget}`;
@@ -64,6 +66,12 @@ export function assessAutomation(steps, expected, options = {}) {
   const joinedSteps = steps.join('\n');
   const joinedExpected = expected.join('\n');
   if (options.type === 'api') {
+    if (Array.isArray(options.requests) && options.requests.length) {
+      if (options.requests.some((entry) => !entry?.request?.method || !entry?.request?.path)) {
+        return ['necesita_revision', 'Falta metodo o endpoint en al menos un request REST del flujo.', 0.55];
+      }
+      return ['listo', 'Caso REST multi-step listo para automatizar con Playwright request.', 0.92];
+    }
     if (!options.request?.method || !options.request?.path) {
       return ['necesita_revision', 'Falta metodo o endpoint para ejecutar el caso REST.', 0.55];
     }
@@ -98,8 +106,19 @@ function stepConfidence(step, options = {}) {
 
 export function explicitStep(step) {
   const text = String(step || '').trim();
+  const timing = normalizeTimingStep(text);
+  if (timing) return timing;
+  const urlAssertion = normalizeUrlAssertion(text);
+  if (urlAssertion) return urlAssertion;
+  const textExpectation = normalizeTextExpectation(text);
+  if (textExpectation) return textExpectation;
+  const contextualClick = normalizeContextualClick(text);
+  if (contextualClick) return contextualClick;
+  const listItemClick = normalizeListItemClick(text);
+  if (listItemClick) return listItemClick;
+  const cssSelectorAction = normalizeCssSelectorAction(text);
+  if (cssSelectorAction) return cssSelectorAction;
   if (/^(?:fill|click|expect)\s+\[[^\]]+\]/i.test(text)) return text;
-  if (/^expect\s+text\s+["'][^"']+["']/i.test(text)) return text;
   const selector = extractExplicitSelector(text);
   if (!selector) return null;
   const normalized = norm(text);
@@ -115,6 +134,103 @@ export function explicitStep(step) {
     return value ? `expect ${selector} to contain text ${JSON.stringify(value)}` : `expect ${selector} to be visible`;
   }
   return null;
+}
+
+function normalizeTimingStep(text) {
+  const waitMatch = String(text || '').match(/^\s*(?:wait|esperar)\s+(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
+  if (waitMatch) return `wait ${Number(waitMatch[1])} seconds`;
+
+  const testTimeoutMatch = String(text || '').match(/^\s*(?:set|configurar|establecer)\s+test\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
+  if (testTimeoutMatch) return `set test timeout to ${Number(testTimeoutMatch[1])} seconds`;
+
+  const assertionTimeoutMatch = String(text || '').match(/^\s*(?:set|configurar|establecer)\s+assert(?:ion)?\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
+  if (assertionTimeoutMatch) return `set assertion timeout to ${Number(assertionTimeoutMatch[1])} seconds`;
+
+  return null;
+}
+
+function normalizeUrlAssertion(text) {
+  const source = String(text || '').trim();
+  const patterns = [
+    /^\s*(?:expect|validar|verificar|comprobar)\s+(?:current\s+|actual\s+)?(?:url|ruta)\s+(?:to\s+)?(?:contain|contains|contiene|contener)\s+(.+?)\s*$/i,
+    /^\s*(?:expect|validar|verificar|comprobar)\s+(?:que\s+)?la\s+(?:url|ruta)\s+(?:actual\s+)?(?:contenga|contiene|contener)\s+(.+?)\s*$/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (!match) continue;
+    const value = stripWrappingQuotes(match[1].trim().replace(/[.;]+$/, ''));
+    if (value) return `expect url to contain ${JSON.stringify(value)}`;
+  }
+  return null;
+}
+
+function normalizeTextExpectation(text) {
+  const match = String(text || '').match(/^\s*expect\s+text\s+["'](.+?)["'](?:\s+(?:to\s+be\s+)?visible)?\s*$/i);
+  return match ? `expect text ${JSON.stringify(match[1].trim())}` : null;
+}
+
+function normalizeContextualClick(text) {
+  const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s+(?:inside|dentro\s+de|dentro)\s+(.+?)\s*$/i);
+  if (!match) return null;
+  const label = stripWrappingQuotes(match[1].trim().replace(/[.,;:]+$/, ''));
+  const selector = cleanCssSelectorTarget(match[2]);
+  if (!label || !selector || !isCssSelectorTarget(selector)) return null;
+  return `click text ${JSON.stringify(label)} inside ${formatSelectorDsl(selector)}`;
+}
+
+function normalizeListItemClick(text) {
+  const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+listitem\s+["'](.+?)["']\s*$/i);
+  if (!match) return null;
+  return `click [li:has-text(${JSON.stringify(match[1].trim())})]`;
+}
+
+function normalizeCssSelectorAction(text) {
+  const clickMatch = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s*$/i);
+  if (clickMatch) {
+    const selector = cleanCssSelectorTarget(clickMatch[1]);
+    if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
+      return `click ${formatSelectorDsl(selector)}`;
+    }
+  }
+
+  const fillMatch = String(text || '').match(/^\s*(?:fill|completar|ingresar|escribir|cargar|setear|introducir)\s+(.+?)\s+(?:with|con|valor|value)\s+(.+?)\s*$/i);
+  if (fillMatch) {
+    const selector = cleanCssSelectorTarget(fillMatch[1]);
+    if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
+      return `fill ${formatSelectorDsl(selector)} with ${fillMatch[2].trim()}`;
+    }
+  }
+
+  const visibleMatch = String(text || '').match(/^\s*(?:expect|validar|verificar|comprobar)\s+(.+?)\s+(?:to\s+be\s+)?visible\s*$/i);
+  if (visibleMatch) {
+    const selector = cleanCssSelectorTarget(visibleMatch[1]);
+    if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
+      return `expect ${formatSelectorDsl(selector)} to be visible`;
+    }
+  }
+
+  return null;
+}
+
+function cleanCssSelectorTarget(value) {
+  return stripWrappingQuotes(String(value || '').trim().replace(/[.,;]+$/, ''));
+}
+
+function formatSelectorDsl(selector) {
+  if (isSimpleBracketSelector(selector)) return selector;
+  return `[${selector}]`;
+}
+
+function isSimpleBracketSelector(selector) {
+  return /^\[[^\]]+\]$/.test(String(selector || '').trim());
+}
+
+function isCssSelectorTarget(selector) {
+  const value = String(selector || '').trim();
+  if (!value) return false;
+  if (/^(?:#|\.|:|\*)/.test(value)) return true;
+  if (/^\[[^\]]+\](?:$|[\s.:#>[+~])/.test(value)) return true;
+  return /^[A-Za-z][A-Za-z0-9_-]*(?:[#.:]|\[|::?[\w-]+|\s*[>+~]\s*)/.test(value);
 }
 
 function extractExplicitSelector(text) {
@@ -164,6 +280,14 @@ function valueAfterSelector(text, selector, pattern) {
     return quoted || '';
   }
   return match[1].trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
+}
+
+function stripWrappingQuotes(value) {
+  const text = String(value || '').trim();
+  if (text.length >= 2 && text[0] === text.at(-1) && ['"', "'"].includes(text[0])) {
+    return text.slice(1, -1);
+  }
+  return text;
 }
 
 export function mergeCaseData(primary = {}, fallback = {}) {
@@ -240,6 +364,7 @@ function normalizeRouteValue(value) {
 
 function extractRoute(step) {
   const text = String(step);
+  if (normalizeUrlAssertion(text)) return null;
   const normalized = norm(text);
   const hasRouteContext = NAVIGATION_RE.test(normalized) ||
     (/\bingresar\b/.test(normalized) && /(https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(text)) ||

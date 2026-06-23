@@ -7,6 +7,7 @@ import {
   inferCaseType,
   normalizeApiStep,
   normalizeApiRequest,
+  normalizeApiRequestsFromSteps,
   normalizeApiAssertions
 } from '../cases/api-normalize.js';
 import {
@@ -238,20 +239,30 @@ function parseBlock(block, number) {
     steps: fields.original_steps,
     expected: fields.expected_results
   });
+  const requests = normalizeApiRequestsFromSteps(fields.original_steps, {
+    expected: fields.expected_results
+  });
   const type = inferCaseType({
     type: fields.test_type,
     request,
+    requests,
     steps: fields.original_steps,
     expected: fields.expected_results
   });
+  const effectiveRequest = requests[0]?.request || request;
   const executableSteps = buildSteps(fields.original_steps, { type });
   const assertions = type === 'api' ? normalizeApiAssertions({
     expected: fields.expected_results,
-    expectedStatus: request.expected_status
+    expectedStatus: effectiveRequest.expected_status
   }) : [];
 
   const title = String(fields.title || `Caso ${number}`).trim();
-  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, { type, request, assertions });
+  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, {
+    type,
+    request: effectiveRequest,
+    requests,
+    assertions
+  });
   return {
     id: safeId(`caso_${number}_${title}`),
     number,
@@ -263,7 +274,8 @@ function parseBlock(block, number) {
     preconditions: fields.preconditions,
     data_used: maskSecretLines(fields.data_used),
     data: fields.data,
-    request: type === 'api' ? request : null,
+    request: type === 'api' ? effectiveRequest : null,
+    requests: type === 'api' ? requests : [],
     assertions,
     original_steps: fields.original_steps,
     executable_steps: executableSteps,

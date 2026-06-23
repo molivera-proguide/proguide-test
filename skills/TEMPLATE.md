@@ -32,7 +32,57 @@ separados por `---`.
 - [Resultado observable 2]
 ```
 
+## Variante para UI con SSO multi-app lento
+
+Usar este patrón cuando el flujo salta entre dos frontends o valida token en TST
+durante varios minutos.
+
+```markdown
+# TC-XXX: [Flujo con SSO intermedio]
+
+**Priority:** High
+**Description:** Verifica el flujo end-to-end entre [app origen] y [app destino].
+**Route:** /login
+
+**Data:**
+- username: [usuario-no-productivo]
+- test password: [password-no-productivo]
+
+**Steps:**
+1. set test timeout to 900 seconds
+2. Ir a /login
+3. fill #username with "[usuario-no-productivo]"
+4. fill #password with "[password-no-productivo]"
+5. click button "Acceder"
+6. click listitem "Módulo X"
+7. click text "Sub-item Y"
+8. wait 30 seconds
+9. expect text "[texto único esperado]"
+
+**Expected Results:**
+- La segunda aplicación queda autenticada y muestra [texto único esperado]
+```
+
 ## Plantilla para API REST estructurada
+
+Markdown tambien soporta flows API multi-step. Usa URLs absolutas cuando un step pega
+a un servicio distinto del `base_url`.
+
+```markdown
+# TC-API-XXX: [Flujo API cross-service]
+
+**Priority:** High
+**Type:** API
+**Route:** /[ruta-principal-o-final]
+
+**Steps:**
+1. POST https://api-user.tst.proguidemc.com/user/login con body {"username":"{{username}}","password":"{{password}}"} — capturar campo token
+2. GET /ruta-del-endpoint con header Authorization: Bearer {{token}}
+
+**Expected Results:**
+- Status 200
+- body.estado = OK
+```
 
 Usar esta forma cuando el caso no necesita UI. Para flujos con login/token, poner todos
 los requests dentro del mismo caso y capturar variables con `captures`.
@@ -45,7 +95,7 @@ los requests dentro del mismo caso y capturar variables con `captures`.
     {
       "id": "login",
       "method": "POST",
-      "path": "/login",
+      "path": "https://api-user.tst.proguidemc.com/user/login",
       "body": {
         "email": "{{email}}",
         "password": "{{password}}"
@@ -74,6 +124,7 @@ los requests dentro del mismo caso y capturar variables con `captures`.
 - [ ] Cada paso ejecuta UNA sola acción
 - [ ] Si es API, usar `type: "api"` con `request`/`requests`, no pasos de UI
 - [ ] Si es API autenticada, capturar token con `captures` y reutilizar `{{variable}}`
+- [ ] Si es API cross-service, usar URL absoluta en el step/request del servicio externo
 - [ ] Si es API, usar solo aserciones soportadas: `status`, `ok`, `header`, `body_contains`, `equals`, `exists`, `contains`, `isArray`
 - [ ] Si el body raiz es array, usar `{ "path": "$", "isArray": true }`
 - [ ] Si crea recursos (`register`, `orders`, `products`), usar datos idempotentes o cleanup
@@ -84,6 +135,9 @@ los requests dentro del mismo caso y capturar variables con `captures`.
 - [ ] Todos los textos de botones/labels están entre comillas y copiados literal de la UI real (app en vivo, captura o código si está disponible)
 - [ ] Las verificaciones usan texto único (no precios/números que se repiten en la página)
 - [ ] Los pasos sobre filas/listas indican el contexto ("In the X row...")
+- [ ] Si hay SSO multi-app lento, el primer paso es `set test timeout to 900 seconds`
+- [ ] Si dos casos comparten usuario SSO, se ejecutarán en runs separados
+- [ ] Si el resultado depende de una API lenta, hay `wait N seconds` antes del assert final
 - [ ] No hay pasos condicionales ("si aparece...")
 - [ ] El caso es autocontenido (incluye su propio login/setup)
 - [ ] Los datos están en la sección Data

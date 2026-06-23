@@ -44,7 +44,7 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
     screenshots: config.runner.screenshots || 'on',
     traces: config.runner.traces || 'retain_on_failure'
   };
-  await writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig });
+  await writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig, plan });
   const command = playwrightCommand([
     'test',
     '--config',
@@ -95,8 +95,9 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
   };
 }
 
-async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig }) {
+async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig, plan }) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
+  const expectTimeoutMs = expectTimeoutForPlan(plan);
   const configSource = [
     "const path = require('node:path');",
     '',
@@ -104,6 +105,7 @@ async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPa
     `  testDir: ${JSON.stringify(testsDir)},`,
     `  outputDir: ${JSON.stringify(outputDir)},`,
     `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
+    `  expect: { timeout: ${expectTimeoutMs} },`,
     '  fullyParallel: true,',
     '  use: {',
     `    baseURL: process.env.PROGUIDE_BASE_URL || ${JSON.stringify('')},`,
@@ -116,6 +118,19 @@ async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPa
     ''
   ].join('\n');
   await fs.writeFile(configPath, configSource, 'utf8');
+}
+
+export function expectTimeoutForPlan(plan = {}) {
+  const timeouts = [30000];
+  for (const testCase of plan.cases || []) {
+    for (const step of testCase.steps || []) {
+      const match = String(step || '').match(/^set\s+(?:test|assertion)\s+timeout\s+to\s+(\d{1,5})\s+seconds?$/i);
+      if (!match) continue;
+      const ms = Number(match[1]) * 1000;
+      if (Number.isFinite(ms) && ms > 0) timeouts.push(ms);
+    }
+  }
+  return Math.max(...timeouts);
 }
 
 

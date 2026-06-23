@@ -37,17 +37,24 @@ Rules:
 - Treat normalized steps as authoritative DSL:
   - fill [selector] with value -> page.locator(selector).fill(value)
   - click [selector] -> page.locator(selector).click()
+  - click text "value" inside [selector] -> page.locator(selector).getByText(value).click()
   - expect [selector] to contain text "value" -> assert that exact text
   - expect [selector] to be visible -> assert visibility
   - expect text "value" -> assert visible text containing value
+  - expect url to contain "value" -> assert the current URL with expect(page).toHaveURL(...)
+  - wait N seconds -> page.waitForTimeout(N * 1000)
+  - set test timeout to N seconds -> call test.setTimeout(N * 1000) at the top level of the test body, outside test.step
+  - set assertion timeout to N seconds -> use that timeout for subsequent Playwright expect assertions
 - API/REST cases are normally generated deterministically by ProGuide. If a case with type "api" appears, use Playwright request fixtures, not browser page locators.
 - Do not use PROGUIDE_USER_* environment credentials when the step contains a literal email, username, password, or value.
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
 - If a test case includes data.user.email or data.user.password, prefer those per-case values for inputs over global defaults.
 - Exact strings in expected and expected_results override shorter or older strings in original_steps.
 - Never invent data-testid/id selectors. Use only selectors present in normalized steps or dom_context.snapshot.controls[].selector_hint. If no selector exists, assert real headings or visible text from dom_context instead.
+- Treat the text inside [selector] as the exact selector contract. CSS class selectors (.ClassName), pseudo selectors (:has-text("X")), and CSS selectors such as li:has-text("X") must remain CSS selectors, not data-testid guesses.
 - Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.
 - Keep assertions explicit with Playwright expect.
+- Do not rely on Playwright's default 5000ms assertion timeout. Every toBeVisible, toContainText, toHaveURL, and similar expect assertion must pass an explicit timeout. Default to at least 30000ms; if a test has set test timeout or set assertion timeout, use that value for assertion timeout when appropriate.
 - Include imports and any helper functions in the generated file.
 - Return only valid JSON with this shape:
   {"files":[{"path":"test_markdown_cases.spec.ts","content":"...typescript code..."}]}
