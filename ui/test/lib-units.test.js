@@ -28,6 +28,7 @@ import { collectPlaywrightSpecs, normalizePlaywrightSpecResult } from '../lib/ru
 import { playwrightWorkerArgs } from '../lib/runner/config.js';
 import { expectTimeoutForPlan } from '../lib/runner/playwright.js';
 import { normalizeLlmUsage, estimateLlmCost } from '../lib/usage/pricing.js';
+import { findInvalidGeneratedSelectors } from '../lib/codegen/agent.js';
 import { buildTypeScriptCode } from '../views/code.js';
 
 test('shared/text: norm folds accents, lowercases, strips emphasis, collapses space', () => {
@@ -187,6 +188,18 @@ test('views/code: TypeScript preview renders feedback DSL without navigation/ass
   assert.ok(code.includes('page.locator("li:has-text'));
   assert.match(code, /toHaveURL\(new RegExp\(".\*\/elegibility.\*", 'i'\), \{ timeout: 900000 \}\)/);
   assert.match(code, /toBeVisible\(\{ timeout: 900000 \}\)/);
+});
+
+test('codegen/agent: rejects role attribute selectors without brackets', () => {
+  assert.deepEqual(findInvalidGeneratedSelectors(`
+    await page.locator("role='list'").getByText('Nueva Autorizacion').click();
+    await page.locator('role=\\'menu\\'').click();
+  `), ["role='list'", "role='menu'"]);
+
+  assert.deepEqual(findInvalidGeneratedSelectors(`
+    await page.locator("[role=\\"list\\"]").getByText('Nueva Autorizacion').click();
+    await page.getByRole('list').getByText('Nueva Autorizacion').click();
+  `), []);
 });
 
 test('usage/pricing: normalizeLlmUsage sums totals; estimateLlmCost returns a cost', () => {

@@ -52,6 +52,7 @@ Rules:
 - Exact strings in expected and expected_results override shorter or older strings in original_steps.
 - Never invent data-testid/id selectors. Use only selectors present in normalized steps or dom_context.snapshot.controls[].selector_hint. If no selector exists, assert real headings or visible text from dom_context instead.
 - Treat the text inside [selector] as the exact selector contract. CSS class selectors (.ClassName), pseudo selectors (:has-text("X")), and CSS selectors such as li:has-text("X") must remain CSS selectors, not data-testid guesses.
+- Bracketed attribute selectors must keep their brackets. For click text "Nueva Autorizacion" inside [role='list'], emit page.locator('[role="list"]').getByText(...), or page.getByRole('list').getByText(...). Never emit page.locator("role='list'").
 - Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.
 - Keep assertions explicit with Playwright expect.
 - Do not rely on Playwright's default 5000ms assertion timeout. Every toBeVisible, toContainText, toHaveURL, and similar expect assertion must pass an explicit timeout. Default to at least 30000ms; if a test has set test timeout or set assertion timeout, use that value for assertion timeout when appropriate.
@@ -280,4 +281,39 @@ async function validateGeneratedCode(outputDir, plan) {
       throw new Error(`El codigo generado no incluye el prefijo de test [${testCase.id}].`);
     }
   }
+  const invalidSelectors = findInvalidGeneratedSelectors(combined);
+  if (invalidSelectors.length) {
+    throw new Error(`El codigo generado contiene selector Playwright invalido: ${invalidSelectors[0]}. Usa [role="..."] o getByRole(...).`);
+  }
+}
+
+export function findInvalidGeneratedSelectors(source) {
+  const invalid = [];
+  const patterns = [
+    /\blocator\s*\(\s*'((?:\\.|[^'\\])*)'/g,
+    /\blocator\s*\(\s*"((?:\\.|[^"\\])*)"/g,
+    /\blocator\s*\(\s*`((?:\\.|[^`\\])*)`/g
+  ];
+  for (const pattern of patterns) {
+    for (const match of String(source || '').matchAll(pattern)) {
+      const selector = unescapeJsStringFragment(match[1]);
+      if (/^\s*role\s*=/.test(selector)) invalid.push({ selector, index: match.index || 0 });
+    }
+  }
+  const seen = new Set();
+  return invalid
+    .sort((left, right) => left.index - right.index)
+    .map((item) => item.selector)
+    .filter((selector) => {
+      if (seen.has(selector)) return false;
+      seen.add(selector);
+      return true;
+    });
+}
+
+function unescapeJsStringFragment(value) {
+  return String(value || '')
+    .replace(/\\'/g, "'")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\');
 }
