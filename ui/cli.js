@@ -461,7 +461,7 @@ async function commandDoctor(parsed) {
   const root = resolveRoot(parsed.options);
   const fix = Boolean(parsed.options.fix);
   await loadDotEnv(root);
-  const checks = [];
+  const checks = /** @type {ProGuide.DoctorCheck[]} */ ([]);
 
   checks.push({
     name: 'node',
@@ -911,7 +911,7 @@ async function checkViewerPort(root) {
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = firstPort + offset;
     const baseUrl = viewerBaseUrl(host, port);
-    const health = await fetchViewerHealth(baseUrl);
+    const health = /** @type {ProGuide.ViewerHealth|null} */ (await fetchViewerHealth(baseUrl));
     if (health?.service === 'proguide-test-viewer') {
       const sameRoot = rootIdentity(health.root) === rootIdentity(root);
       if (sameRoot) {
@@ -1419,8 +1419,13 @@ function writeJson(payload) {
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
 }
 
+/**
+ * @param {string} message
+ * @param {number} exitCode
+ * @returns {ProGuide.CliError}
+ */
 function cliError(message, exitCode) {
-  const error = new Error(message);
+  const error = /** @type {ProGuide.CliError} */ (new Error(message));
   error.exitCode = exitCode;
   return error;
 }

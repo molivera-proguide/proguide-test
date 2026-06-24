@@ -5,7 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const viewerCache = new Map();
+const viewerCache = /** @type {Map<string, {baseUrl: string, port: number, started: boolean}>} */ (new Map());
 const REQUIRED_VIEWER_CAPABILITIES = ['usage'];
 const DEFAULT_VIEWER_START_TIMEOUT_MS = 15000;
 
@@ -131,13 +131,17 @@ export function viewerHasCapabilities(health, requiredCapabilities = REQUIRED_VI
   return requiredCapabilities.every((capability) => capabilities.includes(capability));
 }
 
+/**
+ * @param {string} baseUrl
+ * @returns {Promise<ProGuide.ViewerHealth|null>}
+ */
 export async function fetchViewerHealth(baseUrl) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 700);
   try {
     const response = await fetch(`${baseUrl}/api/health`, { signal: controller.signal });
     if (!response.ok) return null;
-    return await response.json();
+    return /** @type {ProGuide.ViewerHealth} */ (await response.json());
   } catch {
     return null;
   } finally {

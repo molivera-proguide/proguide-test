@@ -693,7 +693,7 @@ function cleanHandle(value, label) {
 async function attachViewer(root, runId, options = {}) {
   try {
     const viewer = await startViewer(root, runId, options);
-    console.error(`[ProGuide] Visor de resultados: ${viewer.run_url || viewer.viewer_url}`);
+    console.error(`[ProGuide] Visor de resultados: ${'run_url' in viewer ? viewer.run_url : viewer.viewer_url}`);
     return viewer;
   } catch (error) {
     const message = error.message || String(error);

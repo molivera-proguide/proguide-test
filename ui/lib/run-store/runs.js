@@ -115,6 +115,9 @@ export async function loadGeneratedCaseCode(root, runId, caseId) {
   return found;
 }
 
+/**
+ * @param {{root: string, sourceMd: string|string[], baseUrl?: string, metadata?: ProGuide.Metadata, useAgent?: boolean}} input
+ */
 export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {}, useAgent = false }) {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -222,6 +225,9 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   return { run, cases };
 }
 
+/**
+ * @param {{root: string, cases: ProGuide.CaseInput[], baseUrl?: string, metadata?: ProGuide.Metadata}} input
+ */
 export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -299,6 +305,9 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   return { run, cases: normalizedCases };
 }
 
+/**
+ * @param {{root: string, sourceMd: string|string[], metadata?: ProGuide.Metadata, useAgent?: boolean}} input
+ */
 export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAgent = false }) {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -321,6 +330,9 @@ export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAge
   };
 }
 
+/**
+ * @param {{root: string, runId: string, casesPayload: ProGuide.CaseInput[]}} input
+ */
 export async function saveCasesForRun({ root, runId, casesPayload }) {
   const runDir = runPath(root, runId);
   const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
@@ -343,6 +355,9 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
   return { cases };
 }
 
+/**
+ * @param {{root: string, runId: string, casesPayload: ProGuide.CaseInput[], baseUrl?: string, metadata?: ProGuide.Metadata}} input
+ */
 export async function appendCasesToRun({ root, runId, casesPayload, baseUrl = '', metadata = {} }) {
   await ensureLayout(root);
   await loadDotEnv(root);

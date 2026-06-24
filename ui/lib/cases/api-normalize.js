@@ -18,11 +18,18 @@ import { cleanList, stripListMarker, stripMarkdownEmphasis } from '../markdown/t
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 const API_CASE_TYPES = new Set(['api', 'rest', 'restful', 'http', 'api rest', 'api restful']);
 
+/**
+ * @param {ProGuide.CaseInput} [input]
+ * @returns {'api'|'ui'}
+ */
 export function inferCaseType({ type, request, requests = [], steps = [] } = {}) {
   const explicitType = norm(type).replace(/[_-]+/g, ' ');
   if (API_CASE_TYPES.has(explicitType)) return 'api';
   if (request?.method && request?.path) return 'api';
-  if (Array.isArray(requests) && requests.some((item) => item?.request?.method && item?.request?.path)) return 'api';
+  if (Array.isArray(requests) && requests.some((item) => {
+    const entry = /** @type {ProGuide.Dict} */ (item || {});
+    return entry.request?.method && entry.request?.path;
+  })) return 'api';
   if (cleanList(steps).some((step) => normalizeApiStep(step))) return 'api';
   return 'ui';
 }
@@ -51,6 +58,10 @@ function formatApiAssertion(assertion) {
   return JSON.stringify(assertion);
 }
 
+/**
+ * @param {unknown} step
+ * @returns {ProGuide.ApiRequest|null}
+ */
 export function apiRequestFromStep(step) {
   const text = String(step || '').trim();
   const match = text.match(/^(?:(?:api|rest|http|request|llamar|invocar)\s+)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)(.*)$/i);
@@ -66,10 +77,14 @@ export function apiRequestFromStep(step) {
   };
 }
 
+/**
+ * @param {ProGuide.Dict} [input]
+ * @returns {ProGuide.ApiRequest}
+ */
 export function normalizeApiRequest(input = {}) {
-  const stepRequest = cleanList(input.steps || [])
+  const stepRequest = /** @type {Partial<ProGuide.ApiRequest>} */ (cleanList(input.steps || [])
     .map(apiRequestFromStep)
-    .find(Boolean) || {};
+    .find(Boolean) || {});
   const explicitType = API_CASE_TYPES.has(norm(input.type).replace(/[_-]+/g, ' '));
   const explicitPath = input.path || input.endpoint || input.request_path || input.url;
   const method = normalizeHttpMethod(
@@ -98,13 +113,13 @@ export function normalizeApiRequest(input = {}) {
     stepRequest.expected_status ??
     parseExpectedStatus(cleanList(input.expected || []).join('\n'))
   );
-  const request = {
+  const request = /** @type {ProGuide.ApiRequest} */ ({
     method: method || (requestPath && (explicitType || explicitPath || stepRequest.path) ? 'GET' : ''),
     path: requestPath,
     headers: firstNormalizedKeyValue(input.headers, input.request_headers, stepRequest.headers),
     query: firstNormalizedKeyValue(input.query, input.params, input.request_query, stepRequest.query),
     expected_status: expectedStatus
-  };
+  });
   if (body !== undefined) request.body = body;
   return request;
 }
@@ -157,12 +172,19 @@ function expectedStepIndex(line, entriesCount) {
   return number - 1;
 }
 
+/**
+ * @param {unknown} value
+ * @returns {ProGuide.ApiRequestEntry[]}
+ */
 export function normalizeApiRequests(value) {
   return firstArrayValue(value)
     .map((entry, index) => normalizeApiRequestEntry(entry, index))
     .filter((entry) => entry.request.method && entry.request.path);
 }
 
+/**
+ * @param {{request?: ProGuide.ApiRequest, requests?: ProGuide.ApiRequestEntry[], assertions?: ProGuide.ApiAssertion[], captures?: ProGuide.ApiCapture[]}} [input]
+ */
 export function buildApiExecutableSteps({ request, requests = [], assertions = [], captures = [] } = {}) {
   const entries = requests.length
     ? requests
@@ -229,10 +251,15 @@ function normalizeApiRequestEntry(entry, index) {
   };
 }
 
+/**
+ * @param {unknown} step
+ * @param {number} index
+ * @returns {ProGuide.Dict|null}
+ */
 function apiRequestEntryFromStep(step, index) {
   const request = apiRequestFromStep(step);
   if (!request) return null;
-  const entry = {
+  const entry = /** @type {ProGuide.Dict} */ ({
     id: `request_${index + 1}`,
     title: `${request.method} ${request.path}`,
     method: request.method,
@@ -241,11 +268,15 @@ function apiRequestEntryFromStep(step, index) {
     query: request.query,
     expected_status: request.expected_status,
     captures: request.captures
-  };
+  });
   if (request.body !== undefined) entry.body = request.body;
   return entry;
 }
 
+/**
+ * @param {unknown} tail
+ * @returns {Partial<ProGuide.ApiRequest>}
+ */
 function apiRequestDecorationsFromStepTail(tail) {
   const text = String(tail || '').trim();
   const cleanTail = stripCaptureClauses(text);
@@ -254,11 +285,11 @@ function apiRequestDecorationsFromStepTail(tail) {
   const query = parseInlineKeyValueSegment(cleanTail, /(?:query|params?|parametros?)/i);
   const expectedStatus = parseExpectedStatus(cleanTail);
   const captures = parseInlineCaptures(text);
-  const decorations = {
+  const decorations = /** @type {Partial<ProGuide.ApiRequest>} */ ({
     headers,
     query,
     expected_status: expectedStatus
-  };
+  });
   if (body !== undefined) decorations.body = body;
   if (captures.length) decorations.captures = captures;
   return decorations;

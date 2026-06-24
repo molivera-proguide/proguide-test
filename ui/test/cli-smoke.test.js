@@ -286,8 +286,9 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
     assert.equal(prepared.run.status, 'ready');
     assert.equal(prepared.cases[1].route, '/checkout');
     assert.equal(prepared.cases[1].executable_steps[2].normalized_action, 'expect [data-testid="cart-badge-count"] to contain text "1"');
-    assert.equal(prepared.cases[0].data.user.email, 'qa@example.com');
-    assert.equal(Object.hasOwn(prepared.cases[0].data.user, 'password'), false);
+    const firstCase = /** @type {any} */ (prepared.cases[0]);
+    assert.equal(firstCase.data.user.email, 'qa@example.com');
+    assert.equal(Object.hasOwn(firstCase.data.user, 'password'), false);
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
     assert.equal(plan.cases[0].data.user.email, 'qa@example.com');
@@ -375,8 +376,9 @@ test('prepareCasesRun records project and run user identity', async () => {
     assert.equal(prepared.run.project_name, 'shop-front');
     assert.equal(prepared.run.project_key, 'shop-front');
     assert.equal(prepared.run.workspace_root, path.resolve(root));
-    assert.equal(prepared.run.identity_source.run_user_email, 'git');
-    assert.equal(prepared.run.identity_source.project_name, 'package_json');
+    const identitySource = /** @type {any} */ (prepared.run.identity_source);
+    assert.equal(identitySource.run_user_email, 'git');
+    assert.equal(identitySource.project_name, 'package_json');
 
     const runPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'run.json');
     const stored = JSON.parse(fs.readFileSync(runPath, 'utf8'));
@@ -849,6 +851,9 @@ function runCli(args, options = {}) {
   });
 }
 
+/**
+ * @returns {any}
+ */
 function parseJson(stdout) {
   return JSON.parse(stdout);
 }

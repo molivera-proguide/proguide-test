@@ -121,6 +121,11 @@ export async function interpretMarkdownWithAgent(markdown, { root, sourceName, u
   return cases.slice(0, config.llm.max_cases).length ? cases.slice(0, config.llm.max_cases) : baseline;
 }
 
+/**
+ * @param {ProGuide.CaseInput} item
+ * @param {number} number
+ * @param {ProGuide.CaseInput} [fallback]
+ */
 export function normalizeCaseForStorage(item, number, fallback = {}) {
   const title = String(item.title || fallback.title || `Caso ${number}`).trim();
   const originalSteps = cleanList(item.original_steps || item.steps || fallback.original_steps || fallback.steps || []);

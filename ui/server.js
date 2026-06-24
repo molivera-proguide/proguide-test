@@ -72,18 +72,18 @@ app.post('/runs/prepare', async (_request, reply) => {
 });
 
 app.get('/runs/:runId/preview', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   return reply.redirect(`/runs/${encodeURIComponent(runId)}`);
 });
 
 app.get('/runs/:runId/usage', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   const usage = await loadUsageSummary(ROOT, { runId });
   return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Uso LLM', renderUsageDashboard(usage, { runId })));
 });
 
 app.get('/runs/:runId', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   const [payload, usage] = await Promise.all([
     loadRunBundle(ROOT, runId),
     loadUsageSummary(ROOT, { runId })
@@ -92,8 +92,9 @@ app.get('/runs/:runId', async (request, reply) => {
 });
 
 app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
-  const caseId = cleanCaseId(request.params.caseId);
+  const params = routeParams(request);
+  const runId = cleanRunId(params.runId);
+  const caseId = cleanCaseId(params.caseId);
   const payload = await loadRunBundle(ROOT, runId);
   const testCase = (payload.cases || []).find((item) => item.id === caseId);
   if (!testCase) {
@@ -107,14 +108,14 @@ app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
 });
 
 app.get('/api/runs/:runId', async (request) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   return loadRunBundle(ROOT, runId);
 });
 
 app.get('/api/usage', async () => loadUsageSummary(ROOT));
 
 app.get('/api/runs/:runId/usage', async (request) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   return loadUsageSummary(ROOT, { runId });
 });
 
@@ -130,7 +131,7 @@ app.get('/api/health', async () => ({
 }));
 
 app.post('/api/shutdown', async (request, reply) => {
-  const requestedRoot = path.resolve(String(request.body?.root || ''));
+  const requestedRoot = path.resolve(String(requestBody(request).root || ''));
   if (rootIdentity(requestedRoot) !== rootIdentity(ROOT)) {
     return reply.code(403).send({ error: 'root_mismatch' });
   }
@@ -143,17 +144,17 @@ app.post('/api/shutdown', async (request, reply) => {
 });
 
 app.post('/api/runs/:runId/cases', async (request, reply) => {
-  cleanRunId(request.params.runId);
+  cleanRunId(routeParams(request).runId);
   return reply.code(410).send({ error: 'La edicion de casos no esta disponible en el visor. Envia casos actualizados por MCP.' });
 });
 
 app.post('/api/runs/:runId/execute', async (request, reply) => {
-  cleanRunId(request.params.runId);
+  cleanRunId(routeParams(request).runId);
   return reply.code(410).send({ error: 'La ejecucion se dispara por MCP. Usa run_cases o execute_run.' });
 });
 
 app.get('/runs/:runId/events', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
+  const runId = cleanRunId(routeParams(request).runId);
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -179,8 +180,9 @@ app.get('/runs/:runId/events', async (request, reply) => {
 });
 
 app.get('/artifacts/:runId/*', async (request, reply) => {
-  const runId = cleanRunId(request.params.runId);
-  const relative = request.params['*'] || '';
+  const params = routeParams(request);
+  const runId = cleanRunId(params.runId);
+  const relative = params['*'] || '';
   const runDir = path.join(ROOT, 'proguide_tests', 'runs', runId);
   const baseDir = path.resolve(runDir);
   const target = path.resolve(baseDir, relative);
@@ -201,6 +203,14 @@ app.listen({ host: HOST, port: PORT }).then((address) => {
   console.log(`Workspace root: ${ROOT}`);
   scheduleIdleShutdown();
 });
+
+function routeParams(request) {
+  return /** @type {Record<string, string>} */ (request.params || {});
+}
+
+function requestBody(request) {
+  return /** @type {Record<string, any>} */ (request.body || {});
+}
 
 function scheduleIdleShutdown() {
   if (!IDLE_TIMEOUT_MS || activeRequests > 0) return;

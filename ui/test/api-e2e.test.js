@@ -688,7 +688,7 @@ function startSampleApi() {
   return new Promise((resolve, reject) => {
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
+      const address = /** @type {import('node:net').AddressInfo} */ (server.address());
       resolve({
         baseUrl: `http://127.0.0.1:${address.port}`,
         close: () => new Promise((done) => server.close(done))
@@ -769,6 +769,9 @@ function startViewer(root, port) {
   return { child, output };
 }
 
+/**
+ * @returns {Promise<any>}
+ */
 async function waitForJson(url, viewer) {
   // Generous deadline: the viewer boots fastify + the large proguide-service
   // module, which can take several seconds under load when the full suite runs
@@ -788,6 +791,9 @@ async function waitForJson(url, viewer) {
   throw new Error(`Viewer did not become ready: ${viewer.output.join('')}`);
 }
 
+/**
+ * @returns {Promise<any>}
+ */
 async function fetchJson(url) {
   const response = await fetch(url);
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
@@ -819,7 +825,7 @@ function freePort() {
     const server = net.createServer();
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
+      const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
       server.close(() => resolve(port));
     });
   });

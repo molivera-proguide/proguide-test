@@ -6,8 +6,11 @@
     "lib": ["ES2023"],
     "types": ["node"],
     "strict": true,
-    "allowJs": false,
-    "checkJs": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "allowJs": true,
+    "checkJs": true,
+    "noImplicitAny": false,
     "noEmit": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
@@ -15,6 +18,6 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["**/*.ts", "**/*.mts", "types/**/*.d.ts"],
+  "include": ["**/*.js", "**/*.ts", "**/*.mts", "types/**/*.d.ts"],
   "exclude": ["node_modules", "dist", "proguide_tests", "test-results", "playwright-report"]
 }

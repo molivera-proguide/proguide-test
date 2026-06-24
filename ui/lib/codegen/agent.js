@@ -61,6 +61,9 @@ Rules:
   {"files":[{"path":"test_markdown_cases.spec.ts","content":"...typescript code..."}]}
 - Do not include markdown fences.`;
 
+/**
+ * @param {{root: string, plan: ProGuide.Dict, cases: ProGuide.CaseInput[], outputDir: string, config: ProGuide.Dict, domContext?: ProGuide.Dict, usageContext?: ProGuide.UsageContext|null}} input
+ */
 export async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {}, usageContext = null }) {
   await fs.mkdir(outputDir, { recursive: true });
   await writePlaywrightRuntimeShim(outputDir);
@@ -183,9 +186,9 @@ function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, b
         preconditions: sourceCase.preconditions || [],
         data_used: sourceCase.data_used || [],
         data: sourceCase.data || testCase.data || {},
-        dom_context: domContext.by_case_id?.[testCase.id] || {
+        dom_context: /** @type {ProGuide.Dict} */ (domContext).by_case_id?.[testCase.id] || {
           available: false,
-          reason: domContext.error || 'dom_context_not_collected'
+          reason: /** @type {ProGuide.Dict} */ (domContext).error || 'dom_context_not_collected'
         }
       };
     })

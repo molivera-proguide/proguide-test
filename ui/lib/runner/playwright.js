@@ -51,7 +51,7 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
     configPath,
     ...playwrightWorkerArgs(config)
   ]);
-  const env = {
+  const env = /** @type {NodeJS.ProcessEnv} */ ({
     ...runtimeEnv(),
     PROGUIDE_BASE_URL: baseUrl,
     PROGUIDE_RUN_DIR: runDir,
@@ -59,7 +59,7 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
     PROGUIDE_VIDEO: normalizePlaywrightVideo(runnerConfig.video),
     PROGUIDE_SCREENSHOTS: normalizePlaywrightScreenshot(runnerConfig.screenshots),
     PROGUIDE_TRACES: normalizePlaywrightTrace(runnerConfig.traces)
-  };
+  });
   if (credentials.email) env.PROGUIDE_USER_EMAIL = credentials.email;
   if (credentials.username) env.PROGUIDE_USER_USERNAME = credentials.username;
   if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;

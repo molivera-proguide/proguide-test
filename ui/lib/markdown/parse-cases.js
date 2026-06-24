@@ -242,13 +242,13 @@ function parseBlock(block, number) {
   const requests = normalizeApiRequestsFromSteps(fields.original_steps, {
     expected: fields.expected_results
   });
-  const type = inferCaseType({
+  const type = inferCaseType(/** @type {ProGuide.CaseInput} */ ({
     type: fields.test_type,
     request,
     requests,
     steps: fields.original_steps,
     expected: fields.expected_results
-  });
+  }));
   const effectiveRequest = requests[0]?.request || request;
   const executableSteps = buildSteps(fields.original_steps, { type });
   const assertions = type === 'api'

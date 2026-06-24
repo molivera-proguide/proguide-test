@@ -22,6 +22,9 @@ import {
 // (both part of the public API) and recordLlmUsage by lib/llm/anthropic.js.
 
 
+/**
+ * @param {{root: string, runId?: string|null, runDir?: string|null, provider: string, model: string, purpose: string, usage: ProGuide.Dict, request?: ProGuide.Dict}} input
+ */
 export async function recordLlmUsage({
   root,
   runId = null,

@@ -157,6 +157,11 @@ export async function writeJson(filePath, value) {
   await fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
 }
 
+/**
+ * @param {string} filePath
+ * @param {any} [fallback]
+ * @returns {Promise<any>}
+ */
 export async function readJson(filePath, fallback) {
   try {
     return JSON.parse(await fs.readFile(filePath, 'utf8'));

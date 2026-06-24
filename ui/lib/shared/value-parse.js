@@ -27,7 +27,7 @@ export function normalizeKeyValueObject(value, options = {}) {
   const parsed = parseJsonObject(value);
   if (parsed) return normalizeKeyValueObject(parsed, options);
   const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
-  const entries = {};
+  const entries = /** @type {Record<string, unknown>} */ ({});
   for (const line of cleanList(lines)) {
     const match = String(line).match(/^([^:=]{1,80})\s*[:=]\s*(.+)$/);
     if (!match) continue;
