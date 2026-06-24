@@ -11,9 +11,12 @@ import {
 // and generateApiTestSpec are imported back there.
 
 export function isApiPlanCase(testCase: ProGuide.Dict): boolean {
-  return String(testCase?.type || '').toLowerCase() === 'api' ||
-    (Array.isArray(testCase?.requests) && testCase.requests.some((item) => item?.request?.method && item?.request?.path)) ||
-    Boolean(testCase?.request?.method && testCase?.request?.path);
+  return (
+    String(testCase?.type || '').toLowerCase() === 'api' ||
+    (Array.isArray(testCase?.requests) &&
+      testCase.requests.some((item) => item?.request?.method && item?.request?.path)) ||
+    Boolean(testCase?.request?.method && testCase?.request?.path)
+  );
 }
 
 export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
@@ -29,18 +32,20 @@ export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
     };
   });
   const markers = cases.map((testCase) => `// [${testCase.id}] ${testCase.title}`).join('\n');
-  const declarations = cases.map((testCase) => {
-    const caseSource = JSON.stringify(testCase, null, 2)
-      .split('\n')
-      .map((line, index) => index === 0 ? line : `  ${line}`)
-      .join('\n');
-    return [
-      `test(${JSON.stringify(`[${testCase.id}] ${testCase.title}`)}, async ({ request }) => {`,
-      `  const testCase = ${caseSource};`,
-      '  await runApiCase(request, testCase);',
-      '});'
-    ].join('\n');
-  }).join('\n\n');
+  const declarations = cases
+    .map((testCase) => {
+      const caseSource = JSON.stringify(testCase, null, 2)
+        .split('\n')
+        .map((line, index) => (index === 0 ? line : `  ${line}`))
+        .join('\n');
+      return [
+        `test(${JSON.stringify(`[${testCase.id}] ${testCase.title}`)}, async ({ request }) => {`,
+        `  const testCase = ${caseSource};`,
+        '  await runApiCase(request, testCase);',
+        '});'
+      ].join('\n');
+    })
+    .join('\n\n');
   return [
     "import fs from 'node:fs/promises';",
     "import path from 'node:path';",
@@ -140,7 +145,7 @@ export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
     '',
     'async function readResponseBody(response) {',
     '  const text = await response.text();',
-    "  if (!text) return null;",
+    '  if (!text) return null;',
     "  const contentType = response.headers()['content-type'] || '';",
     "  if (contentType.includes('json') || /^[\\s]*[\\[{]/.test(text)) {",
     '    try {',
@@ -208,7 +213,7 @@ export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
     '    expect(actual).toEqual(assertion.expected);',
     '    return;',
     '  }',
-    "  throw new Error(`Unsupported API assertion: ${JSON.stringify(assertion)}`);",
+    '  throw new Error(`Unsupported API assertion: ${JSON.stringify(assertion)}`);',
     '}',
     '',
     'function enrichAssertionError(error, assertion, actualResponse) {',
@@ -265,7 +270,7 @@ export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
     '  try {',
     '    const value = applyCapture({ capture, response, responseBody, variables });',
     '    evidence.captures.push({',
-    "      name: capture.name,",
+    '      name: capture.name,',
     "      source: capture.source || 'body',",
     '      path: capture.path || null,',
     '      header: capture.header || null,',
@@ -274,7 +279,7 @@ export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
     '    });',
     '  } catch (error) {',
     '    evidence.captures.push({',
-    "      name: capture.name,",
+    '      name: capture.name,',
     "      source: capture.source || 'body',",
     '      path: capture.path || null,',
     '      header: capture.header || null,',
@@ -409,16 +414,18 @@ function normalizeApiPlanRequests(testCase: ProGuide.Dict): ProGuide.ApiRequestE
     steps: testCase.steps || [],
     expected: testCase.expected || []
   });
-  return [{
-    id: 'request_1',
-    title: `${request.method} ${request.path}`,
-    request,
-    assertions: normalizeApiAssertions({
-      assertions: testCase.assertions || [],
-      expected: testCase.expected || [],
-      expectedStatus: request.expected_status
-    }),
-    captures: normalizeApiCaptures(testCase.captures ?? testCase.save ?? testCase.extract),
-    debug: Boolean(testCase.debug)
-  }];
+  return [
+    {
+      id: 'request_1',
+      title: `${request.method} ${request.path}`,
+      request,
+      assertions: normalizeApiAssertions({
+        assertions: testCase.assertions || [],
+        expected: testCase.expected || [],
+        expectedStatus: request.expected_status
+      }),
+      captures: normalizeApiCaptures(testCase.captures ?? testCase.save ?? testCase.extract),
+      debug: Boolean(testCase.debug)
+    }
+  ];
 }

@@ -17,24 +17,26 @@ export async function writeEvidenceReport({
   runDir: string;
 }) {
   const caseById = new Map(cases.map((item) => [String(item.id), item]));
-  const rows = (summary.results || []).map((result: ProGuide.Dict) => {
-    const testCase: ProGuide.Dict = caseById.get(String(result.id)) || {};
-    const errorDetails = result.error_details
-      ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
-      : '';
-    const actualResponse = result.actual_response
-      ? `<details class="error-console"><summary>Actual response</summary><pre>${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre></details>`
-      : '';
-    const apiEvidence = (result.api_evidence || []).length
-      ? `<details class="error-console"><summary>API evidence</summary><pre>${escapeHtml(JSON.stringify(result.api_evidence, null, 2))}</pre></details>`
-      : '';
-    return `<tr>
+  const rows = (summary.results || [])
+    .map((result: ProGuide.Dict) => {
+      const testCase: ProGuide.Dict = caseById.get(String(result.id)) || {};
+      const errorDetails = result.error_details
+        ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
+        : '';
+      const actualResponse = result.actual_response
+        ? `<details class="error-console"><summary>Actual response</summary><pre>${escapeHtml(JSON.stringify(result.actual_response, null, 2))}</pre></details>`
+        : '';
+      const apiEvidence = (result.api_evidence || []).length
+        ? `<details class="error-console"><summary>API evidence</summary><pre>${escapeHtml(JSON.stringify(result.api_evidence, null, 2))}</pre></details>`
+        : '';
+      return `<tr>
       <td>${escapeHtml(testCase.number || '')}</td>
       <td>${escapeHtml(result.title)}</td>
       <td>${escapeHtml(result.status)}</td>
       <td>${escapeHtml(result.message || '')}${apiEvidence}${actualResponse}${errorDetails}</td>
     </tr>`;
-  }).join('');
+    })
+    .join('');
   const html = `<!doctype html>
 <html lang="es">
 <head>

@@ -10,7 +10,10 @@ function escapeRegExp(value: string): string {
 export function stripListMarker(line: string): string {
   const bulletPattern = escapeRegExp(BULLET_CHARS);
   return line
-    .replace(new RegExp(`^\\s*(?:[-*+${bulletPattern}]\\s+|\\d+[\\).\\s-]+|paso\\s+\\d+[:.\\s-]+)`, 'i'), '')
+    .replace(
+      new RegExp(`^\\s*(?:[-*+${bulletPattern}]\\s+|\\d+[\\).\\s-]+|paso\\s+\\d+[:.\\s-]+)`, 'i'),
+      ''
+    )
     .trim();
 }
 
@@ -19,10 +22,11 @@ export function stripMarkdownEmphasis(line: string): string {
 }
 
 export function cleanList(values: unknown): string[] {
-  const rawValues = typeof values === 'string'
-    ? [values]
-    : (values && typeof (values as any)[Symbol.iterator] === 'function'
+  const rawValues =
+    typeof values === 'string'
+      ? [values]
+      : values && typeof (values as any)[Symbol.iterator] === 'function'
         ? Array.from(values as Iterable<unknown>)
-        : []);
+        : [];
   return rawValues.map((value) => stripListMarker(String(value)).trim()).filter(Boolean);
 }

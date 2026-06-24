@@ -15,15 +15,30 @@ import {
   prepareMarkdownRun,
   previewMarkdownRun
 } from './proguide-service.js';
-import { ensurePlaywrightRuntime, playwrightBrowserProbe, playwrightImportProbe, runtimeEnv } from './playwright-runtime.js';
-import { ensureViewer, fetchViewerHealth, rootIdentity, stopViewer, viewerBaseUrl, viewerLinks } from './viewer.js';
+import {
+  ensurePlaywrightRuntime,
+  playwrightBrowserProbe,
+  playwrightImportProbe,
+  runtimeEnv
+} from './playwright-runtime.js';
+import {
+  ensureViewer,
+  fetchViewerHealth,
+  rootIdentity,
+  stopViewer,
+  viewerBaseUrl,
+  viewerLinks
+} from './viewer.js';
 import { loadDotEnv } from './lib/shared/env.js';
 import { isPathInside } from './lib/shared/paths.js';
 import { casesRequireBrowser } from './lib/shared/cases.js';
 import { defaultConfig } from './lib/config/defaults.js';
 
-const DEFAULT_VIEWER_HOST = process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
-const DEFAULT_VIEWER_PORT = Number(process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787);
+const DEFAULT_VIEWER_HOST =
+  process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
+const DEFAULT_VIEWER_PORT = Number(
+  process.env.PROGUIDE_VIEWER_PORT || process.env.PROGUIDE_UI_PORT || 8787
+);
 const DEFAULT_VIEWER_PORT_ATTEMPTS = Number(process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS || 20);
 const PACKAGE_ROOT = path.dirname(fileURLToPath(import.meta.url));
 const QA_SKILL_NAME = 'qa-test-cases';
@@ -45,27 +60,61 @@ type CliParsed = {
 };
 
 const HELP_COMMON_OPTIONS = [
-  { option: '--root <path>', description: 'Workspace root. Por defecto usa variables del cliente MCP o el directorio actual.' },
+  {
+    option: '--root <path>',
+    description: 'Workspace root. Por defecto usa variables del cliente MCP o el directorio actual.'
+  },
   { option: '--json', description: 'Salida JSON estable para automatizacion y otros LLMs.' },
-  { option: '--stdin', description: 'Lee casos Markdown desde stdin cuando el comando acepta Markdown.' },
-  { option: '--no-viewer', description: 'No levanta el viewer local automaticamente al crear o ejecutar runs.' },
-  { option: '--email <value>', description: 'Credencial opcional disponible como {{email}} en casos.' },
-  { option: '--username <value>', description: 'Credencial opcional disponible como {{username}} en casos.' },
-  { option: '--password <value>', description: 'Credencial opcional disponible como {{password}} en casos.' },
-  { option: '--run-user-email <email>', description: 'Email del usuario que crea o ejecuta el run.' },
-  { option: '--run-user-name <name>', description: 'Nombre del usuario que crea o ejecuta el run.' },
-  { option: '--project-name <name>', description: 'Nombre del proyecto bajo prueba para metadata del run.' },
-  { option: '--project-key <key>', description: 'Clave corta del proyecto bajo prueba para metadata del run.' }
+  {
+    option: '--stdin',
+    description: 'Lee casos Markdown desde stdin cuando el comando acepta Markdown.'
+  },
+  {
+    option: '--no-viewer',
+    description: 'No levanta el viewer local automaticamente al crear o ejecutar runs.'
+  },
+  {
+    option: '--email <value>',
+    description: 'Credencial opcional disponible como {{email}} en casos.'
+  },
+  {
+    option: '--username <value>',
+    description: 'Credencial opcional disponible como {{username}} en casos.'
+  },
+  {
+    option: '--password <value>',
+    description: 'Credencial opcional disponible como {{password}} en casos.'
+  },
+  {
+    option: '--run-user-email <email>',
+    description: 'Email del usuario que crea o ejecuta el run.'
+  },
+  {
+    option: '--run-user-name <name>',
+    description: 'Nombre del usuario que crea o ejecuta el run.'
+  },
+  {
+    option: '--project-name <name>',
+    description: 'Nombre del proyecto bajo prueba para metadata del run.'
+  },
+  {
+    option: '--project-key <key>',
+    description: 'Clave corta del proyecto bajo prueba para metadata del run.'
+  }
 ];
 
 const HELP_COMMANDS = [
   {
     command: 'create',
-    description: 'Crea un run desde casos Markdown y deja el plan listo para revisar o ejecutar despues.',
+    description:
+      'Crea un run desde casos Markdown y deja el plan listo para revisar o ejecutar despues.',
     usage: 'proguide create [casos.md] --base-url <url> [--json|--stdin|--dry-run]',
     options: [
       { option: '--base-url <url>', description: 'URL base de la app o API bajo prueba.' },
-      { option: '--dry-run', description: 'Normaliza y valida los casos sin crear un run persistido.' },
+      {
+        option: '--dry-run',
+        description: 'Normaliza y valida los casos sin crear un run persistido.'
+      },
       { option: '--stdin', description: 'Lee el Markdown desde stdin.' },
       { option: '--no-viewer', description: 'No inicia ni reutiliza el viewer local.' }
     ],
@@ -79,8 +128,14 @@ const HELP_COMMANDS = [
     description: 'Crea y ejecuta un run desde Markdown usando Playwright y guarda evidencia.',
     usage: 'proguide run [casos.md] --base-url <url> [--json|--stdin]',
     options: [
-      { option: '--base-url <url>', description: 'URL base obligatoria para resolver rutas relativas.' },
-      { option: '--from-plan', description: 'Ejecuta desde el plan generado sin regenerar codigo cuando aplica.' },
+      {
+        option: '--base-url <url>',
+        description: 'URL base obligatoria para resolver rutas relativas.'
+      },
+      {
+        option: '--from-plan',
+        description: 'Ejecuta desde el plan generado sin regenerar codigo cuando aplica.'
+      },
       { option: '--stdin', description: 'Lee el Markdown desde stdin.' },
       { option: '--no-viewer', description: 'No inicia ni reutiliza el viewer local.' }
     ],
@@ -94,7 +149,10 @@ const HELP_COMMANDS = [
     description: 'Ejecuta un run existente por run_id.',
     usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--json]',
     options: [
-      { option: '--base-url <url>', description: 'URL base para la ejecucion si el run la necesita.' },
+      {
+        option: '--base-url <url>',
+        description: 'URL base para la ejecucion si el run la necesita.'
+      },
       { option: '--from-plan', description: 'Usa el plan guardado como fuente de ejecucion.' }
     ],
     examples: ['proguide execute 2026-06-23_10-30-00 --base-url http://localhost:3000 --json']
@@ -147,7 +205,8 @@ const HELP_COMMANDS = [
   },
   {
     command: 'mcp',
-    description: 'Arranca el servidor MCP stdio de ProGuide para Claude Code, Cursor u otros clientes.',
+    description:
+      'Arranca el servidor MCP stdio de ProGuide para Claude Code, Cursor u otros clientes.',
     usage: 'proguide mcp',
     examples: ['claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp']
   },
@@ -155,23 +214,33 @@ const HELP_COMMANDS = [
     command: 'doctor',
     description: 'Verifica runtime, Playwright, Chromium, permisos de runs y puerto del viewer.',
     usage: 'proguide doctor [--json] [--fix]',
-    options: [{ option: '--fix', description: 'Intenta reparar dependencias administradas como Chromium.' }],
+    options: [
+      { option: '--fix', description: 'Intenta reparar dependencias administradas como Chromium.' }
+    ],
     examples: ['proguide doctor --json', 'proguide doctor --fix']
   },
   {
     command: 'config',
     description: 'Lee o actualiza configuracion local no secreta en proguide_tests/config.yaml.',
-    usage: 'proguide config get [clave] [--json]\n  proguide config set <seccion.campo> <valor> [--json]',
+    usage:
+      'proguide config get [clave] [--json]\n  proguide config set <seccion.campo> <valor> [--json]',
     examples: ['proguide config get --json', 'proguide config set runner.workers 4']
   },
   {
     command: 'update skills',
     aliases: ['update-skills'],
-    description: 'Instala o actualiza la skill qa-test-cases de Claude Code desde el paquete ProGuide.',
+    description:
+      'Instala o actualiza la skill qa-test-cases de Claude Code desde el paquete ProGuide.',
     usage: 'proguide update skills [--scope user|project] [--skills-dir <path>] [--json]',
     options: [
-      { option: '--scope user|project', description: 'user instala en ~/.claude/skills; project instala en <root>/.claude/skills.' },
-      { option: '--skills-dir <path>', description: 'Directorio de skills de Claude. Tiene prioridad sobre --scope.' },
+      {
+        option: '--scope user|project',
+        description: 'user instala en ~/.claude/skills; project instala en <root>/.claude/skills.'
+      },
+      {
+        option: '--skills-dir <path>',
+        description: 'Directorio de skills de Claude. Tiene prioridad sobre --scope.'
+      },
       { option: '--target claude-code', description: 'Target soportado actualmente.' },
       { option: '--dry-run', description: 'Muestra destino y archivos sin copiar.' }
     ],
@@ -183,14 +252,21 @@ const HELP_COMMANDS = [
   {
     command: 'agent-setup',
     aliases: ['agents'],
-    description: 'Muestra snippets para registrar ProGuide como MCP en Claude Code, Cursor o cliente generico.',
+    description:
+      'Muestra snippets para registrar ProGuide como MCP en Claude Code, Cursor o cliente generico.',
     usage: 'proguide agent-setup [--client claude-code|cursor|generic] [--json]',
-    options: [{ option: '--client <name>', description: 'Filtra snippets por claude-code, cursor, generic o all.' }],
+    options: [
+      {
+        option: '--client <name>',
+        description: 'Filtra snippets por claude-code, cursor, generic o all.'
+      }
+    ],
     examples: ['proguide agent-setup --client claude-code', 'proguide agent-setup --json']
   },
   {
     command: 'help',
-    description: 'Muestra esta ayuda o la ayuda detallada de un comando. Con --json devuelve metadata para agentes.',
+    description:
+      'Muestra esta ayuda o la ayuda detallada de un comando. Con --json devuelve metadata para agentes.',
     usage: 'proguide help [comando] [--json]\n  proguide <comando> --help',
     examples: ['proguide help', 'proguide help run --json', 'proguide run --help']
   },
@@ -291,14 +367,19 @@ async function commandCreate(parsed) {
     } finally {
       await cleanupTemporarySource(source);
     }
-    const ready = preview.cases.filter((item) => item.automation_state === 'listo' && !item.excluded).length;
+    const ready = preview.cases.filter(
+      (item) => item.automation_state === 'listo' && !item.excluded
+    ).length;
     const payload = {
       status: 'dry_run',
       summary: {
         total: preview.cases.length,
         ready,
-        needs_review: preview.cases.filter((item) => item.automation_state === 'necesita_revision').length,
-        not_automatable: preview.cases.filter((item) => item.automation_state === 'no_automatizable_aun').length,
+        needs_review: preview.cases.filter((item) => item.automation_state === 'necesita_revision')
+          .length,
+        not_automatable: preview.cases.filter(
+          (item) => item.automation_state === 'no_automatizable_aun'
+        ).length,
         warnings: preview.warnings.length
       },
       cases: preview.cases,
@@ -330,7 +411,11 @@ async function commandCreate(parsed) {
     summary: summaryCounts(prepared.run, null, prepared.cases),
     cases: prepared.cases
   };
-  emit(payload, parsed.options, `Run ${prepared.run.id} creado: ${payload.run_url || '(visor deshabilitado)'}`);
+  emit(
+    payload,
+    parsed.options,
+    `Run ${prepared.run.id} creado: ${payload.run_url || '(visor deshabilitado)'}`
+  );
   return EXIT.ok;
 }
 
@@ -371,7 +456,9 @@ async function commandExecute(parsed) {
   const runId = requiredHandle(parsed.positionals[0], 'run_id');
   const viewer = await attachViewer(root, runId, parsed.options);
   const existingBundle = await loadRunBundle(root, runId);
-  await ensurePlaywrightRuntime(root, { requireBrowser: casesRequireBrowser(existingBundle.cases) });
+  await ensurePlaywrightRuntime(root, {
+    requireBrowser: casesRequireBrowser(existingBundle.cases)
+  });
   await executePreparedRun({
     root,
     runId,
@@ -423,7 +510,11 @@ async function commandListRuns(parsed) {
   const payload = {
     runs: runs.slice(0, Math.max(0, limit))
   };
-  emit(payload, parsed.options, payload.runs.map((run) => `${run.id}\t${run.status}\t${run.base_url || ''}`).join('\n'));
+  emit(
+    payload,
+    parsed.options,
+    payload.runs.map((run) => `${run.id}\t${run.status}\t${run.base_url || ''}`).join('\n')
+  );
   return EXIT.ok;
 }
 
@@ -467,7 +558,7 @@ async function commandDoctor(parsed) {
   const root = resolveRoot(parsed.options);
   const fix = Boolean(parsed.options.fix);
   await loadDotEnv(root);
-  const checks = /** @type {ProGuide.DoctorCheck[]} */ ([]);
+  const checks = /** @type {ProGuide.DoctorCheck[]} */ [];
 
   checks.push({
     name: 'node',
@@ -498,20 +589,24 @@ async function commandDoctor(parsed) {
         : 'Ejecuta proguide doctor --fix o reinstala el paquete npm si falta @playwright/test.'
     });
   }
-  checks.push(checkCommand(
-    'playwright_test',
-    process.execPath,
-    ['-e', playwrightImportProbe()],
-    'Reinstala el paquete npm de ProGuide; @playwright/test debe venir como dependencia.',
-    runtimeEnv()
-  ));
-  checks.push(checkCommand(
-    'playwright_browsers',
-    process.execPath,
-    ['-e', playwrightBrowserProbe()],
-    'Ejecuta proguide doctor --fix para instalar Chromium de Playwright.',
-    runtimeEnv()
-  ));
+  checks.push(
+    checkCommand(
+      'playwright_test',
+      process.execPath,
+      ['-e', playwrightImportProbe()],
+      'Reinstala el paquete npm de ProGuide; @playwright/test debe venir como dependencia.',
+      runtimeEnv()
+    )
+  );
+  checks.push(
+    checkCommand(
+      'playwright_browsers',
+      process.execPath,
+      ['-e', playwrightBrowserProbe()],
+      'Ejecuta proguide doctor --fix para instalar Chromium de Playwright.',
+      runtimeEnv()
+    )
+  );
   checks.push(await checkRunsWritable(root));
   checks.push(await checkViewerPort(root));
 
@@ -540,9 +635,13 @@ async function commandConfig(parsed) {
   if (subcommand === 'set') {
     const key = parsed.positionals[1];
     const rawValue = parsed.positionals.slice(2).join(' ');
-    if (!key || !rawValue) throw cliError('Uso: proguide config set <clave> <valor>', EXIT.invalidInput);
+    if (!key || !rawValue)
+      throw cliError('Uso: proguide config set <clave> <valor>', EXIT.invalidInput);
     if (/(api[_-]?key|password|secret|token)/i.test(key)) {
-      throw cliError('No se guardan secretos con config set. Usa variables de entorno.', EXIT.invalidInput);
+      throw cliError(
+        'No se guardan secretos con config set. Usa variables de entorno.',
+        EXIT.invalidInput
+      );
     }
     const config = await readConfig(root);
     writeDotted(config, key, parseCliScalar(rawValue));
@@ -560,14 +659,24 @@ async function commandConfig(parsed) {
 }
 
 async function commandAgentSetup(parsed) {
-  const client = String(option(parsed.options, 'client') || parsed.positionals[0] || 'all').toLowerCase();
+  const client = String(
+    option(parsed.options, 'client') || parsed.positionals[0] || 'all'
+  ).toLowerCase();
   const payload = agentSetupPayload();
-  const selected = client === 'all' ? payload : {
-    ...payload,
-    clients: Object.fromEntries(Object.entries(payload.clients).filter(([key]) => key === normalizeClientKey(client)))
-  };
+  const selected =
+    client === 'all'
+      ? payload
+      : {
+          ...payload,
+          clients: Object.fromEntries(
+            Object.entries(payload.clients).filter(([key]) => key === normalizeClientKey(client))
+          )
+        };
   if (client !== 'all' && !Object.keys(selected.clients).length) {
-    throw cliError(`Cliente no soportado: ${client}. Usa claude-code, cursor, generic o all.`, EXIT.invalidInput);
+    throw cliError(
+      `Cliente no soportado: ${client}. Usa claude-code, cursor, generic o all.`,
+      EXIT.invalidInput
+    );
   }
   emit(selected, parsed.options, renderAgentSetup(selected));
   return EXIT.ok;
@@ -582,7 +691,9 @@ async function commandUpdate(parsed) {
 }
 
 async function commandUpdateSkills(parsed) {
-  const target = normalizeClientKey(optionText(parsed.options, 'target', 'client') || 'claude-code');
+  const target = normalizeClientKey(
+    optionText(parsed.options, 'target', 'client') || 'claude-code'
+  );
   if (target !== 'claude_code') {
     throw cliError(`Target no soportado: ${target}. Usa --target claude-code.`, EXIT.invalidInput);
   }
@@ -633,7 +744,11 @@ function commandHelp(parsed = { command: '', options: {}, positionals: [] }) {
       error: `Comando no documentado: ${target}`,
       available_commands: HELP_COMMANDS.map((item) => item.command)
     };
-    emit(payload, parsed.options, `${payload.error}\n\nUsa proguide help para ver comandos disponibles.`);
+    emit(
+      payload,
+      parsed.options,
+      `${payload.error}\n\nUsa proguide help para ver comandos disponibles.`
+    );
     return EXIT.invalidInput;
   }
 
@@ -645,7 +760,10 @@ function commandHelp(parsed = { command: '', options: {}, positionals: [] }) {
 function helpTargetFromParsed(parsed) {
   if (parsed.command === 'help') return parsed.positionals.join(' ').trim();
   if (!parsed.options.help || !parsed.command) return '';
-  if (parsed.command === 'update' && ['skill', 'skills'].includes(String(parsed.positionals[0] || '').toLowerCase())) {
+  if (
+    parsed.command === 'update' &&
+    ['skill', 'skills'].includes(String(parsed.positionals[0] || '').toLowerCase())
+  ) {
     return 'update skills';
   }
   return parsed.command;
@@ -653,21 +771,27 @@ function helpTargetFromParsed(parsed) {
 
 function findHelpCommand(target) {
   const normalized = normalizeHelpName(target);
-  return HELP_COMMANDS.find((item) => {
-    if (normalizeHelpName(item.command) === normalized) return true;
-    return (item.aliases || []).some((alias) => normalizeHelpName(alias) === normalized);
-  }) || null;
+  return (
+    HELP_COMMANDS.find((item) => {
+      if (normalizeHelpName(item.command) === normalized) return true;
+      return (item.aliases || []).some((alias) => normalizeHelpName(alias) === normalized);
+    }) || null
+  );
 }
 
 function normalizeHelpName(value) {
-  return String(value || '').toLowerCase().trim().replace(/[-_\s]+/g, ' ');
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[-_\s]+/g, ' ');
 }
 
 function generalHelpPayload() {
   return {
     status: 'ok',
     name: 'ProGuide Test',
-    purpose: 'Herramienta local-first para crear, ejecutar e inspeccionar casos QA E2E/API con Playwright.',
+    purpose:
+      'Herramienta local-first para crear, ejecutar e inspeccionar casos QA E2E/API con Playwright.',
     usage: 'proguide <comando> [opciones]',
     help_usage: [
       'proguide help',
@@ -701,7 +825,9 @@ function commandHelpPayload(command) {
     description: command.description,
     usage: command.usage,
     options: commandOptions,
-    common_options: HELP_COMMON_OPTIONS.filter((common) => !commandOptions.some((item) => item.option === common.option)),
+    common_options: HELP_COMMON_OPTIONS.filter(
+      (common) => !commandOptions.some((item) => item.option === common.option)
+    ),
     examples: command.examples || []
   };
 }
@@ -746,7 +872,9 @@ function renderCommandHelp(payload) {
     payload.description,
     '',
     'Uso:',
-    ...String(payload.usage).split('\n').map((line) => `  ${line}`)
+    ...String(payload.usage)
+      .split('\n')
+      .map((line) => `  ${line}`)
   ];
   const options = [...payload.options, ...payload.common_options];
   if (options.length) {
@@ -839,14 +967,17 @@ function runPayload(run, summary, cases, viewer) {
 
 function summaryCounts(run, summary, cases = []) {
   const results = summary?.results || [];
-  const counted = results.reduce((acc, result) => {
-    if (result.status === 'passed') acc.passed += 1;
-    else if (result.status === 'failed') acc.failed += 1;
-    else if (result.status === 'blocked') acc.blocked += 1;
-    else if (result.status === 'setup_failed') acc.setup_failed += 1;
-    else acc.inconclusive += 1;
-    return acc;
-  }, { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 });
+  const counted = results.reduce(
+    (acc, result) => {
+      if (result.status === 'passed') acc.passed += 1;
+      else if (result.status === 'failed') acc.failed += 1;
+      else if (result.status === 'blocked') acc.blocked += 1;
+      else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else acc.inconclusive += 1;
+      return acc;
+    },
+    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 }
+  );
   return {
     total: Number(run?.total_cases || cases.length || results.length || 0),
     passed: Number(run?.passed ?? counted.passed),
@@ -859,7 +990,8 @@ function summaryCounts(run, summary, cases = []) {
 
 function exitCodeForRun(run) {
   if (run.status === 'passed') return EXIT.ok;
-  if (['failed', 'blocked', 'inconclusive', 'finished'].includes(run.status)) return EXIT.testsFailed;
+  if (['failed', 'blocked', 'inconclusive', 'finished'].includes(run.status))
+    return EXIT.testsFailed;
   if (['error', 'setup_failed'].includes(run.status)) return EXIT.execution;
   return EXIT.ok;
 }
@@ -877,7 +1009,7 @@ function checkCommand(name, command, args, suggestion, env = process.env) {
     ok: result.status === 0,
     command: [command, ...args].join(' '),
     version: result.status === 0 ? output : '',
-    message: result.status === 0 ? output : (output || result.error?.message || 'No disponible.'),
+    message: result.status === 0 ? output : output || result.error?.message || 'No disponible.',
     suggestion
   };
 }
@@ -908,16 +1040,18 @@ async function checkRunsWritable(root) {
 
 async function checkViewerPort(root) {
   const host = DEFAULT_VIEWER_HOST;
-  const firstPort = Number.isFinite(DEFAULT_VIEWER_PORT) && DEFAULT_VIEWER_PORT > 0 ? DEFAULT_VIEWER_PORT : 8787;
-  const attempts = Number.isFinite(DEFAULT_VIEWER_PORT_ATTEMPTS) && DEFAULT_VIEWER_PORT_ATTEMPTS > 0
-    ? DEFAULT_VIEWER_PORT_ATTEMPTS
-    : 20;
+  const firstPort =
+    Number.isFinite(DEFAULT_VIEWER_PORT) && DEFAULT_VIEWER_PORT > 0 ? DEFAULT_VIEWER_PORT : 8787;
+  const attempts =
+    Number.isFinite(DEFAULT_VIEWER_PORT_ATTEMPTS) && DEFAULT_VIEWER_PORT_ATTEMPTS > 0
+      ? DEFAULT_VIEWER_PORT_ATTEMPTS
+      : 20;
   const skipped = [];
 
   for (let offset = 0; offset < attempts; offset += 1) {
     const port = firstPort + offset;
     const baseUrl = viewerBaseUrl(host, port);
-    const health = /** @type {ProGuide.ViewerHealth|null} */ (await fetchViewerHealth(baseUrl));
+    const health = /** @type {ProGuide.ViewerHealth|null} */ await fetchViewerHealth(baseUrl);
     if (health?.service === 'proguide-test-viewer') {
       const sameRoot = rootIdentity(health.root) === rootIdentity(root);
       if (sameRoot) {
@@ -941,9 +1075,10 @@ async function checkViewerPort(root) {
       name: 'viewer_port',
       ok: true,
       port,
-      message: port === firstPort
-        ? `Puerto ${port} disponible.`
-        : `Puerto ${port} disponible; se omitieron puertos ocupados desde ${firstPort}.`,
+      message:
+        port === firstPort
+          ? `Puerto ${port} disponible.`
+          : `Puerto ${port} disponible; se omitieron puertos ocupados desde ${firstPort}.`,
       skipped_ports: skipped
     };
   }
@@ -960,7 +1095,8 @@ async function checkViewerPort(root) {
 }
 
 function tcpOpen(host, port) {
-  const connectHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.replace(/^\[(.*)]$/, '$1');
+  const connectHost =
+    host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.replace(/^\[(.*)]$/, '$1');
   return new Promise((resolve) => {
     const socket = net.createConnection({ host: connectHost, port });
     const done = (value) => {
@@ -1038,7 +1174,9 @@ function toYaml(config) {
 }
 
 function parseCliScalar(value) {
-  const trimmed = String(value ?? '').trim().replace(/^['"]|['"]$/g, '');
+  const trimmed = String(value ?? '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '');
   if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
   return trimmed;
@@ -1052,12 +1190,15 @@ function formatYamlScalar(value) {
 }
 
 function readDotted(config, key) {
-  return String(key).split('.').reduce((value, part) => value?.[part], config);
+  return String(key)
+    .split('.')
+    .reduce((value, part) => value?.[part], config);
 }
 
 function writeDotted(config, key, value) {
   const parts = String(key).split('.').filter(Boolean);
-  if (parts.length < 2) throw cliError('La clave debe usar formato seccion.campo.', EXIT.invalidInput);
+  if (parts.length < 2)
+    throw cliError('La clave debe usar formato seccion.campo.', EXIT.invalidInput);
   let target = config;
   for (const part of parts.slice(0, -1)) {
     target[part] = target[part] && typeof target[part] === 'object' ? target[part] : {};
@@ -1093,7 +1234,11 @@ function parseArgv(argv: string[]): CliParsed {
   return { command, options, positionals };
 }
 
-function parseLongOption(token: string, argv: string[], index: number): { key: string; value: string | boolean; index: number } {
+function parseLongOption(
+  token: string,
+  argv: string[],
+  index: number
+): { key: string; value: string | boolean; index: number } {
   const raw = token.slice(2);
   const equalIndex = raw.indexOf('=');
   if (equalIndex >= 0) {
@@ -1103,7 +1248,9 @@ function parseLongOption(token: string, argv: string[], index: number): { key: s
       index
     };
   }
-  if (['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run', 'from-plan'].includes(raw)) {
+  if (
+    ['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run', 'from-plan'].includes(raw)
+  ) {
     return { key: raw, value: true, index };
   }
   const next = argv[index + 1];
@@ -1116,15 +1263,15 @@ function parseLongOption(token: string, argv: string[], index: number): { key: s
 function resolveRoot(options) {
   return path.resolve(
     option(options, 'root') ||
-    process.env.PROGUIDE_CLI_ROOT ||
-    process.env.PROGUIDE_MCP_ROOT ||
-    process.env.PROGUIDE_UI_ROOT ||
-    process.env.CLAUDE_PROJECT_DIR ||
-    process.env.CURSOR_WORKSPACE_FOLDER ||
-    process.env.WORKSPACE_FOLDER ||
-    process.env.PROJECT_ROOT ||
-    process.env.INIT_CWD ||
-    process.cwd()
+      process.env.PROGUIDE_CLI_ROOT ||
+      process.env.PROGUIDE_MCP_ROOT ||
+      process.env.PROGUIDE_UI_ROOT ||
+      process.env.CLAUDE_PROJECT_DIR ||
+      process.env.CURSOR_WORKSPACE_FOLDER ||
+      process.env.WORKSPACE_FOLDER ||
+      process.env.PROJECT_ROOT ||
+      process.env.INIT_CWD ||
+      process.cwd()
   );
 }
 
@@ -1141,8 +1288,10 @@ function metadataFromOptions(options) {
     module: option(options, 'module') || null,
     qa_owner: option(options, 'qa-owner', 'qa_owner') || null,
     dev_owner: option(options, 'dev-owner', 'dev_owner') || null,
-    run_user_email: option(options, 'run-user-email', 'run_user_email', 'user-email', 'user_email') || null,
-    run_user_name: option(options, 'run-user-name', 'run_user_name', 'user-name', 'user_name') || null,
+    run_user_email:
+      option(options, 'run-user-email', 'run_user_email', 'user-email', 'user_email') || null,
+    run_user_name:
+      option(options, 'run-user-name', 'run_user_name', 'user-name', 'user_name') || null,
     project_name: option(options, 'project-name', 'project_name', 'project') || null,
     project_key: option(options, 'project-key', 'project_key') || null,
     run_source: 'cli'
@@ -1227,8 +1376,10 @@ function agentSetupPayload() {
     ],
     clients: {
       claude_code: {
-        install_command: 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp',
-        npx_command: 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- npx @proguide/test@latest mcp',
+        install_command:
+          'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp',
+        npx_command:
+          'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- npx @proguide/test@latest mcp',
         notes: [
           'Run the command from the QA workspace/app under test.',
           'Pass ANTHROPIC_API_KEY with --env so the secret belongs to the MCP server configuration, not to the app repo.',
@@ -1269,7 +1420,9 @@ function agentSetupPayload() {
 }
 
 function normalizeClientKey(value) {
-  const normalized = String(value || '').toLowerCase().replace(/[-\s]+/g, '_');
+  const normalized = String(value || '')
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
   if (['claude', 'claude_code'].includes(normalized)) return 'claude_code';
   if (normalized === 'cursor') return 'cursor';
   if (['generic', 'mcp'].includes(normalized)) return 'generic';
@@ -1282,7 +1435,11 @@ function renderAgentSetup(payload) {
     lines.push('', 'Claude Code:', `  ${payload.clients.claude_code.install_command}`);
   }
   if (payload.clients.cursor) {
-    lines.push('', 'Cursor .cursor/mcp.json:', JSON.stringify(payload.clients.cursor.config, null, 2));
+    lines.push(
+      '',
+      'Cursor .cursor/mcp.json:',
+      JSON.stringify(payload.clients.cursor.config, null, 2)
+    );
   }
   if (payload.clients.generic) {
     lines.push('', 'Generic MCP stdio:', JSON.stringify(payload.clients.generic, null, 2));
@@ -1303,7 +1460,9 @@ function resolveClaudeSkillsRoot(options, scope) {
 }
 
 function normalizeSkillScope(value) {
-  const normalized = String(value || 'user').toLowerCase().replace(/[-\s]+/g, '_');
+  const normalized = String(value || 'user')
+    .toLowerCase()
+    .replace(/[-\s]+/g, '_');
   if (normalized === 'user' || normalized === 'global') return 'user';
   if (normalized === 'project' || normalized === 'workspace') return 'project';
   throw cliError(`Scope no soportado: ${value}. Usa user o project.`, EXIT.invalidInput);
@@ -1312,7 +1471,8 @@ function normalizeSkillScope(value) {
 function expandHomePath(value) {
   const text = String(value || '');
   if (text === '~') return os.homedir();
-  if (text.startsWith('~/') || text.startsWith('~\\')) return path.join(os.homedir(), text.slice(2));
+  if (text.startsWith('~/') || text.startsWith('~\\'))
+    return path.join(os.homedir(), text.slice(2));
   return text;
 }
 
@@ -1354,10 +1514,14 @@ function renderDryRunPreview(payload) {
   for (const testCase of payload.cases || []) {
     lines.push('', `${testCase.number || '-'} ${testCase.title} [${testCase.automation_state}]`);
     for (const step of testCase.executable_steps || []) {
-      const stepWarnings = (warningsByCase.get(testCase.id) || []).filter((warning) => Number(warning.step) === Number(step.number));
+      const stepWarnings = (warningsByCase.get(testCase.id) || []).filter(
+        (warning) => Number(warning.step) === Number(step.number)
+      );
       const marker = stepWarnings.length ? ' !' : '  ';
       const confidence = Number(step.confidence ?? 0).toFixed(2);
-      lines.push(`${marker} ${step.number}. ${step.original_text} -> ${step.normalized_action} (${confidence})`);
+      lines.push(
+        `${marker} ${step.number}. ${step.original_text} -> ${step.normalized_action} (${confidence})`
+      );
       for (const warning of stepWarnings) {
         lines.push(`     warning: ${warning.type}`);
       }
@@ -1380,15 +1544,17 @@ function renderUsage(usage) {
   if (!usage.entries_count) return [...lines, 'Sin uso registrado.'].join('\n');
   lines.push('', 'Ultimas llamadas:');
   for (const entry of usage.entries.slice(0, 8)) {
-    lines.push([
-      entry.timestamp || '-',
-      entry.run_id || '-',
-      entry.provider || 'llm',
-      entry.model || '-',
-      formatCliTokens(entry.usage?.total_tokens),
-      formatCliUsd(entry.estimated_cost_usd),
-      entry.purpose || '-'
-    ].join('\t'));
+    lines.push(
+      [
+        entry.timestamp || '-',
+        entry.run_id || '-',
+        entry.provider || 'llm',
+        entry.model || '-',
+        formatCliTokens(entry.usage?.total_tokens),
+        formatCliUsd(entry.estimated_cost_usd),
+        entry.purpose || '-'
+      ].join('\t')
+    );
   }
   if (usage.entries.length > 8) lines.push(`... ${usage.entries.length - 8} mas`);
   return lines.join('\n');
@@ -1415,9 +1581,10 @@ function formatCliTokens(value) {
 }
 
 function formatCliUsd(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'sin estimar';
+  if (value === null || value === undefined || !Number.isFinite(Number(value)))
+    return 'sin estimar';
   const number = Number(value);
-  const digits = number > 0 && number < 0.01 ? 6 : (number < 1 ? 4 : 2);
+  const digits = number > 0 && number < 0.01 ? 6 : number < 1 ? 4 : 2;
   return `USD ${number.toFixed(digits)}`;
 }
 
@@ -1438,20 +1605,34 @@ function cliError(message: string, exitCode: number): ProGuide.CliError {
 
 function classifyError(error) {
   const message = String(error.message || error).toLowerCase();
-  if (message.includes('source_path') || message.includes('stdin') || message.includes('obligatorio') || message.includes('invalido')) {
+  if (
+    message.includes('source_path') ||
+    message.includes('stdin') ||
+    message.includes('obligatorio') ||
+    message.includes('invalido')
+  ) {
     return EXIT.invalidInput;
   }
   if (message.includes('anthropic') || message.includes('llm') || message.includes('codigo')) {
     return EXIT.generation;
   }
-  if (message.includes('playwright') || message.includes('browser') || message.includes('runtime')) {
+  if (
+    message.includes('playwright') ||
+    message.includes('browser') ||
+    message.includes('runtime')
+  ) {
     return EXIT.execution;
   }
   return EXIT.config;
 }
 
 function firstLine(value) {
-  return String(value || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+  return (
+    String(value || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || ''
+  );
 }
 
 function renderDoctor(payload) {

@@ -11,5 +11,9 @@ const runtimePackage = {
   type: sourcePackage.type
 };
 
-await fs.writeFile(path.join(dist, 'package.json'), `${JSON.stringify(runtimePackage, null, 2)}\n`, 'utf8');
+await fs.writeFile(
+  path.join(dist, 'package.json'),
+  `${JSON.stringify(runtimePackage, null, 2)}\n`,
+  'utf8'
+);
 await fs.cp(path.join(root, 'skills'), path.join(dist, 'skills'), { recursive: true });

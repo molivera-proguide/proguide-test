@@ -11,7 +11,10 @@ const INSTALL_TIMEOUT_MS = positiveNumber(process.env.PROGUIDE_RUNTIME_INSTALL_T
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
 
-export async function ensurePlaywrightRuntime(root: string, options: { requireBrowser?: boolean; fix?: boolean } = {}) {
+export async function ensurePlaywrightRuntime(
+  root: string,
+  options: { requireBrowser?: boolean; fix?: boolean } = {}
+) {
   const resolvedRoot = path.resolve(root);
   loadDotEnvSync(resolvedRoot);
 
@@ -19,15 +22,32 @@ export async function ensurePlaywrightRuntime(root: string, options: { requireBr
   const actions = [];
   const requireBrowser = options.requireBrowser !== false;
 
-  if (!commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, ['-e', playwrightImportProbe()])) {
-    throw new Error('No se pudo importar @playwright/test desde el paquete ProGuide. Reinstala el paquete npm.');
+  if (
+    !commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, [
+      '-e',
+      playwrightImportProbe()
+    ])
+  ) {
+    throw new Error(
+      'No se pudo importar @playwright/test desde el paquete ProGuide. Reinstala el paquete npm.'
+    );
   }
 
-  if (requireBrowser && !commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, ['-e', playwrightBrowserProbe()])) {
-    runChecked({ command: process.execPath, args: [runtime.cli], env: runtimeEnv() }, ['install', 'chromium'], {
-      timeout: INSTALL_TIMEOUT_MS,
-      label: 'instalar Chromium de Playwright'
-    });
+  if (
+    requireBrowser &&
+    !commandOk({ command: process.execPath, args: [], env: runtimeEnv() }, [
+      '-e',
+      playwrightBrowserProbe()
+    ])
+  ) {
+    runChecked(
+      { command: process.execPath, args: [runtime.cli], env: runtimeEnv() },
+      ['install', 'chromium'],
+      {
+        timeout: INSTALL_TIMEOUT_MS,
+        label: 'instalar Chromium de Playwright'
+      }
+    );
     actions.push('installed_chromium');
   }
 
@@ -93,7 +113,10 @@ export function playwrightBrowserProbe(): string {
   ].join(' ');
 }
 
-function commandOk(spec: { command: string; args?: string[]; env?: NodeJS.ProcessEnv }, args: string[]): boolean {
+function commandOk(
+  spec: { command: string; args?: string[]; env?: NodeJS.ProcessEnv },
+  args: string[]
+): boolean {
   const result = spawnSync(spec.command, [...(spec.args || []), ...args], {
     encoding: 'utf8',
     timeout: CHECK_TIMEOUT_MS,
@@ -116,19 +139,32 @@ function runChecked(
   });
   if (result.status === 0) return result;
 
-  const output = firstUsefulLine(result.stderr) || firstUsefulLine(result.stdout) || result.error?.message || 'sin salida';
-  throw new Error(`No se pudo ${options.label || 'ejecutar comando'}: ${commandText(spec, args)} (${output})`);
+  const output =
+    firstUsefulLine(result.stderr) ||
+    firstUsefulLine(result.stdout) ||
+    result.error?.message ||
+    'sin salida';
+  throw new Error(
+    `No se pudo ${options.label || 'ejecutar comando'}: ${commandText(spec, args)} (${output})`
+  );
 }
 
 function commandText(spec: { command: string; args?: string[] }, args: string[]): string {
-  return [spec.command, ...(spec.args || []), ...args].map((part) => {
-    const text = String(part);
-    return /\s/.test(text) ? `"${text}"` : text;
-  }).join(' ');
+  return [spec.command, ...(spec.args || []), ...args]
+    .map((part) => {
+      const text = String(part);
+      return /\s/.test(text) ? `"${text}"` : text;
+    })
+    .join(' ');
 }
 
 function firstUsefulLine(value: unknown): string {
-  return String(value || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+  return (
+    String(value || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) || ''
+  );
 }
 
 function positiveNumber(value: unknown, fallback: number): number {
@@ -160,5 +196,7 @@ function envFileCandidates(root: string): string[] {
     process.env.PROGUIDE_ENV_FILE,
     path.join(os.homedir(), '.proguide', '.env'),
     path.join(root, '.env')
-  ].filter(Boolean).map((item) => path.resolve(String(item)));
+  ]
+    .filter(Boolean)
+    .map((item) => path.resolve(String(item)));
 }

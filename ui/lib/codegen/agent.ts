@@ -81,9 +81,15 @@ export async function generateTestsWithAgent({
   await writePlaywrightRuntimeShim(outputDir);
 
   const apiCases: ProGuide.Dict[] = (plan.cases || []).filter(isApiPlanCase);
-  const uiCases: ProGuide.Dict[] = (plan.cases || []).filter((testCase: ProGuide.Dict) => !isApiPlanCase(testCase));
+  const uiCases: ProGuide.Dict[] = (plan.cases || []).filter(
+    (testCase: ProGuide.Dict) => !isApiPlanCase(testCase)
+  );
   if (apiCases.length) {
-    await fs.writeFile(path.join(outputDir, 'test_api_cases.spec.ts'), generateApiTestSpec(apiCases), 'utf8');
+    await fs.writeFile(
+      path.join(outputDir, 'test_api_cases.spec.ts'),
+      generateApiTestSpec(apiCases),
+      'utf8'
+    );
     if (usageContext?.runDir) {
       await appendEvent(usageContext.runDir, {
         run_id: usageContext.runId,
@@ -119,7 +125,9 @@ export async function generateTestsWithAgent({
     });
     const files = normalizeGeneratedFiles(data);
     if (!files.length) {
-      throw new Error(`El agente no devolvio archivos TypeScript para ejecutar en el lote ${batchIndex + 1}.`);
+      throw new Error(
+        `El agente no devolvio archivos TypeScript para ejecutar en el lote ${batchIndex + 1}.`
+      );
     }
     for (const file of files) {
       const relative = targetGeneratedPath(file.path, batchIndex, batches.length, usedPaths);
@@ -168,9 +176,10 @@ function buildCodeGenerationPayload({
   batchIndex: number;
   batchCount: number;
 }) {
-  const outputPath = batchCount > 1
-    ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`
-    : 'test_markdown_cases.spec.ts';
+  const outputPath =
+    batchCount > 1
+      ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`
+      : 'test_markdown_cases.spec.ts';
   return {
     project: {
       base_url_is_available_as_playwright_base_url: true,
@@ -219,21 +228,32 @@ function buildCodeGenerationPayload({
   };
 }
 
-export async function loadExistingTestPlan(runDir: string, cases: ProGuide.CaseInput[], run: ProGuide.Dict) {
+export async function loadExistingTestPlan(
+  runDir: string,
+  cases: ProGuide.CaseInput[],
+  run: ProGuide.Dict
+) {
   const planPath = path.join(runDir, TEST_PLAN_JSON);
   const existing = await readJson(planPath, null);
   if (existing && Array.isArray(existing.cases)) {
     return existing;
   }
-  return casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
+  return casesToTestPlan(cases, {
+    sourceMd: SOURCE_MD,
+    appName: run.app_name || 'ProGuide Markdown Cases'
+  });
 }
 
 export function extractCaseCode(moduleText: string, caseId: string): string {
   const lines = moduleText.split(/\r?\n/);
   const testLineIndex = lines.findIndex((line) => {
     const text = String(line);
-    return /\btest\s*\(/.test(text) &&
-      (text.includes(`[${caseId}]`) || text.includes(JSON.stringify(`[${caseId}]`)) || text.includes(String(caseId)));
+    return (
+      /\btest\s*\(/.test(text) &&
+      (text.includes(`[${caseId}]`) ||
+        text.includes(JSON.stringify(`[${caseId}]`)) ||
+        text.includes(String(caseId)))
+    );
   });
   if (testLineIndex >= 0) {
     let blockEnd = lines.length;
@@ -252,19 +272,27 @@ function normalizeGeneratedFiles(data: ProGuide.Dict) {
   const files = Array.isArray(data.files) ? data.files : [];
   return files
     .map((file, index) => ({
-      path: file.path || (index === 0 ? 'test_markdown_cases.spec.ts' : `test_generated_${index + 1}.spec.ts`),
+      path:
+        file.path ||
+        (index === 0 ? 'test_markdown_cases.spec.ts' : `test_generated_${index + 1}.spec.ts`),
       content: file.content || file.code || ''
     }))
     .filter((file) => String(file.content || '').trim());
 }
 
 function safeGeneratedPath(value: unknown): string {
-  const normalized = String(value || 'test_markdown_cases.spec.ts').replace(/\\/g, '/').split('/').filter(Boolean).join('/');
+  const normalized = String(value || 'test_markdown_cases.spec.ts')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean)
+    .join('/');
   if (!normalized || normalized.startsWith('..') || path.isAbsolute(normalized)) {
     throw new Error(`Ruta de codigo generada no permitida: ${value}`);
   }
   if (!/\.spec\.(?:ts|js)$/i.test(normalized)) {
-    throw new Error(`El agente genero un archivo que no es spec TypeScript/JavaScript ejecutable por Playwright: ${normalized}`);
+    throw new Error(
+      `El agente genero un archivo que no es spec TypeScript/JavaScript ejecutable por Playwright: ${normalized}`
+    );
   }
   return normalized;
 }
@@ -277,7 +305,10 @@ function targetGeneratedPath(
 ): string {
   let relative = safeGeneratedPath(value);
   if (batchCount > 1 && path.basename(relative) === 'test_markdown_cases.spec.ts') {
-    relative = path.posix.join(path.posix.dirname(relative), `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`);
+    relative = path.posix.join(
+      path.posix.dirname(relative),
+      `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`
+    );
   }
   if (!usedPaths.has(relative)) {
     usedPaths.add(relative);
@@ -304,8 +335,13 @@ async function validateGeneratedCode(outputDir: string, plan: ProGuide.Dict): Pr
   if (!specFiles.length) {
     throw new Error('No se genero ningun archivo de test TypeScript.');
   }
-  const combined = (await Promise.all(specFiles.map((filePath) => fs.readFile(filePath, 'utf8')))).join('\n');
-  if (!combined.includes("from './proguide-test-runtime.mjs'") && !combined.includes('from "./proguide-test-runtime.mjs"')) {
+  const combined = (
+    await Promise.all(specFiles.map((filePath) => fs.readFile(filePath, 'utf8')))
+  ).join('\n');
+  if (
+    !combined.includes("from './proguide-test-runtime.mjs'") &&
+    !combined.includes('from "./proguide-test-runtime.mjs"')
+  ) {
     throw new Error('El codigo generado no importa el runtime shim de ProGuide.');
   }
   for (const testCase of plan.cases) {
@@ -315,7 +351,9 @@ async function validateGeneratedCode(outputDir: string, plan: ProGuide.Dict): Pr
   }
   const invalidSelectors = findInvalidGeneratedSelectors(combined);
   if (invalidSelectors.length) {
-    throw new Error(`El codigo generado contiene selector Playwright invalido: ${invalidSelectors[0]}. Usa [role="..."] o getByRole(...).`);
+    throw new Error(
+      `El codigo generado contiene selector Playwright invalido: ${invalidSelectors[0]}. Usa [role="..."] o getByRole(...).`
+    );
   }
 }
 

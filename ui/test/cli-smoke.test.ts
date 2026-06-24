@@ -5,8 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { loadUsageSummary, parsePlaywrightResults, prepareCasesRun, playwrightWorkerArgs, recordLlmUsage } from '../proguide-service.js';
-import { rootIdentity, viewerHasCapabilities, viewerHealthMatchesRoot, viewerPortCandidates } from '../viewer.js';
+import {
+  loadUsageSummary,
+  parsePlaywrightResults,
+  prepareCasesRun,
+  playwrightWorkerArgs,
+  recordLlmUsage
+} from '../proguide-service.js';
+import {
+  rootIdentity,
+  viewerHasCapabilities,
+  viewerHealthMatchesRoot,
+  viewerPortCandidates
+} from '../viewer.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
@@ -57,9 +68,21 @@ Pasos:
 test('create/get-run/get-code/list-runs expose stable JSON', () => {
   const root = makeTempRoot();
   try {
-    const created = runCli(['create', '--stdin', '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer'], {
-      input: SAMPLE_MARKDOWN
-    });
+    const created = runCli(
+      [
+        'create',
+        '--stdin',
+        '--base-url',
+        'http://localhost:3000',
+        '--json',
+        '--root',
+        root,
+        '--no-viewer'
+      ],
+      {
+        input: SAMPLE_MARKDOWN
+      }
+    );
 
     assert.equal(created.status, 0, created.stderr);
     const createPayload = parseJson(created.stdout);
@@ -101,7 +124,16 @@ test('source paths outside root are rejected', () => {
   const outside = path.join(os.tmpdir(), `proguide_outside_${process.pid}.md`);
   fs.writeFileSync(outside, SAMPLE_MARKDOWN, 'utf8');
   try {
-    const result = runCli(['create', outside, '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer']);
+    const result = runCli([
+      'create',
+      outside,
+      '--base-url',
+      'http://localhost:3000',
+      '--json',
+      '--root',
+      root,
+      '--no-viewer'
+    ]);
     assert.equal(result.status, 5);
     assert.match(parseJson(result.stdout).error, /source_path/);
   } finally {
@@ -127,8 +159,14 @@ test('update skills installs packaged Claude Code skill', () => {
     assert.equal(payload.skill, 'qa-test-cases');
     assert.equal(payload.destination_dir, destination);
     assert.deepEqual(payload.files, ['SKILL.md', 'TEMPLATE.md']);
-    assert.match(fs.readFileSync(path.join(destination, 'SKILL.md'), 'utf8'), /qa-test-cases|ProGuide/);
-    assert.match(fs.readFileSync(path.join(destination, 'TEMPLATE.md'), 'utf8'), /ProGuide|Markdown/);
+    assert.match(
+      fs.readFileSync(path.join(destination, 'SKILL.md'), 'utf8'),
+      /qa-test-cases|ProGuide/
+    );
+    assert.match(
+      fs.readFileSync(path.join(destination, 'TEMPLATE.md'), 'utf8'),
+      /ProGuide|Markdown/
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -172,22 +210,48 @@ test('help exposes human and machine-readable command guidance', () => {
 test('markdown parser ignores sections and keeps TC cases', () => {
   const root = makeTempRoot();
   try {
-    const created = runCli(['create', '--stdin', '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer'], {
-      input: SECTIONED_MARKDOWN
-    });
+    const created = runCli(
+      [
+        'create',
+        '--stdin',
+        '--base-url',
+        'http://localhost:3000',
+        '--json',
+        '--root',
+        root,
+        '--no-viewer'
+      ],
+      {
+        input: SECTIONED_MARKDOWN
+      }
+    );
 
     assert.equal(created.status, 0, created.stderr);
     const payload = parseJson(created.stdout);
     assert.equal(payload.cases.length, 2);
-    assert.deepEqual(payload.cases.map((item) => item.title), ['Login valido', 'Logout']);
-    assert.deepEqual(payload.cases.map((item) => item.route), ['/login', '/home']);
+    assert.deepEqual(
+      payload.cases.map((item) => item.title),
+      ['Login valido', 'Logout']
+    );
+    assert.deepEqual(
+      payload.cases.map((item) => item.route),
+      ['/login', '/home']
+    );
     assert.deepEqual(payload.cases[0].expected_results, ['La pagina muestra Dashboard']);
     assert.deepEqual(payload.cases[1].expected_results, ['La URL contiene /login']);
     assert.equal(payload.cases[0].executable_steps[1].normalized_action, 'enter valid email');
-    assert.equal(payload.cases.flatMap((item) => item.original_steps).some((step) => step.includes('Esperado')), false);
+    assert.equal(
+      payload.cases
+        .flatMap((item) => item.original_steps)
+        .some((step) => step.includes('Esperado')),
+      false
+    );
     const planPath = path.join(root, 'proguide_tests', 'runs', payload.run_id, 'test_plan.json');
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-    assert.deepEqual(plan.cases.map((item) => item.route), ['/login', '/home']);
+    assert.deepEqual(
+      plan.cases.map((item) => item.route),
+      ['/login', '/home']
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -196,9 +260,12 @@ test('markdown parser ignores sections and keeps TC cases', () => {
 test('create dry-run previews normalization without creating a run', () => {
   const root = makeTempRoot();
   try {
-    const preview = runCli(['create', '--stdin', '--dry-run', '--json', '--root', root, '--no-viewer'], {
-      input: SAMPLE_MARKDOWN
-    });
+    const preview = runCli(
+      ['create', '--stdin', '--dry-run', '--json', '--root', root, '--no-viewer'],
+      {
+        input: SAMPLE_MARKDOWN
+      }
+    );
 
     assert.equal(preview.status, 0, preview.stderr);
     const payload = parseJson(preview.stdout);
@@ -238,8 +305,19 @@ Resultado esperado:
 test('markdown data supports explicit test password only', () => {
   const root = makeTempRoot();
   try {
-    const created = runCli(['create', '--stdin', '--base-url', 'http://localhost:3000', '--json', '--root', root, '--no-viewer'], {
-      input: `## Caso 1: Password corto
+    const created = runCli(
+      [
+        'create',
+        '--stdin',
+        '--base-url',
+        'http://localhost:3000',
+        '--json',
+        '--root',
+        root,
+        '--no-viewer'
+      ],
+      {
+        input: `## Caso 1: Password corto
 
 Datos utilizados:
 - Email: qa@example.com
@@ -253,15 +331,22 @@ Pasos:
 Resultado esperado:
 - La pagina muestra error
 `
-    });
+      }
+    );
 
     assert.equal(created.status, 0, created.stderr);
     const payload = parseJson(created.stdout);
     assert.equal(payload.cases[0].route, '/login');
     assert.deepEqual(payload.cases[0].data.user, { email: 'qa@example.com', password: '12345' });
     const runDir = path.join(root, 'proguide_tests', 'runs', payload.run_id);
-    assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto-real'), false);
-    assert.equal(fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto-real'), false);
+    assert.equal(
+      fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto-real'),
+      false
+    );
+    assert.equal(
+      fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto-real'),
+      false
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -273,26 +358,36 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'http://localhost:3000',
-      cases: [{
-        title: 'Login estructurado',
-        priority: 'alta',
-        route: '/login',
-        data: { user: { email: 'qa@example.com', password: 'secreto' } },
-        data_used: ['Password: secreto'],
-        steps: ['fill [data-testid=email] with qa@example.com', 'click [data-testid=submit]'],
-        expected: ['expect text "Dashboard"']
-      }, {
-        title: 'Checkout estructurado',
-        priority: 'alta',
-        steps: ['go to /checkout', 'fill [data-testid=zipCode] with 1000', 'Verificar que [data-testid="cart-badge-count"] muestra 1'],
-        expected: ['expect text "Resumen"']
-      }]
+      cases: [
+        {
+          title: 'Login estructurado',
+          priority: 'alta',
+          route: '/login',
+          data: { user: { email: 'qa@example.com', password: 'secreto' } },
+          data_used: ['Password: secreto'],
+          steps: ['fill [data-testid=email] with qa@example.com', 'click [data-testid=submit]'],
+          expected: ['expect text "Dashboard"']
+        },
+        {
+          title: 'Checkout estructurado',
+          priority: 'alta',
+          steps: [
+            'go to /checkout',
+            'fill [data-testid=zipCode] with 1000',
+            'Verificar que [data-testid="cart-badge-count"] muestra 1'
+          ],
+          expected: ['expect text "Resumen"']
+        }
+      ]
     });
 
     assert.equal(prepared.run.status, 'ready');
     assert.equal(prepared.cases[1].route, '/checkout');
-    assert.equal(prepared.cases[1].executable_steps[2].normalized_action, 'expect [data-testid="cart-badge-count"] to contain text "1"');
-    const firstCase = /** @type {any} */ (prepared.cases[0]);
+    assert.equal(
+      prepared.cases[1].executable_steps[2].normalized_action,
+      'expect [data-testid="cart-badge-count"] to contain text "1"'
+    );
+    const firstCase = /** @type {any} */ prepared.cases[0];
     assert.equal(firstCase.data.user.email, 'qa@example.com');
     assert.equal(Object.hasOwn(firstCase.data.user, 'password'), false);
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
@@ -304,11 +399,23 @@ test('prepareCasesRun creates a run from structured cases with data', async () =
       'click [data-testid=submit]'
     ]);
     assert.equal(plan.cases[1].route, '/checkout');
-    assert.equal(plan.cases[1].steps[2], 'expect [data-testid="cart-badge-count"] to contain text "1"');
+    assert.equal(
+      plan.cases[1].steps[2],
+      'expect [data-testid="cart-badge-count"] to contain text "1"'
+    );
     const runDir = path.join(root, 'proguide_tests', 'runs', prepared.run.id);
-    assert.equal(fs.readFileSync(path.join(runDir, 'source_cases.json'), 'utf8').includes('secreto'), false);
-    assert.equal(fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto'), false);
-    assert.equal(fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto'), false);
+    assert.equal(
+      fs.readFileSync(path.join(runDir, 'source_cases.json'), 'utf8').includes('secreto'),
+      false
+    );
+    assert.equal(
+      fs.readFileSync(path.join(runDir, 'normalized_cases.json'), 'utf8').includes('secreto'),
+      false
+    );
+    assert.equal(
+      fs.readFileSync(path.join(runDir, 'test_plan.json'), 'utf8').includes('secreto'),
+      false
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -320,24 +427,26 @@ test('prepareCasesRun normalizes natural data-testid references from structured 
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'http://localhost:3000',
-      cases: [{
-        id: 'tc_001',
-        title: 'Login estructurado',
-        priority: 'alta',
-        route: '/login',
-        steps: [
-          'Navegar a /login',
-          "Ingresar el email 'customer@devshop.com' en el campo login-email",
-          "Ingresar la contrasena 'password' en el campo login-password",
-          'Hacer clic en el boton login-submit-btn',
-          'Verificar que el elemento login-error-msg es visible',
-          "Verificar que el badge cart-badge-count muestra '1'",
-          'Hacer clic en el boton cart-btn para ir al carrito',
-          'Verificar que el atributo data-theme cambio al tema opuesto',
-          'Verificar que el dashboard de administracion es visible'
-        ],
-        expected: ['Se muestra el mensaje de error']
-      }]
+      cases: [
+        {
+          id: 'tc_001',
+          title: 'Login estructurado',
+          priority: 'alta',
+          route: '/login',
+          steps: [
+            'Navegar a /login',
+            "Ingresar el email 'customer@devshop.com' en el campo login-email",
+            "Ingresar la contrasena 'password' en el campo login-password",
+            'Hacer clic en el boton login-submit-btn',
+            'Verificar que el elemento login-error-msg es visible',
+            "Verificar que el badge cart-badge-count muestra '1'",
+            'Hacer clic en el boton cart-btn para ir al carrito',
+            'Verificar que el atributo data-theme cambio al tema opuesto',
+            'Verificar que el dashboard de administracion es visible'
+          ],
+          expected: ['Se muestra el mensaje de error']
+        }
+      ]
     });
 
     const steps = prepared.cases[0].executable_steps.map((step) => step.normalized_action);
@@ -360,20 +469,43 @@ test('prepareCasesRun normalizes natural data-testid references from structured 
 test('prepareCasesRun records project and run user identity', async () => {
   const root = makeTempRoot();
   try {
-    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: '@proguide/shop-front' }), 'utf8');
-    assert.equal(spawnSync('git', ['init'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'user.email', 'molivera@proguidemc.com'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
-    assert.equal(spawnSync('git', ['config', 'user.name', 'Mario Olivera'], { cwd: root, encoding: 'utf8', windowsHide: true }).status, 0);
+    fs.writeFileSync(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: '@proguide/shop-front' }),
+      'utf8'
+    );
+    assert.equal(
+      spawnSync('git', ['init'], { cwd: root, encoding: 'utf8', windowsHide: true }).status,
+      0
+    );
+    assert.equal(
+      spawnSync('git', ['config', 'user.email', 'molivera@proguidemc.com'], {
+        cwd: root,
+        encoding: 'utf8',
+        windowsHide: true
+      }).status,
+      0
+    );
+    assert.equal(
+      spawnSync('git', ['config', 'user.name', 'Mario Olivera'], {
+        cwd: root,
+        encoding: 'utf8',
+        windowsHide: true
+      }).status,
+      0
+    );
 
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'http://localhost:3000',
-      cases: [{
-        id: 'tc_001',
-        title: 'Login estructurado',
-        steps: ['go to /login'],
-        expected: ['expect text "Login"']
-      }]
+      cases: [
+        {
+          id: 'tc_001',
+          title: 'Login estructurado',
+          steps: ['go to /login'],
+          expected: ['expect text "Login"']
+        }
+      ]
     });
 
     assert.equal(prepared.run.run_user_email, 'molivera@proguidemc.com');
@@ -382,7 +514,7 @@ test('prepareCasesRun records project and run user identity', async () => {
     assert.equal(prepared.run.project_name, 'shop-front');
     assert.equal(prepared.run.project_key, 'shop-front');
     assert.equal(prepared.run.workspace_root, path.resolve(root));
-    const identitySource = /** @type {any} */ (prepared.run.identity_source);
+    const identitySource = /** @type {any} */ prepared.run.identity_source;
     assert.equal(identitySource.run_user_email, 'git');
     assert.equal(identitySource.project_name, 'package_json');
 
@@ -400,65 +532,88 @@ test('parsePlaywrightResults keeps spec results aligned by case id prefix', asyn
   try {
     const runDir = path.join(root, 'run');
     fs.mkdirSync(runDir, { recursive: true });
-    fs.writeFileSync(path.join(runDir, 'playwright-report.json'), JSON.stringify({
-      suites: [{
-        specs: [{
-          title: '[tc_003] Agregar producto al carrito',
-          tests: [{
-            results: [{
-              status: 'passed',
-              duration: 4578,
-              steps: [{ title: 'go to /' }],
-              attachments: []
-            }]
-          }]
-        }, {
-          title: '[tc_004] Login admin',
-          tests: [{
-            results: [{
-              status: 'failed',
-              duration: 11648,
-              error: {
-                message: 'locator.click: Timeout 30000ms exceeded.',
-                stack: [
-                  'locator.click: Timeout 30000ms exceeded.',
-                  'Call log:',
-                  '  - waiting for locator(\'[data-testid="missing-submit"]\')',
-                  '',
-                  '  at generated/test_markdown_cases.spec.ts:12:48'
-                ].join('\n')
+    fs.writeFileSync(
+      path.join(runDir, 'playwright-report.json'),
+      JSON.stringify({
+        suites: [
+          {
+            specs: [
+              {
+                title: '[tc_003] Agregar producto al carrito',
+                tests: [
+                  {
+                    results: [
+                      {
+                        status: 'passed',
+                        duration: 4578,
+                        steps: [{ title: 'go to /' }],
+                        attachments: []
+                      }
+                    ]
+                  }
+                ]
               },
-              stdout: [{ text: 'debug stdout line\n' }],
-              steps: [{ title: 'dashboard visible' }],
-              attachments: []
-            }]
-          }]
-        }]
-      }]
-    }), 'utf8');
+              {
+                title: '[tc_004] Login admin',
+                tests: [
+                  {
+                    results: [
+                      {
+                        status: 'failed',
+                        duration: 11648,
+                        error: {
+                          message: 'locator.click: Timeout 30000ms exceeded.',
+                          stack: [
+                            'locator.click: Timeout 30000ms exceeded.',
+                            'Call log:',
+                            '  - waiting for locator(\'[data-testid="missing-submit"]\')',
+                            '',
+                            '  at generated/test_markdown_cases.spec.ts:12:48'
+                          ].join('\n')
+                        },
+                        stdout: [{ text: 'debug stdout line\n' }],
+                        steps: [{ title: 'dashboard visible' }],
+                        attachments: []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }),
+      'utf8'
+    );
 
     const results = await parsePlaywrightResults({
       runDir,
       reportPath: path.join(runDir, 'playwright-report.json'),
       plan: {
-        cases: [{
-          id: 'tc_003',
-          title: 'Agregar producto al carrito',
-          steps: ['go to /'],
-          expected: ['cart updated']
-        }, {
-          id: 'tc_004',
-          title: 'Login admin',
-          steps: ['go to /login'],
-          expected: ['dashboard visible']
-        }]
+        cases: [
+          {
+            id: 'tc_003',
+            title: 'Agregar producto al carrito',
+            steps: ['go to /'],
+            expected: ['cart updated']
+          },
+          {
+            id: 'tc_004',
+            title: 'Login admin',
+            steps: ['go to /login'],
+            expected: ['dashboard visible']
+          }
+        ]
       }
     });
 
-    assert.deepEqual(results.map((item) => [item.id, item.status, item.message]), [
-      ['tc_003', 'passed', ''],
-      ['tc_004', 'failed', 'locator.click: Timeout 30000ms exceeded.']
-    ]);
+    assert.deepEqual(
+      results.map((item) => [item.id, item.status, item.message]),
+      [
+        ['tc_003', 'passed', ''],
+        ['tc_004', 'failed', 'locator.click: Timeout 30000ms exceeded.']
+      ]
+    );
     assert.match(results[1].error_details, /Call log:/);
     assert.match(results[1].error_details, /\[data-testid="missing-submit"]/);
     assert.match(results[1].error_details, /generated\/test_markdown_cases\.spec\.ts:12:48/);
@@ -484,46 +639,62 @@ test('generated ESM runtime shim works in type module workspaces', () => {
     const generatedDir = path.join(root, 'generated');
     fs.mkdirSync(generatedDir, { recursive: true });
     fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ type: 'module' }), 'utf8');
-    fs.writeFileSync(path.join(generatedDir, 'proguide-test-runtime.mjs'), [
-      "import { createRequire } from 'node:module';",
-      `const req = createRequire(${JSON.stringify(path.join(UI_ROOT, 'package.json'))});`,
-      "const runtime = req('@playwright/test');",
-      'export const test = runtime.test;',
-      'export const expect = runtime.expect;',
-      ''
-    ].join('\n'), 'utf8');
-    fs.writeFileSync(path.join(generatedDir, 'test_markdown_cases.spec.ts'), [
-      "import { test, expect } from './proguide-test-runtime.mjs';",
-      "test('[tc_001] smoke', async () => {",
-      '  expect(1 + 1).toBe(2);',
-      '});',
-      ''
-    ].join('\n'), 'utf8');
+    fs.writeFileSync(
+      path.join(generatedDir, 'proguide-test-runtime.mjs'),
+      [
+        "import { createRequire } from 'node:module';",
+        `const req = createRequire(${JSON.stringify(path.join(UI_ROOT, 'package.json'))});`,
+        "const runtime = req('@playwright/test');",
+        'export const test = runtime.test;',
+        'export const expect = runtime.expect;',
+        ''
+      ].join('\n'),
+      'utf8'
+    );
+    fs.writeFileSync(
+      path.join(generatedDir, 'test_markdown_cases.spec.ts'),
+      [
+        "import { test, expect } from './proguide-test-runtime.mjs';",
+        "test('[tc_001] smoke', async () => {",
+        '  expect(1 + 1).toBe(2);',
+        '});',
+        ''
+      ].join('\n'),
+      'utf8'
+    );
     const reportPath = path.join(root, 'playwright-report.json');
-    fs.writeFileSync(path.join(root, 'playwright.config.cjs'), [
-      'module.exports = {',
-      `  testDir: ${JSON.stringify(generatedDir)},`,
-      `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
-      '  use: { browserName: "chromium" }',
-      '};',
-      ''
-    ].join('\n'), 'utf8');
-
-    const result = spawnSync(process.execPath, [
-      path.join(SOURCE_UI_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
-      'test',
-      '--config',
+    fs.writeFileSync(
       path.join(root, 'playwright.config.cjs'),
-      '--workers=1'
-    ], {
-      cwd: root,
-      env: {
-        ...process.env,
-        PROGUIDE_PLAYWRIGHT_REQUIRE: path.join(UI_ROOT, 'package.json')
-      },
-      encoding: 'utf8',
-      windowsHide: true
-    });
+      [
+        'module.exports = {',
+        `  testDir: ${JSON.stringify(generatedDir)},`,
+        `  reporter: [['json', { outputFile: ${JSON.stringify(reportPath)} }]],`,
+        '  use: { browserName: "chromium" }',
+        '};',
+        ''
+      ].join('\n'),
+      'utf8'
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(SOURCE_UI_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
+        'test',
+        '--config',
+        path.join(root, 'playwright.config.cjs'),
+        '--workers=1'
+      ],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          PROGUIDE_PLAYWRIGHT_REQUIRE: path.join(UI_ROOT, 'package.json')
+        },
+        encoding: 'utf8',
+        windowsHide: true
+      }
+    );
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
@@ -535,27 +706,36 @@ test('generated ESM runtime shim works in type module workspaces', () => {
 });
 
 test('viewer discovery includes the default port range for reuse', () => {
-  assert.deepEqual(viewerPortCandidates({ firstPort: 8789, attempts: 3 }), [
-    8789,
-    8790,
-    8791,
-    8787,
-    8788
-  ]);
+  assert.deepEqual(
+    viewerPortCandidates({ firstPort: 8789, attempts: 3 }),
+    [8789, 8790, 8791, 8787, 8788]
+  );
 });
 
 test('viewer health requires usage capability before reuse', () => {
   const root = makeTempRoot();
   try {
-    assert.equal(viewerHealthMatchesRoot({
-      service: 'proguide-test-viewer',
-      root,
-      capabilities: ['usage']
-    }, root), true);
-    assert.equal(viewerHealthMatchesRoot({
-      service: 'proguide-test-viewer',
-      root
-    }, root), false);
+    assert.equal(
+      viewerHealthMatchesRoot(
+        {
+          service: 'proguide-test-viewer',
+          root,
+          capabilities: ['usage']
+        },
+        root
+      ),
+      true
+    );
+    assert.equal(
+      viewerHealthMatchesRoot(
+        {
+          service: 'proguide-test-viewer',
+          root
+        },
+        root
+      ),
+      false
+    );
     assert.equal(viewerHasCapabilities({ capabilities: ['runs'] }), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -605,7 +785,10 @@ test('new workspaces default to Anthropic Haiku and screenshot evidence', () => 
 
     const model = runCli(['config', 'get', 'llm.model', '--json', '--root', root]);
     assert.equal(model.status, 0, model.stderr);
-    assert.deepEqual(parseJson(model.stdout), { key: 'llm.model', value: 'claude-haiku-4-5-20251001' });
+    assert.deepEqual(parseJson(model.stdout), {
+      key: 'llm.model',
+      value: 'claude-haiku-4-5-20251001'
+    });
 
     const screenshots = runCli(['config', 'get', 'runner.screenshots', '--json', '--root', root]);
     assert.equal(screenshots.status, 0, screenshots.stderr);
@@ -694,10 +877,16 @@ test('agent-setup exposes Claude Code, Cursor, and generic MCP snippets', () => 
   assert.equal(result.status, 0, result.stderr);
   const payload = parseJson(result.stdout);
   assert.equal(payload.command, 'proguide mcp');
-  assert.equal(payload.clients.claude_code.install_command, 'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp');
+  assert.equal(
+    payload.clients.claude_code.install_command,
+    'claude mcp add proguide-test --env ANTHROPIC_API_KEY=your_api_key -- proguide mcp'
+  );
   assert.match(payload.clients.claude_code.npx_command, /npx @proguide\/test@latest mcp/);
   assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].command, 'proguide');
-  assert.equal(payload.clients.cursor.config.mcpServers['proguide-test'].env.ANTHROPIC_API_KEY, 'your_api_key');
+  assert.equal(
+    payload.clients.cursor.config.mcpServers['proguide-test'].env.ANTHROPIC_API_KEY,
+    'your_api_key'
+  );
   assert.deepEqual(payload.clients.generic.args, ['mcp']);
 });
 
@@ -707,15 +896,14 @@ test('mcp exposes prompts with agent instructions', () => {
   });
   assert.equal(listed.status, 0, listed.stderr);
   const listPayload = parseJson(lastJsonLine(listed.stdout));
-  assert.deepEqual(listPayload.result.prompts.map((prompt) => prompt.name), [
-    'run_cases',
-    'create_run',
-    'run_markdown_cases',
-    'create_run_from_markdown'
-  ]);
+  assert.deepEqual(
+    listPayload.result.prompts.map((prompt) => prompt.name),
+    ['run_cases', 'create_run', 'run_markdown_cases', 'create_run_from_markdown']
+  );
 
   const fetched = runCli(['mcp'], {
-    input: '{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"run_markdown_cases","arguments":{"base_url":"http://localhost:3000","markdown":"## Caso 1"}}}\n'
+    input:
+      '{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"run_markdown_cases","arguments":{"base_url":"http://localhost:3000","markdown":"## Caso 1"}}}\n'
   });
   assert.equal(fetched.status, 0, fetched.stderr);
   const promptPayload = parseJson(lastJsonLine(fetched.stdout));
@@ -735,12 +923,14 @@ test('mcp create_run with open_browser false does not start viewer', () => {
           root,
           base_url: 'http://api.test',
           open_browser: false,
-          cases: [{
-            id: 'api_health',
-            type: 'api',
-            title: 'Health',
-            request: { method: 'GET', path: '/health', expected_status: 200 }
-          }]
+          cases: [
+            {
+              id: 'api_health',
+              type: 'api',
+              title: 'Health',
+              request: { method: 'GET', path: '/health', expected_status: 200 }
+            }
+          ]
         }
       }
     };
@@ -770,12 +960,14 @@ test('mcp create_run appends cases to an existing run', () => {
           root,
           base_url: 'http://api.test',
           open_browser: false,
-          cases: [{
-            id: 'api_health',
-            type: 'api',
-            title: 'Health',
-            request: { method: 'GET', path: '/health', expected_status: 200 }
-          }]
+          cases: [
+            {
+              id: 'api_health',
+              type: 'api',
+              title: 'Health',
+              request: { method: 'GET', path: '/health', expected_status: 200 }
+            }
+          ]
         }
       }
     };
@@ -794,12 +986,14 @@ test('mcp create_run appends cases to an existing run', () => {
           base_url: 'http://api.test',
           open_browser: false,
           append_to_run: firstPayload.run_id,
-          cases: [{
-            id: 'api_profile',
-            type: 'api',
-            title: 'Profile',
-            request: { method: 'GET', path: '/profile', expected_status: 401 }
-          }]
+          cases: [
+            {
+              id: 'api_profile',
+              type: 'api',
+              title: 'Profile',
+              request: { method: 'GET', path: '/profile', expected_status: 401 }
+            }
+          ]
         }
       }
     };
@@ -809,7 +1003,10 @@ test('mcp create_run appends cases to an existing run', () => {
     assert.equal(payload.run_id, firstPayload.run_id);
     assert.equal(payload.cases.length, 2);
     assert.equal(payload.appended_cases.length, 1);
-    assert.deepEqual(payload.cases.map((item) => item.id), ['api_health', 'api_profile']);
+    assert.deepEqual(
+      payload.cases.map((item) => item.id),
+      ['api_health', 'api_profile']
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -821,18 +1018,21 @@ test('mcp exposes the full tool surface', () => {
   });
   assert.equal(listed.status, 0, listed.stderr);
   const payload = parseJson(lastJsonLine(listed.stdout));
-  assert.deepEqual(payload.result.tools.map((tool) => tool.name), [
-    'run_cases',
-    'create_run',
-    'run_markdown_cases',
-    'create_run_from_markdown',
-    'execute_run',
-    'get_run',
-    'get_generated_code',
-    'list_runs',
-    'start_viewer',
-    'stop_viewer'
-  ]);
+  assert.deepEqual(
+    payload.result.tools.map((tool) => tool.name),
+    [
+      'run_cases',
+      'create_run',
+      'run_markdown_cases',
+      'create_run_from_markdown',
+      'execute_run',
+      'get_run',
+      'get_generated_code',
+      'list_runs',
+      'start_viewer',
+      'stop_viewer'
+    ]
+  );
   const executeRun = payload.result.tools.find((tool) => tool.name === 'execute_run');
   assert.equal(executeRun.inputSchema.properties.from_plan.type, 'boolean');
 });
@@ -865,7 +1065,10 @@ function parseJson(stdout: string): any {
 }
 
 function lastJsonLine(stdout: string) {
-  return stdout.split(/\r?\n/).filter((line) => line.trim().startsWith('{')).at(-1);
+  return stdout
+    .split(/\r?\n/)
+    .filter((line) => line.trim().startsWith('{'))
+    .at(-1);
 }
 
 function makeTempRoot() {

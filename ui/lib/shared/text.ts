@@ -108,5 +108,7 @@ export function noneIfEmpty(value: unknown): string | null {
  * Strip a leading bullet/dash marker from a case title for display.
  */
 export function cleanCaseTitle(value: unknown): string {
-  return String(value ?? '').replace(/^\s*[•◦⁃∙·—–�-]\s+/, '').trim();
+  return String(value ?? '')
+    .replace(/^\s*[•◦⁃∙·—–�-]\s+/, '')
+    .trim();
 }

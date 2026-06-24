@@ -21,20 +21,24 @@ export function casesToTestPlan(
     if (testCase.excluded) continue;
     if (testCase.automation_state !== 'listo') continue;
     const type = testCase.type === 'api' ? 'api' : 'ui';
-    const request = type === 'api'
-      ? normalizeApiRequest({
-        ...(testCase.request || {}),
-        route: testCase.route,
-        steps: testCase.original_steps || [],
-        expected: testCase.expected_results || []
-      })
-      : null;
+    const request =
+      type === 'api'
+        ? normalizeApiRequest({
+            ...(testCase.request || {}),
+            route: testCase.route,
+            steps: testCase.original_steps || [],
+            expected: testCase.expected_results || []
+          })
+        : null;
     const apiRequests = type === 'api' ? normalizeApiRequests(testCase.requests || []) : [];
-    const steps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
+    const steps = (testCase.executable_steps || [])
+      .map((step) => step.normalized_action || step.original_text)
+      .filter(Boolean);
     const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
-    const route = type === 'api'
-      ? (request.path || testCase.route || '/')
-      : inferCaseRoute(testCase.route, testCase.original_steps, testCase.executable_steps);
+    const route =
+      type === 'api'
+        ? request.path || testCase.route || '/'
+        : inferCaseRoute(testCase.route, testCase.original_steps, testCase.executable_steps);
     plannedCases.push({
       id: testCase.id,
       feature_id: 'markdown_cases',
@@ -45,17 +49,26 @@ export function casesToTestPlan(
       route,
       request,
       requests: apiRequests,
-      assertions: type === 'api' ? normalizeApiAssertions({
-        assertions: testCase.assertions || [],
-        expected: testCase.expected_results || [],
-        expectedStatus: request?.expected_status
-      }) : [],
+      assertions:
+        type === 'api'
+          ? normalizeApiAssertions({
+              assertions: testCase.assertions || [],
+              expected: testCase.expected_results || [],
+              expectedStatus: request?.expected_status
+            })
+          : [],
       debug: Boolean(testCase.debug),
       priority: priorityForPlan(testCase.priority),
-      steps: steps.length ? steps : (type === 'api' ? [`api ${request.method} ${request.path}`] : ['go to /']),
+      steps: steps.length
+        ? steps
+        : type === 'api'
+          ? [`api ${request.method} ${request.path}`]
+          : ['go to /'],
       expected: (testCase.expected_results || []).length
         ? testCase.expected_results
-        : (type === 'api' ? [`status ${request.expected_status ?? 200}`] : ['page is visible']),
+        : type === 'api'
+          ? [`status ${request.expected_status ?? 200}`]
+          : ['page is visible'],
       data: {
         ...caseData,
         preconditions: testCase.preconditions || [],

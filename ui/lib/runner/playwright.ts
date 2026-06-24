@@ -101,11 +101,19 @@ export async function runPlaywrightTests({
   if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;
 
   await fs.writeFile(playwrightLogPath, `$ ${command.join(' ')}\n`, 'utf8');
-  const completed = await runProcess(command, { cwd: projectRoot, env, logPath: playwrightLogPath });
+  const completed = await runProcess(command, {
+    cwd: projectRoot,
+    env,
+    logPath: playwrightLogPath
+  });
   let results = await parsePlaywrightResults({ plan, reportPath, runDir });
   if (completed.code !== 0 && !(await exists(reportPath))) {
     const logText = await fs.readFile(playwrightLogPath, 'utf8').catch(() => '');
-    const setupMessage = setupFailureMessage(completed.code, logText, relativePath(playwrightLogPath, projectRoot));
+    const setupMessage = setupFailureMessage(
+      completed.code,
+      logText,
+      relativePath(playwrightLogPath, projectRoot)
+    );
     results = plan.cases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,
@@ -174,7 +182,9 @@ export function expectTimeoutForPlan(plan: { cases?: Array<{ steps?: unknown[] }
   const timeouts = [30000];
   for (const testCase of plan.cases || []) {
     for (const step of testCase.steps || []) {
-      const match = String(step || '').match(/^set\s+(?:test|assertion)\s+timeout\s+to\s+(\d{1,5})\s+seconds?$/i);
+      const match = String(step || '').match(
+        /^set\s+(?:test|assertion)\s+timeout\s+to\s+(\d{1,5})\s+seconds?$/i
+      );
       if (!match) continue;
       const ms = Number(match[1]) * 1000;
       if (Number.isFinite(ms) && ms > 0) timeouts.push(ms);
@@ -183,8 +193,10 @@ export function expectTimeoutForPlan(plan: { cases?: Array<{ steps?: unknown[] }
   return Math.max(...timeouts);
 }
 
-
-export function runProcess(command: string[], { cwd, env, logPath }: RunProcessOptions): Promise<RunProcessResult> {
+export function runProcess(
+  command: string[],
+  { cwd, env, logPath }: RunProcessOptions
+): Promise<RunProcessResult> {
   return new Promise<RunProcessResult>((resolve, reject) => {
     const [cmd, ...args] = command;
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -224,30 +236,62 @@ export async function parsePlaywrightResults({
         steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,
         api_evidence: await collectApiEvidence(runDir, testCase.id),
-        videos: await artifactPaths(runDir, normalized.attachments, new Set(['.webm']), safeId(testCase.id)),
-        screenshots: await artifactPaths(runDir, normalized.attachments, new Set(['.png']), safeId(testCase.id)),
-        traces: await artifactPaths(runDir, normalized.attachments, new Set(['.zip']), safeId(testCase.id))
+        videos: await artifactPaths(
+          runDir,
+          normalized.attachments,
+          new Set(['.webm']),
+          safeId(testCase.id)
+        ),
+        screenshots: await artifactPaths(
+          runDir,
+          normalized.attachments,
+          new Set(['.png']),
+          safeId(testCase.id)
+        ),
+        traces: await artifactPaths(
+          runDir,
+          normalized.attachments,
+          new Set(['.zip']),
+          safeId(testCase.id)
+        )
       });
     }
   }
 
   const results = [];
   for (const testCase of plan.cases) {
-    results.push(parsed.get(testCase.id) || {
-      id: testCase.id,
-      title: testCase.title,
-      status: 'inconclusive',
-      duration_seconds: 0,
-      message: 'No Playwright result was found for this case.',
-      error_details: '',
-      actual_response: null,
-      steps: testCase.steps,
-      expected: testCase.expected,
-      api_evidence: await collectApiEvidence(runDir, testCase.id),
-      videos: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.webm']), safeId(testCase.id)),
-      screenshots: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.png']), safeId(testCase.id)),
-      traces: await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, new Set(['.zip']), safeId(testCase.id))
-    });
+    results.push(
+      parsed.get(testCase.id) || {
+        id: testCase.id,
+        title: testCase.title,
+        status: 'inconclusive',
+        duration_seconds: 0,
+        message: 'No Playwright result was found for this case.',
+        error_details: '',
+        actual_response: null,
+        steps: testCase.steps,
+        expected: testCase.expected,
+        api_evidence: await collectApiEvidence(runDir, testCase.id),
+        videos: await collectArtifacts(
+          path.join(runDir, 'artifacts', 'playwright'),
+          runDir,
+          new Set(['.webm']),
+          safeId(testCase.id)
+        ),
+        screenshots: await collectArtifacts(
+          path.join(runDir, 'artifacts', 'playwright'),
+          runDir,
+          new Set(['.png']),
+          safeId(testCase.id)
+        ),
+        traces: await collectArtifacts(
+          path.join(runDir, 'artifacts', 'playwright'),
+          runDir,
+          new Set(['.zip']),
+          safeId(testCase.id)
+        )
+      }
+    );
   }
   return results;
 }
@@ -261,9 +305,19 @@ async function artifactPaths(
   const direct = [];
   for (const attachment of attachments || []) {
     const filePath = attachment.path ? path.resolve(String(attachment.path)) : '';
-    if (!filePath || !suffixes.has(path.extname(filePath).toLowerCase()) || !(await exists(filePath))) continue;
+    if (
+      !filePath ||
+      !suffixes.has(path.extname(filePath).toLowerCase()) ||
+      !(await exists(filePath))
+    )
+      continue;
     direct.push(relativePath(filePath, runDir));
   }
-  const collected = await collectArtifacts(path.join(runDir, 'artifacts', 'playwright'), runDir, suffixes, stem);
+  const collected = await collectArtifacts(
+    path.join(runDir, 'artifacts', 'playwright'),
+    runDir,
+    suffixes,
+    stem
+  );
   return [...new Set([...direct, ...collected])].sort();
 }

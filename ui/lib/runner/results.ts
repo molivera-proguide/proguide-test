@@ -44,9 +44,11 @@ function caseIdFromTitle(title: unknown) {
 function caseIdFromAnnotations(spec: ProGuide.Dict) {
   const annotations = [
     ...(spec?.annotations || []),
-    ...((spec?.tests || []).flatMap((test) => test.annotations || []))
+    ...(spec?.tests || []).flatMap((test) => test.annotations || [])
   ];
-  const annotation = annotations.find((item) => item?.type === 'proguide_case' || item?.type === 'case_id');
+  const annotation = annotations.find(
+    (item) => item?.type === 'proguide_case' || item?.type === 'case_id'
+  );
   return annotation?.description || '';
 }
 
@@ -75,17 +77,16 @@ export function normalizePlaywrightSpecResult(spec: ProGuide.Dict) {
 
 function playwrightStatus(status: unknown) {
   const normalized = String(status || '').toLowerCase();
-  if (normalized === 'passed' || normalized === 'expected' || normalized === 'true') return 'passed';
-  if (['failed', 'timedout', 'timedout', 'interrupted', 'unexpected'].includes(normalized)) return 'failed';
+  if (normalized === 'passed' || normalized === 'expected' || normalized === 'true')
+    return 'passed';
+  if (['failed', 'timedout', 'timedout', 'interrupted', 'unexpected'].includes(normalized))
+    return 'failed';
   if (normalized === 'skipped') return 'inconclusive';
   return normalized ? 'failed' : 'inconclusive';
 }
 
 function playwrightMessage(result: ProGuide.Dict) {
-  const errors = [
-    ...(result?.errors || []),
-    result?.error
-  ].filter(Boolean);
+  const errors = [...(result?.errors || []), result?.error].filter(Boolean);
   const first = errors[0];
   if (!first) return '';
   return shortPlaywrightMessage(first.message || first.value || first.stack || first);
@@ -96,10 +97,7 @@ function playwrightErrorDetails(
   options: { stripDebugMarker?: boolean } = {}
 ) {
   const chunks = [];
-  const errors = [
-    ...(result?.errors || []),
-    result?.error
-  ].filter(Boolean);
+  const errors = [...(result?.errors || []), result?.error].filter(Boolean);
   for (const error of errors) {
     const formatted = formatPlaywrightError(error);
     if (formatted) chunks.push(formatted);
@@ -134,7 +132,9 @@ function playwrightActualResponse(...values: unknown[]) {
 }
 
 function shortPlaywrightMessage(value: unknown) {
-  return String(value || '').split('\n\nProGuide API debug:')[0].trim();
+  return String(value || '')
+    .split('\n\nProGuide API debug:')[0]
+    .trim();
 }
 
 function stripApiDebugMarker(value: unknown) {
@@ -196,7 +196,7 @@ function flattenPlaywrightSteps(steps: any[], prefix = '') {
   const lines = [];
   for (const step of steps || []) {
     const title = String(step.title || '').trim();
-    const label = prefix && title ? `${prefix} > ${title}` : (title || prefix);
+    const label = prefix && title ? `${prefix} > ${title}` : title || prefix;
     if (label) lines.push(label);
     lines.push(...flattenPlaywrightSteps(step.steps || [], label));
   }

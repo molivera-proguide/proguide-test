@@ -22,15 +22,25 @@ const DEFAULT_VIEWER_START_TIMEOUT_MS = 15000;
 
 export async function ensureViewer(root: string, options: ViewerOptions = {}): Promise<ViewerInfo> {
   const rootPath = normalizeRootPath(root);
-  const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
-  const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
+  const host =
+    options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
+  const firstPort = positiveNumber(
+    options.port,
+    process.env.PROGUIDE_VIEWER_PORT,
+    process.env.PROGUIDE_UI_PORT,
+    8787
+  );
   const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
-  const startTimeoutMs = positiveNumber(options.startTimeoutMs, process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS, DEFAULT_VIEWER_START_TIMEOUT_MS);
+  const startTimeoutMs = positiveNumber(
+    options.startTimeoutMs,
+    process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS,
+    DEFAULT_VIEWER_START_TIMEOUT_MS
+  );
   const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
   const rootKey = `${rootIdentity(rootPath)}|${host}|${firstPort}`;
   const cached = viewerCache.get(rootKey);
 
-  if (cached && await viewerMatchesRoot(cached.baseUrl, rootPath, { requiredCapabilities })) {
+  if (cached && (await viewerMatchesRoot(cached.baseUrl, rootPath, { requiredCapabilities }))) {
     await stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort: cached.port });
     return { ...cached, started: false };
   }
@@ -46,7 +56,10 @@ export async function ensureViewer(root: string, options: ViewerOptions = {}): P
     }
 
     if (health?.service === 'proguide-test-viewer') {
-      if (rootIdentity(health.root) === rootIdentity(rootPath) && !viewerHasCapabilities(health, requiredCapabilities)) {
+      if (
+        rootIdentity(health.root) === rootIdentity(rootPath) &&
+        !viewerHasCapabilities(health, requiredCapabilities)
+      ) {
         const stopped = await shutdownViewer(baseUrl, rootPath, health);
         if (!stopped.stopped) continue;
         health = await fetchViewerHealth(baseUrl);
@@ -75,7 +88,9 @@ export async function ensureViewer(root: string, options: ViewerOptions = {}): P
       continue;
     }
 
-    if (await waitForViewer(baseUrl, rootPath, { requiredCapabilities, timeoutMs: startTimeoutMs })) {
+    if (
+      await waitForViewer(baseUrl, rootPath, { requiredCapabilities, timeoutMs: startTimeoutMs })
+    ) {
       const info = { baseUrl, port, started: true };
       viewerCache.set(rootKey, info);
       await stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort: port });
@@ -90,8 +105,14 @@ export async function ensureViewer(root: string, options: ViewerOptions = {}): P
 
 export async function stopViewer(root: string, options: ViewerOptions = {}) {
   const rootPath = normalizeRootPath(root);
-  const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
-  const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
+  const host =
+    options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
+  const firstPort = positiveNumber(
+    options.port,
+    process.env.PROGUIDE_VIEWER_PORT,
+    process.env.PROGUIDE_UI_PORT,
+    8787
+  );
   const attempts = positiveNumber(options.attempts, process.env.PROGUIDE_VIEWER_PORT_ATTEMPTS, 20);
   const stopped = [];
   const skipped = [];
@@ -125,7 +146,11 @@ export async function stopViewer(root: string, options: ViewerOptions = {}) {
   };
 }
 
-export async function viewerMatchesRoot(baseUrl: string, root: string, options: ViewerOptions = {}): Promise<boolean> {
+export async function viewerMatchesRoot(
+  baseUrl: string,
+  root: string,
+  options: ViewerOptions = {}
+): Promise<boolean> {
   const health = await fetchViewerHealth(baseUrl);
   return viewerHealthMatchesRoot(health, root, options);
 }
@@ -136,9 +161,11 @@ export function viewerHealthMatchesRoot(
   options: ViewerOptions = {}
 ): boolean {
   const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
-  return health?.service === 'proguide-test-viewer' &&
+  return (
+    health?.service === 'proguide-test-viewer' &&
     rootIdentity(health.root) === rootIdentity(root) &&
-    viewerHasCapabilities(health, requiredCapabilities);
+    viewerHasCapabilities(health, requiredCapabilities)
+  );
 }
 
 export function viewerHasCapabilities(
@@ -155,7 +182,7 @@ export async function fetchViewerHealth(baseUrl: string): Promise<ProGuide.Viewe
   try {
     const response = await fetch(`${baseUrl}/api/health`, { signal: controller.signal });
     if (!response.ok) return null;
-    return /** @type {ProGuide.ViewerHealth} */ (await response.json());
+    return /** @type {ProGuide.ViewerHealth} */ await response.json();
   } catch {
     return null;
   } finally {
@@ -163,7 +190,10 @@ export async function fetchViewerHealth(baseUrl: string): Promise<ProGuide.Viewe
   }
 }
 
-export function viewerLinks(baseUrl: string, runId: string): { viewer_url: string; run_url: string; events_url: string } {
+export function viewerLinks(
+  baseUrl: string,
+  runId: string
+): { viewer_url: string; run_url: string; events_url: string } {
   const encodedRun = encodeURIComponent(runId);
   return {
     viewer_url: `${baseUrl}/runs`,
@@ -174,11 +204,18 @@ export function viewerLinks(baseUrl: string, runId: string): { viewer_url: strin
 
 export function viewerBaseUrl(host: string, port: number): string {
   const browserHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
-  const formattedHost = browserHost.includes(':') && !browserHost.startsWith('[') ? `[${browserHost}]` : browserHost;
+  const formattedHost =
+    browserHost.includes(':') && !browserHost.startsWith('[') ? `[${browserHost}]` : browserHost;
   return `http://${formattedHost}:${port}`;
 }
 
-export function viewerPortCandidates({ firstPort, attempts }: { firstPort: unknown; attempts: unknown }): number[] {
+export function viewerPortCandidates({
+  firstPort,
+  attempts
+}: {
+  firstPort: unknown;
+  attempts: unknown;
+}): number[] {
   const ports: number[] = [];
   const appendRange = (start: unknown, count: unknown) => {
     const base = positiveNumber(start, 8787);
@@ -218,7 +255,11 @@ async function stopDuplicateViewers({
   }
 }
 
-async function shutdownViewer(baseUrl: string, root: string, health: ProGuide.ViewerHealth): Promise<ShutdownResult> {
+async function shutdownViewer(
+  baseUrl: string,
+  root: string,
+  health: ProGuide.ViewerHealth
+): Promise<ShutdownResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1200);
   try {
@@ -251,10 +292,17 @@ async function shutdownViewer(baseUrl: string, root: string, health: ProGuide.Vi
   }
 }
 
-async function stopStartingChild(child: ReturnType<typeof spawn> | undefined, baseUrl: string, root: string): Promise<void> {
+async function stopStartingChild(
+  child: ReturnType<typeof spawn> | undefined,
+  baseUrl: string,
+  root: string
+): Promise<void> {
   if (!child?.pid) return;
   const health = await fetchViewerHealth(baseUrl);
-  if (health?.service === 'proguide-test-viewer' && rootIdentity(health.root) === rootIdentity(root)) {
+  if (
+    health?.service === 'proguide-test-viewer' &&
+    rootIdentity(health.root) === rootIdentity(root)
+  ) {
     await shutdownViewer(baseUrl, root, health);
     return;
   }
@@ -266,8 +314,16 @@ async function stopStartingChild(child: ReturnType<typeof spawn> | undefined, ba
   }
 }
 
-async function waitForViewer(baseUrl: string, root: string, options: ViewerOptions = {}): Promise<boolean> {
-  const timeoutMs = positiveNumber(options.timeoutMs, process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS, DEFAULT_VIEWER_START_TIMEOUT_MS);
+async function waitForViewer(
+  baseUrl: string,
+  root: string,
+  options: ViewerOptions = {}
+): Promise<boolean> {
+  const timeoutMs = positiveNumber(
+    options.timeoutMs,
+    process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS,
+    DEFAULT_VIEWER_START_TIMEOUT_MS
+  );
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await viewerMatchesRoot(baseUrl, root, options)) return true;

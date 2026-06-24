@@ -35,7 +35,9 @@ test('prepareMarkdownRun normalizes REST API Markdown cases', async () => {
   const root = makeTempRoot();
   try {
     const source = path.join(root, 'api-cases.md');
-    fs.writeFileSync(source, `## TC-API-001 Crear usuario
+    fs.writeFileSync(
+      source,
+      `## TC-API-001 Crear usuario
 
 Tipo: API
 Metodo: POST
@@ -49,7 +51,9 @@ Resultado esperado:
 - Status 201
 - body.name = Mario
 - body.id existe
-`, 'utf8');
+`,
+      'utf8'
+    );
 
     const prepared = await prepareMarkdownRun({
       root,
@@ -61,8 +65,14 @@ Resultado esperado:
     assert.equal(prepared.cases[0].request.method, 'POST');
     assert.equal(prepared.cases[0].request.path, '/users');
     assert.deepEqual(prepared.cases[0].request.body, { name: 'Mario' });
-    assert.equal(prepared.cases[0].assertions.some((item) => item.type === 'status' && item.expected === 201), true);
-    assert.equal(prepared.cases[0].assertions.some((item) => item.path === 'id' && item.operator === 'exists'), true);
+    assert.equal(
+      prepared.cases[0].assertions.some((item) => item.type === 'status' && item.expected === 201),
+      true
+    );
+    assert.equal(
+      prepared.cases[0].assertions.some((item) => item.path === 'id' && item.operator === 'exists'),
+      true
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -73,7 +83,9 @@ test('prepareMarkdownRun accepts multiple REST API Markdown sources', async () =
   try {
     const first = path.join(root, 'auth.md');
     const second = path.join(root, 'items.md');
-    fs.writeFileSync(first, `## TC-API-LOGIN Login invalido
+    fs.writeFileSync(
+      first,
+      `## TC-API-LOGIN Login invalido
 
 Tipo: API
 Metodo: POST
@@ -83,8 +95,12 @@ Body:
 - password: wrong-password
 Resultado esperado:
 - Status 401
-`, 'utf8');
-    fs.writeFileSync(second, `## TC-API-ITEMS Listar items
+`,
+      'utf8'
+    );
+    fs.writeFileSync(
+      second,
+      `## TC-API-ITEMS Listar items
 
 Tipo: API
 Metodo: GET
@@ -92,7 +108,9 @@ Endpoint: /items
 Resultado esperado:
 - Status 200
 - body.items isArray
-`, 'utf8');
+`,
+      'utf8'
+    );
 
     const prepared = await prepareMarkdownRun({
       root,
@@ -102,7 +120,10 @@ Resultado esperado:
 
     assert.equal(prepared.cases.length, 2);
     assert.equal(prepared.run.source_filename, 'auth.md, items.md');
-    assert.deepEqual(prepared.cases.map((item) => item.request.path), ['/login', '/items']);
+    assert.deepEqual(
+      prepared.cases.map((item) => item.request.path),
+      ['/login', '/items']
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -112,7 +133,9 @@ test('prepareMarkdownRun builds cross-service API flows from Markdown steps', as
   const root = makeTempRoot();
   try {
     const source = path.join(root, 'cross-service.md');
-    fs.writeFileSync(source, `## TC-API-CROSS Login y status cross-service
+    fs.writeFileSync(
+      source,
+      `## TC-API-CROSS Login y status cross-service
 
 Tipo: API
 Route: /user/login
@@ -123,7 +146,9 @@ Steps:
 Resultado esperado:
 - Status 404
 - body.message contiene inexistente
-`, 'utf8');
+`,
+      'utf8'
+    );
 
     const prepared = await prepareMarkdownRun({
       root,
@@ -136,16 +161,29 @@ Resultado esperado:
     assert.equal(testCase.request.path, 'https://api-user.tst.proguidemc.com/user/login');
     assert.deepEqual(testCase.request.body, { username: 'x', password: 'y' });
     assert.equal(testCase.requests.length, 2);
-    assert.equal(testCase.requests[0].request.path, 'https://api-user.tst.proguidemc.com/user/login');
-    assert.deepEqual(testCase.requests[0].captures, [{ name: 'token', source: 'body', path: 'token' }]);
+    assert.equal(
+      testCase.requests[0].request.path,
+      'https://api-user.tst.proguidemc.com/user/login'
+    );
+    assert.deepEqual(testCase.requests[0].captures, [
+      { name: 'token', source: 'body', path: 'token' }
+    ]);
     assert.equal(testCase.requests[1].request.path, '/scan/proceso-inexistente-000/status');
     assert.equal(testCase.requests[1].request.headers.Authorization, 'Bearer {{token}}');
-    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 404), true);
+    assert.equal(
+      testCase.requests[1].assertions.some(
+        (item) => item.type === 'status' && item.expected === 404
+      ),
+      true
+    );
 
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
     assert.equal(plan.cases[0].requests.length, 2);
-    assert.equal(plan.cases[0].requests[0].request.path, 'https://api-user.tst.proguidemc.com/user/login');
+    assert.equal(
+      plan.cases[0].requests[0].request.path,
+      'https://api-user.tst.proguidemc.com/user/login'
+    );
     assert.equal(plan.cases[0].requests[1].request.headers.Authorization, 'Bearer {{token}}');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -156,7 +194,9 @@ test('prepareMarkdownRun maps multi-step expected statuses to the matching API r
   const root = makeTempRoot();
   try {
     const source = path.join(root, 'multi-step-status.md');
-    fs.writeFileSync(source, `## TC-API-STATUS Login y status por paso
+    fs.writeFileSync(
+      source,
+      `## TC-API-STATUS Login y status por paso
 
 Tipo: API
 Route: /scan/proceso-inexistente-000/status
@@ -169,7 +209,9 @@ Expected Results:
 - Step 1: body.token exists
 - El paso 2 retorna status 500
 - Step 2: body.message contains inexistente
-`, 'utf8');
+`,
+      'utf8'
+    );
 
     const prepared = await prepareMarkdownRun({
       root,
@@ -179,11 +221,40 @@ Expected Results:
 
     const [testCase] = prepared.cases;
     assert.equal(testCase.requests.length, 2);
-    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'status' && item.expected === 201), true);
-    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'body_path' && item.path === 'token' && item.operator === 'exists'), true);
-    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 500), true);
-    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'body_path' && item.path === 'message' && item.operator === 'contains' && item.expected === 'inexistente'), true);
-    assert.equal(testCase.requests[1].assertions.some((item) => item.type === 'status' && item.expected === 201), false);
+    assert.equal(
+      testCase.requests[0].assertions.some(
+        (item) => item.type === 'status' && item.expected === 201
+      ),
+      true
+    );
+    assert.equal(
+      testCase.requests[0].assertions.some(
+        (item) => item.type === 'body_path' && item.path === 'token' && item.operator === 'exists'
+      ),
+      true
+    );
+    assert.equal(
+      testCase.requests[1].assertions.some(
+        (item) => item.type === 'status' && item.expected === 500
+      ),
+      true
+    );
+    assert.equal(
+      testCase.requests[1].assertions.some(
+        (item) =>
+          item.type === 'body_path' &&
+          item.path === 'message' &&
+          item.operator === 'contains' &&
+          item.expected === 'inexistente'
+      ),
+      true
+    );
+    assert.equal(
+      testCase.requests[1].assertions.some(
+        (item) => item.type === 'status' && item.expected === 201
+      ),
+      false
+    );
     assert.deepEqual(
       testCase.assertions.filter((item) => item.type === 'status').map((item) => item.expected),
       [201, 500]
@@ -197,7 +268,9 @@ test('prepareMarkdownRun preserves body and capture suffix in single-step API Ma
   const root = makeTempRoot();
   try {
     const source = path.join(root, 'single-login.md');
-    fs.writeFileSync(source, `## TC-API-LOGIN Login token
+    fs.writeFileSync(
+      source,
+      `## TC-API-LOGIN Login token
 
 Tipo: API
 Steps:
@@ -206,7 +279,9 @@ Steps:
 Resultado esperado:
 - Status 201
 - body.token exists
-`, 'utf8');
+`,
+      'utf8'
+    );
 
     const prepared = await prepareMarkdownRun({
       root,
@@ -218,8 +293,15 @@ Resultado esperado:
     assert.equal(testCase.request.path, 'https://api-user.tst.proguidemc.com/user/login');
     assert.deepEqual(testCase.request.body, { username: 'x', password: 'y' });
     assert.equal(testCase.requests.length, 1);
-    assert.deepEqual(testCase.requests[0].captures, [{ name: 'token', source: 'body', path: 'token' }]);
-    assert.equal(testCase.requests[0].assertions.some((item) => item.type === 'status' && item.expected === 201), true);
+    assert.deepEqual(testCase.requests[0].captures, [
+      { name: 'token', source: 'body', path: 'token' }
+    ]);
+    assert.equal(
+      testCase.requests[0].assertions.some(
+        (item) => item.type === 'status' && item.expected === 201
+      ),
+      true
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -232,39 +314,41 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
     const prepared = await prepareCasesRun({
       root,
       baseUrl: api.baseUrl,
-      cases: [{
-        id: 'api_health',
-        type: 'api',
-        title: 'Health devuelve estado operativo',
-        request: {
-          method: 'GET',
-          path: '/health'
+      cases: [
+        {
+          id: 'api_health',
+          type: 'api',
+          title: 'Health devuelve estado operativo',
+          request: {
+            method: 'GET',
+            path: '/health'
+          },
+          expected: ['Status 200', 'body.service = sample-api', 'body.ok = true']
         },
-        expected: [
-          'Status 200',
-          'body.service = sample-api',
-          'body.ok = true'
-        ]
-      }, {
-        id: 'api_create_user',
-        type: 'api',
-        title: 'Crear usuario',
-        request: {
-          method: 'POST',
-          path: '/users',
-          headers: { 'content-type': 'application/json' },
-          body: { name: 'Mario' },
-          expected_status: 201
-        },
-        assertions: [
-          { path: 'name', equals: 'Mario' },
-          { path: 'id', exists: true },
-          { header: 'content-type', contains: 'application/json' }
-        ]
-      }]
+        {
+          id: 'api_create_user',
+          type: 'api',
+          title: 'Crear usuario',
+          request: {
+            method: 'POST',
+            path: '/users',
+            headers: { 'content-type': 'application/json' },
+            body: { name: 'Mario' },
+            expected_status: 201
+          },
+          assertions: [
+            { path: 'name', equals: 'Mario' },
+            { path: 'id', exists: true },
+            { header: 'content-type', contains: 'application/json' }
+          ]
+        }
+      ]
     });
 
-    assert.deepEqual(prepared.cases.map((item) => item.type), ['api', 'api']);
+    assert.deepEqual(
+      prepared.cases.map((item) => item.type),
+      ['api', 'api']
+    );
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
     assert.equal(plan.cases[1].request.method, 'POST');
@@ -276,7 +360,10 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
       baseUrl: api.baseUrl
     });
 
-    assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'passed']);
+    assert.deepEqual(
+      summary.results.map((item) => item.status),
+      ['passed', 'passed']
+    );
     assert.match(summary.results[0].steps.join('\n'), /GET \/health/);
     assert.match(summary.results[1].steps.join('\n'), /POST \/users/);
     assert.equal(summary.results[0].api_evidence.length, 1);
@@ -286,11 +373,20 @@ test('executePreparedRun runs REST API cases through Playwright request', async 
     assert.equal(summary.results[0].api_evidence[0].response.body.service, 'sample-api');
     assert.equal(summary.results[1].api_evidence[0].request.body.name, 'Mario');
     assert.match(summary.results[0].api_evidence[0].path, /^api_evidence\/api_health\/.+\.json$/);
-    const evidencePath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, summary.results[0].api_evidence[0].path);
+    const evidencePath = path.join(
+      root,
+      'proguide_tests',
+      'runs',
+      prepared.run.id,
+      summary.results[0].api_evidence[0].path
+    );
     const evidenceFile = JSON.parse(fs.readFileSync(evidencePath, 'utf8'));
     assert.equal(evidenceFile.kind, 'api_evidence');
     assert.equal(evidenceFile.response.status, 200);
-    const evidenceHtml = fs.readFileSync(path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'evidence.html'), 'utf8');
+    const evidenceHtml = fs.readFileSync(
+      path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'evidence.html'),
+      'utf8'
+    );
     assert.match(evidenceHtml, /API evidence/);
     assert.match(evidenceHtml, /sample-api/);
 
@@ -310,27 +406,29 @@ test('API structured flows do not require expected_status on intermediate login 
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'https://api-vulnops.tst.proguidemc.com',
-      cases: [{
-        id: 'api_flow_without_login_status',
-        type: 'api',
-        title: 'Login intermedio sin status explicito',
-        requests: [
-          {
-            id: 'login',
-            method: 'POST',
-            path: 'https://api-user.tst.proguidemc.com/user/login',
-            body: { username: 'x', password: 'y' },
-            captures: { token: 'token' }
-          },
-          {
-            id: 'endpoint',
-            method: 'GET',
-            path: '/scan/status',
-            headers: { Authorization: 'Bearer {{token}}' },
-            expected_status: 200
-          }
-        ]
-      }]
+      cases: [
+        {
+          id: 'api_flow_without_login_status',
+          type: 'api',
+          title: 'Login intermedio sin status explicito',
+          requests: [
+            {
+              id: 'login',
+              method: 'POST',
+              path: 'https://api-user.tst.proguidemc.com/user/login',
+              body: { username: 'x', password: 'y' },
+              captures: { token: 'token' }
+            },
+            {
+              id: 'endpoint',
+              method: 'GET',
+              path: '/scan/status',
+              headers: { Authorization: 'Bearer {{token}}' },
+              expected_status: 200
+            }
+          ]
+        }
+      ]
     });
 
     assert.equal(prepared.cases[0].automation_state, 'listo');
@@ -352,25 +450,24 @@ test('API cases keep assertions unique and preserve request secrets for executio
     const prepared = await prepareCasesRun({
       root,
       baseUrl: api.baseUrl,
-      cases: [{
-        id: 'api_login',
-        type: 'api',
-        title: 'Login API',
-        request: {
-          method: 'POST',
-          path: '/login',
-          body: {
-            email: 'qa@example.test',
-            password: 'secret-test-password'
+      cases: [
+        {
+          id: 'api_login',
+          type: 'api',
+          title: 'Login API',
+          request: {
+            method: 'POST',
+            path: '/login',
+            body: {
+              email: 'qa@example.test',
+              password: 'secret-test-password'
+            },
+            expected_status: 200
           },
-          expected_status: 200
-        },
-        assertions: [
-          { status: 200 },
-          { path: 'access_token', exists: true }
-        ],
-        expected: ['Status 200']
-      }]
+          assertions: [{ status: 200 }, { path: 'access_token', exists: true }],
+          expected: ['Status 200']
+        }
+      ]
     });
 
     assert.deepEqual(
@@ -416,47 +513,54 @@ test('API flows capture variables and reuse them in later requests', async () =>
     const prepared = await prepareCasesRun({
       root,
       baseUrl: api.baseUrl,
-      cases: [{
-        id: 'api_auth_flow',
-        type: 'api',
-        title: 'Login y perfil autenticado',
-        requests: [
-          {
-            id: 'login',
-            method: 'POST',
-            path: '/login',
-            body: {
-              email: 'qa@example.test',
-              password: 'secret-test-password'
+      cases: [
+        {
+          id: 'api_auth_flow',
+          type: 'api',
+          title: 'Login y perfil autenticado',
+          requests: [
+            {
+              id: 'login',
+              method: 'POST',
+              path: '/login',
+              body: {
+                email: 'qa@example.test',
+                password: 'secret-test-password'
+              },
+              expected_status: 200,
+              assertions: [{ path: 'access_token', exists: true }],
+              save: { access_token: 'access_token' }
             },
-            expected_status: 200,
-            assertions: [{ path: 'access_token', exists: true }],
-            save: { access_token: 'access_token' }
-          },
-          {
-            id: 'profile',
-            method: 'GET',
-            path: '/profile',
-            headers: { authorization: 'Bearer {{access_token}}' },
-            expected_status: 200,
-            assertions: [
-              { path: 'email', equals: 'qa@example.test' },
-              { path: 'roles', isArray: true }
-            ]
-          }
-        ]
-      }]
+            {
+              id: 'profile',
+              method: 'GET',
+              path: '/profile',
+              headers: { authorization: 'Bearer {{access_token}}' },
+              expected_status: 200,
+              assertions: [
+                { path: 'email', equals: 'qa@example.test' },
+                { path: 'roles', isArray: true }
+              ]
+            }
+          ]
+        }
+      ]
     });
 
     assert.equal(prepared.cases[0].requests.length, 2);
-    assert.deepEqual(prepared.cases[0].requests[0].captures, [{
-      name: 'access_token',
-      source: 'body',
-      path: 'access_token'
-    }]);
+    assert.deepEqual(prepared.cases[0].requests[0].captures, [
+      {
+        name: 'access_token',
+        source: 'body',
+        path: 'access_token'
+      }
+    ]);
     const planPath = path.join(root, 'proguide_tests', 'runs', prepared.run.id, 'test_plan.json');
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-    assert.equal(plan.cases[0].requests[1].request.headers.authorization, 'Bearer {{access_token}}');
+    assert.equal(
+      plan.cases[0].requests[1].request.headers.authorization,
+      'Bearer {{access_token}}'
+    );
 
     const summary = await executePreparedRun({
       root,
@@ -483,22 +587,24 @@ test('API failures expose actual response body and optional debug request', asyn
     const prepared = await prepareCasesRun({
       root,
       baseUrl: api.baseUrl,
-      cases: [{
-        id: 'api_debug_failure',
-        type: 'api',
-        title: 'Login falla con respuesta visible',
-        debug: true,
-        request: {
-          method: 'POST',
-          path: '/login',
-          body: {
-            email: 'qa@example.test',
-            password: 'wrong-password'
+      cases: [
+        {
+          id: 'api_debug_failure',
+          type: 'api',
+          title: 'Login falla con respuesta visible',
+          debug: true,
+          request: {
+            method: 'POST',
+            path: '/login',
+            body: {
+              email: 'qa@example.test',
+              password: 'wrong-password'
+            },
+            expected_status: 200
           },
-          expected_status: 200
-        },
-        assertions: [{ path: 'access_token', exists: true }]
-      }]
+          assertions: [{ path: 'access_token', exists: true }]
+        }
+      ]
     });
 
     assert.equal(prepared.cases[0].executable_steps[0].normalized_action, 'api POST /login');
@@ -536,36 +642,43 @@ test('API assertions support arrays and reject unsupported operators during crea
     const prepared = await prepareCasesRun({
       root,
       baseUrl: api.baseUrl,
-      cases: [{
-        id: 'api_items_array',
-        type: 'api',
-        title: 'Items es arreglo',
-        request: {
-          method: 'GET',
-          path: '/items',
-          expected_status: 200
+      cases: [
+        {
+          id: 'api_items_array',
+          type: 'api',
+          title: 'Items es arreglo',
+          request: {
+            method: 'GET',
+            path: '/items',
+            expected_status: 200
+          },
+          assertions: [{ path: 'items', isArray: true }]
         },
-        assertions: [
-          { path: 'items', isArray: true }
-        ]
-      }, {
-        id: 'api_root_array',
-        type: 'api',
-        title: 'Body raiz es arreglo',
-        request: {
-          method: 'GET',
-          path: '/items-root',
-          expected_status: 200
-        },
-        assertions: [
-          { path: '$', isArray: true },
-          { path: '$[0].id', equals: 'item_001' }
-        ]
-      }]
+        {
+          id: 'api_root_array',
+          type: 'api',
+          title: 'Body raiz es arreglo',
+          request: {
+            method: 'GET',
+            path: '/items-root',
+            expected_status: 200
+          },
+          assertions: [
+            { path: '$', isArray: true },
+            { path: '$[0].id', equals: 'item_001' }
+          ]
+        }
+      ]
     });
 
-    assert.equal(prepared.cases[0].assertions.some((item) => item.operator === 'is_array'), true);
-    assert.equal(prepared.cases[1].assertions.some((item) => item.path === '' && item.operator === 'is_array'), true);
+    assert.equal(
+      prepared.cases[0].assertions.some((item) => item.operator === 'is_array'),
+      true
+    );
+    assert.equal(
+      prepared.cases[1].assertions.some((item) => item.path === '' && item.operator === 'is_array'),
+      true
+    );
 
     const summary = await executePreparedRun({
       root,
@@ -573,26 +686,30 @@ test('API assertions support arrays and reject unsupported operators during crea
       baseUrl: api.baseUrl
     });
 
-    assert.deepEqual(summary.results.map((item) => item.status), ['passed', 'passed']);
+    assert.deepEqual(
+      summary.results.map((item) => item.status),
+      ['passed', 'passed']
+    );
 
     await assert.rejects(
-      () => prepareCasesRun({
-        root,
-        baseUrl: api.baseUrl,
-        cases: [{
-          id: 'api_unsupported_assertion',
-          type: 'api',
-          title: 'Asercion no soportada',
-          request: {
-            method: 'GET',
-            path: '/health',
-            expected_status: 200
-          },
-          assertions: [
-            { path: 'ok', greaterThan: 0 }
+      () =>
+        prepareCasesRun({
+          root,
+          baseUrl: api.baseUrl,
+          cases: [
+            {
+              id: 'api_unsupported_assertion',
+              type: 'api',
+              title: 'Asercion no soportada',
+              request: {
+                method: 'GET',
+                path: '/health',
+                expected_status: 200
+              },
+              assertions: [{ path: 'ok', greaterThan: 0 }]
+            }
           ]
-        }]
-      }),
+        }),
       /Asercion API no soportada/
     );
   } finally {
@@ -607,18 +724,20 @@ test('API natural-language steps do not normalize to UI selectors', async () => 
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'http://api.test',
-      cases: [{
-        id: 'api_step_normalization',
-        type: 'api',
-        title: 'Token exists',
-        request: {
-          method: 'POST',
-          path: '/login',
-          expected_status: 200
-        },
-        steps: ['expect response body field access_token exists'],
-        assertions: [{ path: 'access_token', exists: true }]
-      }]
+      cases: [
+        {
+          id: 'api_step_normalization',
+          type: 'api',
+          title: 'Token exists',
+          request: {
+            method: 'POST',
+            path: '/login',
+            expected_status: 200
+          },
+          steps: ['expect response body field access_token exists'],
+          assertions: [{ path: 'access_token', exists: true }]
+        }
+      ]
     });
 
     const normalized = prepared.cases[0].executable_steps[0].normalized_action;
@@ -637,12 +756,14 @@ test('viewer exposes run and usage data through REST API endpoints', async () =>
     const prepared = await prepareCasesRun({
       root,
       baseUrl: 'http://example.test',
-      cases: [{
-        id: 'api_seed',
-        type: 'api',
-        title: 'Seed',
-        request: { method: 'GET', path: '/health', expected_status: 200 }
-      }]
+      cases: [
+        {
+          id: 'api_seed',
+          type: 'api',
+          title: 'Seed',
+          request: { method: 'GET', path: '/health', expected_status: 200 }
+        }
+      ]
     });
     const runDir = path.join(root, 'proguide_tests', 'runs', prepared.run.id);
     await recordLlmUsage({
@@ -664,7 +785,10 @@ test('viewer exposes run and usage data through REST API endpoints', async () =>
     const runResponse = await fetchJson(`${baseUrl}/api/runs/${prepared.run.id}`);
     assert.equal(runResponse.run.id, prepared.run.id);
     assert.equal(runResponse.cases[0].request.method, 'GET');
-    assert.equal(runResponse.events.some((event) => event.type === 'run_created'), true);
+    assert.equal(
+      runResponse.events.some((event) => event.type === 'run_created'),
+      true
+    );
 
     const runHtml = await fetchText(`${baseUrl}/runs/${prepared.run.id}`);
     assert.doesNotMatch(runHtml, /data-progress-step="dom"/);
@@ -681,7 +805,9 @@ test('viewer exposes run and usage data through REST API endpoints', async () =>
     assert.equal(runUsage.run_id, prepared.run.id);
     assert.equal(runUsage.entries_count, 1);
 
-    const editResponse = await fetch(`${baseUrl}/api/runs/${prepared.run.id}/cases`, { method: 'POST' });
+    const editResponse = await fetch(`${baseUrl}/api/runs/${prepared.run.id}/cases`, {
+      method: 'POST'
+    });
     assert.equal(editResponse.status, 410);
   } finally {
     await stopViewer(viewer, `http://127.0.0.1:${port}`, root);
@@ -703,12 +829,13 @@ function startSampleApi(): Promise<SampleApi> {
       const address = server.address() as AddressInfo;
       resolve({
         baseUrl: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise<void>((done, rejectClose) => {
-          server.close((error) => {
-            if (error) rejectClose(error);
-            else done();
-          });
-        })
+        close: () =>
+          new Promise<void>((done, rejectClose) => {
+            server.close((error) => {
+              if (error) rejectClose(error);
+              else done();
+            });
+          })
       });
     });
   });

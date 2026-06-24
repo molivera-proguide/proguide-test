@@ -12,9 +12,12 @@ import {
 // data merging. Pure transforms (no I/O). Extracted verbatim from
 // proguide-service.js; the public functions below are imported back there.
 
-const GENERIC_EXPECTED_RE = /\b(correcto|correctamente|funciona|ok|exitoso|exitosamente|segun corresponda|adecuado)\b/i;
-const NOT_AUTOMATABLE_RE = /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono|fuera del navegador|manual|base de datos|db|api externa|correo fisico|impresion)\b/i;
-const REVIEW_STEP_RE = /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
+const GENERIC_EXPECTED_RE =
+  /\b(correcto|correctamente|funciona|ok|exitoso|exitosamente|segun corresponda|adecuado)\b/i;
+const NOT_AUTOMATABLE_RE =
+  /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono|fuera del navegador|manual|base de datos|db|api externa|correo fisico|impresion)\b/i;
+const REVIEW_STEP_RE =
+  /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
 const NAVIGATION_RE = /\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b/i;
 
 type AutomationAssessment = [string, string, number];
@@ -33,7 +36,9 @@ export function buildSteps(originalSteps: string[], options: ProGuide.Dict = {})
     error: null,
     confidence: stepConfidence(step, options),
     needs_review: REVIEW_STEP_RE.test(step),
-    review_reason: REVIEW_STEP_RE.test(step) ? 'Paso ambiguo o dependiente de datos de ambiente.' : ''
+    review_reason: REVIEW_STEP_RE.test(step)
+      ? 'Paso ambiguo o dependiente de datos de ambiente.'
+      : ''
   }));
 }
 
@@ -43,33 +48,55 @@ export function normalizeStep(step: unknown): string {
   if (explicit) return explicit;
   const apiStep = normalizeApiStep(step);
   if (apiStep) return apiStep;
-  const isAssertion = /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(normalized);
+  const isAssertion =
+    /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(
+      normalized
+    );
   const urlAssertion = normalizeUrlAssertion(step);
   if (urlAssertion) return urlAssertion;
   const route = extractRoute(step);
   const clickTarget = extractClickTarget(step);
   if (clickTarget) return `click button ${clickTarget}`;
   if (route) return `go to ${route}`;
-  if (/\b(email|e-mail|correo|usuario|user)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) {
-    return /\b(invalido|invalid|malformado|incorrecto)\b/.test(normalized) ? 'enter invalid email' : 'enter valid email';
+  if (
+    /\b(email|e-mail|correo|usuario|user)\b/.test(normalized) &&
+    /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)
+  ) {
+    return /\b(invalido|invalid|malformado|incorrecto)\b/.test(normalized)
+      ? 'enter invalid email'
+      : 'enter valid email';
   }
-  if (/\b(password|pass|clave|contrasena)\b/.test(normalized) && /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)) {
-    return /\b(invalido|invalid|corta|corto|incorrecto)\b/.test(normalized) ? 'enter invalid password' : 'enter valid password';
+  if (
+    /\b(password|pass|clave|contrasena)\b/.test(normalized) &&
+    /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)
+  ) {
+    return /\b(invalido|invalid|corta|corto|incorrecto)\b/.test(normalized)
+      ? 'enter invalid password'
+      : 'enter valid password';
   }
   if (isAssertion && /\bdashboard\b/.test(normalized)) return 'expect text "Dashboard"';
-  if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized)) return 'submit form';
+  if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized))
+    return 'submit form';
   if (NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
   return String(step || '');
 }
 
-export function assessAutomation(steps: string[], expected: string[], options: ProGuide.Dict = {}): AutomationAssessment {
+export function assessAutomation(
+  steps: string[],
+  expected: string[],
+  options: ProGuide.Dict = {}
+): AutomationAssessment {
   const joinedSteps = steps.join('\n');
   const joinedExpected = expected.join('\n');
   if (options.type === 'api') {
     if (Array.isArray(options.requests) && options.requests.length) {
       if (options.requests.some((entry) => !entry?.request?.method || !entry?.request?.path)) {
-        return ['necesita_revision', 'Falta metodo o endpoint en al menos un request REST del flujo.', 0.55];
+        return [
+          'necesita_revision',
+          'Falta metodo o endpoint en al menos un request REST del flujo.',
+          0.55
+        ];
       }
       return ['listo', 'Caso REST multi-step listo para automatizar con Playwright request.', 0.92];
     }
@@ -82,15 +109,30 @@ export function assessAutomation(steps: string[], expected: string[], options: P
     return ['listo', 'Caso REST listo para automatizar con Playwright request.', 0.92];
   }
   if (!steps.length) return ['no_automatizable_aun', 'El caso no tiene pasos ejecutables.', 0.2];
-  if (NOT_AUTOMATABLE_RE.test(joinedSteps)) return ['no_automatizable_aun', 'El caso requiere acciones fuera del navegador o controles no automatizables.', 0.35];
+  if (NOT_AUTOMATABLE_RE.test(joinedSteps))
+    return [
+      'no_automatizable_aun',
+      'El caso requiere acciones fuera del navegador o controles no automatizables.',
+      0.35
+    ];
   if (!expected.length) return ['necesita_revision', 'Falta resultado esperado verificable.', 0.55];
-  if (GENERIC_EXPECTED_RE.test(joinedExpected) && !hasConcreteExpected(expected)) return ['necesita_revision', 'El resultado esperado es generico; conviene hacerlo verificable.', 0.6];
-  if (REVIEW_STEP_RE.test(joinedSteps)) return ['necesita_revision', 'Hay pasos ambiguos o dependientes de datos de ambiente.', 0.65];
+  if (GENERIC_EXPECTED_RE.test(joinedExpected) && !hasConcreteExpected(expected))
+    return [
+      'necesita_revision',
+      'El resultado esperado es generico; conviene hacerlo verificable.',
+      0.6
+    ];
+  if (REVIEW_STEP_RE.test(joinedSteps))
+    return ['necesita_revision', 'Hay pasos ambiguos o dependientes de datos de ambiente.', 0.65];
   return ['listo', 'Caso listo para automatizar con el resolvedor actual.', 0.9];
 }
 
 function hasConcreteExpected(expected: string[]): boolean {
-  return expected.some((item) => /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error|status|codigo|http|body|response|json|header)\b/i.test(item));
+  return expected.some((item) =>
+    /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error|status|codigo|http|body|response|json|header)\b/i.test(
+      item
+    )
+  );
 }
 
 function stepConfidence(step: unknown, options: ProGuide.Dict = {}): number {
@@ -127,25 +169,46 @@ export function explicitStep(step: unknown): string | null {
     return `click ${selector}`;
   }
   if (/\b(fill|completar|ingresar|escribir|cargar|setear|introducir)\b/.test(normalized)) {
-    const value = valueAfterSelector(text, selector, /(?:\bcon\b|\bwith\b|\bvalor\b|\bvalue\b)\s+(.+)$/i);
+    const value = valueAfterSelector(
+      text,
+      selector,
+      /(?:\bcon\b|\bwith\b|\bvalor\b|\bvalue\b)\s+(.+)$/i
+    );
     return value ? `fill ${selector} with ${value}` : `fill ${selector}`;
   }
-  if (/\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible)\b/.test(normalized)) {
-    const value = valueAfterSelector(text, selector, /(?:\bmuestra\b|\bmostrar\b|\bcontiene\b|\btexto\b|\bvalor\b|\bshows?\b|\bcontains?\b)\s+(.+)$/i);
-    return value ? `expect ${selector} to contain text ${JSON.stringify(value)}` : `expect ${selector} to be visible`;
+  if (
+    /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible)\b/.test(
+      normalized
+    )
+  ) {
+    const value = valueAfterSelector(
+      text,
+      selector,
+      /(?:\bmuestra\b|\bmostrar\b|\bcontiene\b|\btexto\b|\bvalor\b|\bshows?\b|\bcontains?\b)\s+(.+)$/i
+    );
+    return value
+      ? `expect ${selector} to contain text ${JSON.stringify(value)}`
+      : `expect ${selector} to be visible`;
   }
   return null;
 }
 
 function normalizeTimingStep(text: unknown): string | null {
-  const waitMatch = String(text || '').match(/^\s*(?:wait|esperar)\s+(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
+  const waitMatch = String(text || '').match(
+    /^\s*(?:wait|esperar)\s+(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i
+  );
   if (waitMatch) return `wait ${Number(waitMatch[1])} seconds`;
 
-  const testTimeoutMatch = String(text || '').match(/^\s*(?:set|configurar|establecer)\s+test\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
+  const testTimeoutMatch = String(text || '').match(
+    /^\s*(?:set|configurar|establecer)\s+test\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i
+  );
   if (testTimeoutMatch) return `set test timeout to ${Number(testTimeoutMatch[1])} seconds`;
 
-  const assertionTimeoutMatch = String(text || '').match(/^\s*(?:set|configurar|establecer)\s+assert(?:ion)?\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
-  if (assertionTimeoutMatch) return `set assertion timeout to ${Number(assertionTimeoutMatch[1])} seconds`;
+  const assertionTimeoutMatch = String(text || '').match(
+    /^\s*(?:set|configurar|establecer)\s+assert(?:ion)?\s+timeout\s+(?:to\s+)?(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i
+  );
+  if (assertionTimeoutMatch)
+    return `set assertion timeout to ${Number(assertionTimeoutMatch[1])} seconds`;
 
   return null;
 }
@@ -166,12 +229,16 @@ function normalizeUrlAssertion(text: unknown): string | null {
 }
 
 function normalizeTextExpectation(text: unknown): string | null {
-  const match = String(text || '').match(/^\s*expect\s+text\s+["'](.+?)["'](?:\s+(?:to\s+be\s+)?visible)?\s*$/i);
+  const match = String(text || '').match(
+    /^\s*expect\s+text\s+["'](.+?)["'](?:\s+(?:to\s+be\s+)?visible)?\s*$/i
+  );
   return match ? `expect text ${JSON.stringify(match[1].trim())}` : null;
 }
 
 function normalizeContextualClick(text: unknown): string | null {
-  const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s+(?:inside|dentro\s+de|dentro)\s+(.+?)\s*$/i);
+  const match = String(text || '').match(
+    /^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s+(?:inside|dentro\s+de|dentro)\s+(.+?)\s*$/i
+  );
   if (!match) return null;
   const label = stripWrappingQuotes(match[1].trim().replace(/[.,;:]+$/, ''));
   const selector = cleanCssSelectorTarget(match[2]);
@@ -180,13 +247,17 @@ function normalizeContextualClick(text: unknown): string | null {
 }
 
 function normalizeListItemClick(text: unknown): string | null {
-  const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+listitem\s+["'](.+?)["']\s*$/i);
+  const match = String(text || '').match(
+    /^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+listitem\s+["'](.+?)["']\s*$/i
+  );
   if (!match) return null;
   return `click [li:has-text(${JSON.stringify(match[1].trim())})]`;
 }
 
 function normalizeCssSelectorAction(text: unknown): string | null {
-  const clickMatch = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s*$/i);
+  const clickMatch = String(text || '').match(
+    /^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s*$/i
+  );
   if (clickMatch) {
     const selector = cleanCssSelectorTarget(clickMatch[1]);
     if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
@@ -194,7 +265,9 @@ function normalizeCssSelectorAction(text: unknown): string | null {
     }
   }
 
-  const fillMatch = String(text || '').match(/^\s*(?:fill|completar|ingresar|escribir|cargar|setear|introducir)\s+(.+?)\s+(?:with|con|valor|value)\s+(.+?)\s*$/i);
+  const fillMatch = String(text || '').match(
+    /^\s*(?:fill|completar|ingresar|escribir|cargar|setear|introducir)\s+(.+?)\s+(?:with|con|valor|value)\s+(.+?)\s*$/i
+  );
   if (fillMatch) {
     const selector = cleanCssSelectorTarget(fillMatch[1]);
     if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
@@ -202,7 +275,9 @@ function normalizeCssSelectorAction(text: unknown): string | null {
     }
   }
 
-  const visibleMatch = String(text || '').match(/^\s*(?:expect|validar|verificar|comprobar)\s+(.+?)\s+(?:to\s+be\s+)?visible\s*$/i);
+  const visibleMatch = String(text || '').match(
+    /^\s*(?:expect|validar|verificar|comprobar)\s+(.+?)\s+(?:to\s+be\s+)?visible\s*$/i
+  );
   if (visibleMatch) {
     const selector = cleanCssSelectorTarget(visibleMatch[1]);
     if (selector && isCssSelectorTarget(selector) && !isSimpleBracketSelector(selector)) {
@@ -214,7 +289,11 @@ function normalizeCssSelectorAction(text: unknown): string | null {
 }
 
 function cleanCssSelectorTarget(value: unknown): string {
-  return stripWrappingQuotes(String(value || '').trim().replace(/[.,;]+$/, ''));
+  return stripWrappingQuotes(
+    String(value || '')
+      .trim()
+      .replace(/[.,;]+$/, '')
+  );
 }
 
 function formatSelectorDsl(selector: string): string {
@@ -254,7 +333,8 @@ function extractSelectorToken(text: unknown): string {
     if (isSelectorLikeToken(token)) return token;
   }
   const fallback = normalizedText.match(/\b([A-Za-z][A-Za-z0-9_-]*(?:[-_][A-Za-z0-9]+)+)\b/);
-  if (fallback && /\b(attribute|atributo)\b/i.test(normalizedText) && /^data-/i.test(fallback[1])) return '';
+  if (fallback && /\b(attribute|atributo)\b/i.test(normalizedText) && /^data-/i.test(fallback[1]))
+    return '';
   return fallback && isSelectorLikeToken(fallback[1]) ? fallback[1] : '';
 }
 
@@ -280,7 +360,11 @@ function valueAfterSelector(text: unknown, selector: string, pattern: RegExp): s
       .find((item) => item && item !== selector && !isSelectorLikeToken(item));
     return quoted || '';
   }
-  return match[1].trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
+  return match[1]
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/[.;]+$/, '')
+    .trim();
 }
 
 function stripWrappingQuotes(value: unknown): string {
@@ -320,7 +404,10 @@ export function dataFromLines(lines: unknown): ProGuide.Dict {
       }
       continue;
     }
-    if (/\b(email|e-mail|correo)\b/.test(normalizedKey) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+    if (
+      /\b(email|e-mail|correo)\b/.test(normalizedKey) ||
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+    ) {
       data.user = { ...(data.user || {}), email: value };
       continue;
     }
@@ -356,12 +443,16 @@ export function inferCaseRoute(
 }
 
 function routeFromNormalizedAction(action: unknown): string | null {
-  const match = String(action || '').trim().match(/^go to\s+(.+)$/i);
+  const match = String(action || '')
+    .trim()
+    .match(/^go to\s+(.+)$/i);
   return match ? match[1] : null;
 }
 
 function normalizeRouteValue(value: unknown): string {
-  const text = String(value || '').trim().replace(/[.,;]+$/, '');
+  const text = String(value || '')
+    .trim()
+    .replace(/[.,;]+$/, '');
   if (!text) return '';
   if (/^https?:\/\//i.test(text)) return text.replace(/\/+$/, '');
   return text.startsWith('/') ? text : `/${text}`;
@@ -371,7 +462,8 @@ function extractRoute(step: unknown): string | null {
   const text = String(step);
   if (normalizeUrlAssertion(text)) return null;
   const normalized = norm(text);
-  const hasRouteContext = NAVIGATION_RE.test(normalized) ||
+  const hasRouteContext =
+    NAVIGATION_RE.test(normalized) ||
     (/\bingresar\b/.test(normalized) && /(https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(text)) ||
     /\b(ruta|route|url)\b/.test(normalized) ||
     /^\s*(?:https?:\/\/|\/[A-Za-z0-9_\-/?#=&.]+)/.test(text);

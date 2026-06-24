@@ -26,7 +26,10 @@ const ROOT = path.resolve(process.env.PROGUIDE_UI_ROOT || path.join(__dirname, '
 const HOST = process.env.PROGUIDE_UI_HOST || '127.0.0.1';
 const PORT = Number(process.env.PROGUIDE_UI_PORT || 8787);
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-const IDLE_TIMEOUT_MS = nonNegativeNumber(process.env.PROGUIDE_VIEWER_IDLE_TIMEOUT_MS, DEFAULT_IDLE_TIMEOUT_MS);
+const IDLE_TIMEOUT_MS = nonNegativeNumber(
+  process.env.PROGUIDE_VIEWER_IDLE_TIMEOUT_MS,
+  DEFAULT_IDLE_TIMEOUT_MS
+);
 
 const app = Fastify({ logger: false, bodyLimit: 25 * 1024 * 1024 });
 let activeRequests = 0;
@@ -51,16 +54,17 @@ app.get('/', async (_request, reply) => {
 });
 
 app.get('/runs', async (_request, reply) => {
-  const [runs, usage] = await Promise.all([
-    listRunRecords(ROOT),
-    loadUsageSummary(ROOT)
-  ]);
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecuciones', renderRunsIndex(runs, usage)));
+  const [runs, usage] = await Promise.all([listRunRecords(ROOT), loadUsageSummary(ROOT)]);
+  return reply
+    .header('Content-Type', 'text/html; charset=utf-8')
+    .send(layout('Ejecuciones', renderRunsIndex(runs, usage)));
 });
 
 app.get('/usage', async (_request, reply) => {
   const usage = await loadUsageSummary(ROOT);
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Uso LLM', renderUsageDashboard(usage)));
+  return reply
+    .header('Content-Type', 'text/html; charset=utf-8')
+    .send(layout('Uso LLM', renderUsageDashboard(usage)));
 });
 
 app.get('/preview', async (_request, reply) => {
@@ -68,7 +72,11 @@ app.get('/preview', async (_request, reply) => {
 });
 
 app.post('/runs/prepare', async (_request, reply) => {
-  return reply.code(410).send('La importacion de casos se realiza por MCP. Usa la herramienta run_cases/create_run o los aliases run_markdown_cases/create_run_from_markdown.');
+  return reply
+    .code(410)
+    .send(
+      'La importacion de casos se realiza por MCP. Usa la herramienta run_cases/create_run o los aliases run_markdown_cases/create_run_from_markdown.'
+    );
 });
 
 app.get('/runs/:runId/preview', async (request, reply) => {
@@ -79,7 +87,9 @@ app.get('/runs/:runId/preview', async (request, reply) => {
 app.get('/runs/:runId/usage', async (request, reply) => {
   const runId = cleanRunId(routeParams(request).runId);
   const usage = await loadUsageSummary(ROOT, { runId });
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Uso LLM', renderUsageDashboard(usage, { runId })));
+  return reply
+    .header('Content-Type', 'text/html; charset=utf-8')
+    .send(layout('Uso LLM', renderUsageDashboard(usage, { runId })));
 });
 
 app.get('/runs/:runId', async (request, reply) => {
@@ -88,7 +98,11 @@ app.get('/runs/:runId', async (request, reply) => {
     loadRunBundle(ROOT, runId),
     loadUsageSummary(ROOT, { runId })
   ]);
-  return reply.header('Content-Type', 'text/html; charset=utf-8').send(layout('Ejecucion', renderRunDetail(payload.run, payload.cases || [], payload.summary, usage)));
+  return reply
+    .header('Content-Type', 'text/html; charset=utf-8')
+    .send(
+      layout('Ejecucion', renderRunDetail(payload.run, payload.cases || [], payload.summary, usage))
+    );
 });
 
 app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
@@ -104,7 +118,12 @@ app.get('/runs/:runId/cases/:caseId', async (request, reply) => {
   const generatedCode = await loadGeneratedCaseCode(ROOT, runId, caseId);
   return reply
     .header('Content-Type', 'text/html; charset=utf-8')
-    .send(layout('Detalle de caso', renderCaseDetail(payload.run, testCase, payload.summary, stepLog, generatedCode)));
+    .send(
+      layout(
+        'Detalle de caso',
+        renderCaseDetail(payload.run, testCase, payload.summary, stepLog, generatedCode)
+      )
+    );
 });
 
 app.get('/api/runs/:runId', async (request) => {
@@ -137,7 +156,8 @@ app.post('/api/shutdown', async (request, reply) => {
   }
   reply.send({ ok: true, pid: process.pid });
   setTimeout(() => {
-    app.close()
+    app
+      .close()
       .catch(() => {})
       .finally(() => process.exit(0));
   }, 50);
@@ -145,12 +165,16 @@ app.post('/api/shutdown', async (request, reply) => {
 
 app.post('/api/runs/:runId/cases', async (request, reply) => {
   cleanRunId(routeParams(request).runId);
-  return reply.code(410).send({ error: 'La edicion de casos no esta disponible en el visor. Envia casos actualizados por MCP.' });
+  return reply.code(410).send({
+    error: 'La edicion de casos no esta disponible en el visor. Envia casos actualizados por MCP.'
+  });
 });
 
 app.post('/api/runs/:runId/execute', async (request, reply) => {
   cleanRunId(routeParams(request).runId);
-  return reply.code(410).send({ error: 'La ejecucion se dispara por MCP. Usa run_cases o execute_run.' });
+  return reply
+    .code(410)
+    .send({ error: 'La ejecucion se dispara por MCP. Usa run_cases o execute_run.' });
 });
 
 app.get('/runs/:runId/events', async (request, reply) => {
@@ -205,18 +229,19 @@ app.listen({ host: HOST, port: PORT }).then((address) => {
 });
 
 function routeParams(request) {
-  return /** @type {Record<string, string>} */ (request.params || {});
+  return /** @type {Record<string, string>} */ request.params || {};
 }
 
 function requestBody(request) {
-  return /** @type {Record<string, any>} */ (request.body || {});
+  return /** @type {Record<string, any>} */ request.body || {};
 }
 
 function scheduleIdleShutdown() {
   if (!IDLE_TIMEOUT_MS || activeRequests > 0) return;
   clearIdleTimer();
   idleTimer = setTimeout(() => {
-    app.close()
+    app
+      .close()
       .catch(() => {})
       .finally(() => process.exit(0));
   }, IDLE_TIMEOUT_MS);
@@ -241,7 +266,6 @@ async function readStepLog(runId, caseId) {
   }
 }
 
-
 function cleanRunId(value) {
   const runId = String(value || '');
   if (!/^[A-Za-z0-9_.-]+$/.test(runId)) throw new Error('Run ID invalido.');
@@ -254,7 +278,6 @@ function cleanCaseId(value) {
   return caseId;
 }
 
-
 function rootIdentity(value) {
   const resolved = path.resolve(String(value || ''));
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
@@ -264,8 +287,6 @@ function nonNegativeNumber(value, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
-
-
 
 function contentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();

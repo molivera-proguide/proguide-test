@@ -53,10 +53,14 @@ export async function resolveRunIdentity(
   );
 
   if (identityConfig.require_user_email && !runUserEmail) {
-    throw new Error('Falta metadata de usuario: configura identity.run_user_email, PROGUIDE_RUN_USER_EMAIL o pasa run_user_email por MCP/CLI.');
+    throw new Error(
+      'Falta metadata de usuario: configura identity.run_user_email, PROGUIDE_RUN_USER_EMAIL o pasa run_user_email por MCP/CLI.'
+    );
   }
   if (identityConfig.require_project_name && !projectName) {
-    throw new Error('Falta metadata de proyecto: configura identity.project_name, PROGUIDE_PROJECT_NAME o pasa project_name por MCP/CLI.');
+    throw new Error(
+      'Falta metadata de proyecto: configura identity.project_name, PROGUIDE_PROJECT_NAME o pasa project_name por MCP/CLI.'
+    );
   }
 
   return {
@@ -66,7 +70,8 @@ export async function resolveRunIdentity(
     project_name: projectName || '',
     project_key: projectKey || '',
     workspace_root: rootPath,
-    run_source: firstValue(metadata.run_source, metadata.source, process.env.PROGUIDE_RUN_SOURCE) || '',
+    run_source:
+      firstValue(metadata.run_source, metadata.source, process.env.PROGUIDE_RUN_SOURCE) || '',
     git_branch: git.branch || '',
     git_commit: git.commit || '',
     identity_source: {
@@ -145,7 +150,11 @@ function projectNameFromRemote(remote: unknown): string {
   const text = String(remote || '').trim();
   if (!text) return '';
   const withoutQuery = text.split(/[?#]/)[0];
-  const last = withoutQuery.split(/[/:\\]/).filter(Boolean).at(-1) || '';
+  const last =
+    withoutQuery
+      .split(/[/:\\]/)
+      .filter(Boolean)
+      .at(-1) || '';
   return cleanProjectName(last.replace(/\.git$/i, ''));
 }
 
@@ -165,7 +174,8 @@ function sourceFor(entries: Array<[string, unknown]>): string {
 }
 
 function emailDomain(email: unknown): string {
-  const match = String(email || '').trim().match(/@([^@\s]+)$/);
+  const match = String(email || '')
+    .trim()
+    .match(/@([^@\s]+)$/);
   return match ? match[1].toLowerCase() : '';
 }
-

@@ -28,11 +28,13 @@ async function readMarkdownText(filePath: string): Promise<string> {
 export async function readMarkdownSources(sourceMd: string | string[]): Promise<MarkdownSource[]> {
   const paths = (Array.isArray(sourceMd) ? sourceMd : [sourceMd]).filter(Boolean);
   if (!paths.length) throw new Error('Debes pasar al menos un archivo Markdown.');
-  return Promise.all(paths.map(async (filePath) => ({
-    path: filePath,
-    name: path.basename(filePath),
-    markdown: await readMarkdownText(filePath)
-  })));
+  return Promise.all(
+    paths.map(async (filePath) => ({
+      path: filePath,
+      name: path.basename(filePath),
+      markdown: await readMarkdownText(filePath)
+    }))
+  );
 }
 
 export function markdownSourceFilename(sources: MarkdownSource[]): string {

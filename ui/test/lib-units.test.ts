@@ -21,7 +21,12 @@ import { isPlainObject } from '../lib/shared/object.js';
 import { safeId } from '../lib/shared/id.js';
 import { isPathInside } from '../lib/shared/paths.js';
 import { escapeHtml } from '../lib/shared/html.js';
-import { mergeCaseData, dataFromLines, normalizeStep, inferCaseRoute } from '../lib/cases/normalize.js';
+import {
+  mergeCaseData,
+  dataFromLines,
+  normalizeStep,
+  inferCaseRoute
+} from '../lib/cases/normalize.js';
 import { inferCaseType } from '../lib/cases/api-normalize.js';
 import { parseMarkdownCases } from '../lib/markdown/parse-cases.js';
 import { collectPlaywrightSpecs, normalizePlaywrightSpecResult } from '../lib/runner/results.js';
@@ -76,10 +81,11 @@ test('shared/object, id, paths, html primitives', () => {
 });
 
 test('cases/normalize: mergeCaseData deep-merges, primary wins', () => {
-  assert.deepEqual(
-    mergeCaseData({ a: 1, u: { x: 1 } }, { b: 2, u: { y: 2 } }),
-    { b: 2, u: { y: 2, x: 1 }, a: 1 }
-  );
+  assert.deepEqual(mergeCaseData({ a: 1, u: { x: 1 } }, { b: 2, u: { y: 2 } }), {
+    b: 2,
+    u: { y: 2, x: 1 },
+    a: 1
+  });
   assert.deepEqual(mergeCaseData({ a: 2 }, { a: 1 }), { a: 2 });
 });
 
@@ -96,12 +102,24 @@ test('cases/normalize: normalizeStep and inferCaseRoute', () => {
 });
 
 test('cases/normalize: feedback DSL regressions stay explicit', () => {
-  assert.equal(normalizeStep("expect text 'Afiliado elegible' to be visible"), 'expect text "Afiliado elegible"');
-  assert.equal(normalizeStep("expect URL to contain '/elegibility'"), 'expect url to contain "/elegibility"');
+  assert.equal(
+    normalizeStep("expect text 'Afiliado elegible' to be visible"),
+    'expect text "Afiliado elegible"'
+  );
+  assert.equal(
+    normalizeStep("expect URL to contain '/elegibility'"),
+    'expect url to contain "/elegibility"'
+  );
   assert.equal(normalizeStep('click .MiClase'), 'click [.MiClase]');
   assert.equal(normalizeStep("click :has-text('X')"), "click [:has-text('X')]");
-  assert.equal(normalizeStep("click X inside [role='list']"), 'click text "X" inside [role=\'list\']');
-  assert.equal(normalizeStep("click listitem 'Modulo Salud'"), 'click [li:has-text("Modulo Salud")]');
+  assert.equal(
+    normalizeStep("click X inside [role='list']"),
+    'click text "X" inside [role=\'list\']'
+  );
+  assert.equal(
+    normalizeStep("click listitem 'Modulo Salud'"),
+    'click [li:has-text("Modulo Salud")]'
+  );
   assert.equal(normalizeStep('wait 30 seconds'), 'wait 30 seconds');
   assert.equal(normalizeStep('set test timeout to 900 seconds'), 'set test timeout to 900 seconds');
   assert.equal(inferCaseRoute('/', ["expect URL to contain '/elegibility'"], []), '/');
@@ -109,10 +127,7 @@ test('cases/normalize: feedback DSL regressions stay explicit', () => {
 
 test('cases/api-normalize: inferCaseType detects api vs ui', () => {
   assert.equal(inferCaseType({ type: 'api' }), 'api');
-  assert.equal(
-    inferCaseType({ request: { method: 'GET', path: '/x' } }),
-    'api'
-  );
+  assert.equal(inferCaseType({ request: { method: 'GET', path: '/x' } }), 'api');
   assert.equal(inferCaseType({ steps: ['click button'], expected: ['ok'] }), 'ui');
 });
 
@@ -132,7 +147,10 @@ test('markdown/parse-cases: parses a TC heading block into one case', () => {
 
 test('runner/results: collectPlaywrightSpecs flattens nested suites', () => {
   const report = { suites: [{ specs: [{ title: 'a' }], suites: [{ specs: [{ title: 'b' }] }] }] };
-  assert.deepEqual(collectPlaywrightSpecs(report).map((s) => s.title), ['a', 'b']);
+  assert.deepEqual(
+    collectPlaywrightSpecs(report).map((s) => s.title),
+    ['a', 'b']
+  );
 });
 
 test('runner/results: normalizePlaywrightSpecResult maps passed status', () => {
@@ -151,34 +169,45 @@ test('runner/config: playwrightWorkerArgs', () => {
 
 test('runner/playwright: expectTimeoutForPlan honors slow UI timeout DSL', () => {
   assert.equal(expectTimeoutForPlan({ cases: [] }), 30000);
-  assert.equal(expectTimeoutForPlan({
-    cases: [{ steps: ['set test timeout to 900 seconds'] }]
-  }), 900000);
-  assert.equal(expectTimeoutForPlan({
-    cases: [{ steps: ['set assertion timeout to 45 seconds'] }]
-  }), 45000);
+  assert.equal(
+    expectTimeoutForPlan({
+      cases: [{ steps: ['set test timeout to 900 seconds'] }]
+    }),
+    900000
+  );
+  assert.equal(
+    expectTimeoutForPlan({
+      cases: [{ steps: ['set assertion timeout to 45 seconds'] }]
+    }),
+    45000
+  );
 });
 
 test('views/code: TypeScript preview renders feedback DSL without navigation/assertion regressions', () => {
-  const code = buildTypeScriptCode({
-    id: 'TC-UI-009',
-    title: 'Consulta de elegibilidad',
-    route: '/',
-    executable_steps: [
-      { normalized_action: 'set test timeout to 900 seconds' },
-      { normalized_action: 'wait 30 seconds' },
-      { normalized_action: 'expect url to contain "/elegibility"' },
-      { normalized_action: 'click [.MiClase]' },
-      { normalized_action: "click [:has-text('X')]" },
-      { normalized_action: 'click text "X" inside [role=\'list\']' },
-      { normalized_action: 'click [li:has-text("Modulo Salud")]' },
-      { normalized_action: 'expect text "Afiliado elegible"' }
-    ],
-    expected_results: [],
-    data: {}
-  }, { base_url: 'https://example.test' });
+  const code = buildTypeScriptCode(
+    {
+      id: 'TC-UI-009',
+      title: 'Consulta de elegibilidad',
+      route: '/',
+      executable_steps: [
+        { normalized_action: 'set test timeout to 900 seconds' },
+        { normalized_action: 'wait 30 seconds' },
+        { normalized_action: 'expect url to contain "/elegibility"' },
+        { normalized_action: 'click [.MiClase]' },
+        { normalized_action: "click [:has-text('X')]" },
+        { normalized_action: 'click text "X" inside [role=\'list\']' },
+        { normalized_action: 'click [li:has-text("Modulo Salud")]' },
+        { normalized_action: 'expect text "Afiliado elegible"' }
+      ],
+      expected_results: [],
+      data: {}
+    },
+    { base_url: 'https://example.test' }
+  );
 
-  assert.ok(code.indexOf('test.setTimeout(900000);') < code.indexOf('await goto(page, baseUrl, "/");'));
+  assert.ok(
+    code.indexOf('test.setTimeout(900000);') < code.indexOf('await goto(page, baseUrl, "/");')
+  );
   assert.match(code, /toHaveURL/);
   assert.doesNotMatch(code, /goto\(page, baseUrl, "\\\/elegibility"\)/);
   assert.match(code, /waitForTimeout\(30000\)/);
@@ -186,27 +215,39 @@ test('views/code: TypeScript preview renders feedback DSL without navigation/ass
   assert.ok(code.includes('page.locator(":has-text(\'X\')")'));
   assert.ok(code.includes('page.locator("[role=\\"list\\"]")'));
   assert.ok(code.includes('page.locator("li:has-text'));
-  assert.match(code, /toHaveURL\(new RegExp\(".\*\/elegibility.\*", 'i'\), \{ timeout: 900000 \}\)/);
+  assert.match(
+    code,
+    /toHaveURL\(new RegExp\(".\*\/elegibility.\*", 'i'\), \{ timeout: 900000 \}\)/
+  );
   assert.match(code, /toBeVisible\(\{ timeout: 900000 \}\)/);
 });
 
 test('codegen/agent: rejects role attribute selectors without brackets', () => {
-  assert.deepEqual(findInvalidGeneratedSelectors(`
+  assert.deepEqual(
+    findInvalidGeneratedSelectors(`
     await page.locator("role='list'").getByText('Nueva Autorizacion').click();
     await page.locator('role=\\'menu\\'').click();
-  `), ["role='list'", "role='menu'"]);
+  `),
+    ["role='list'", "role='menu'"]
+  );
 
-  assert.deepEqual(findInvalidGeneratedSelectors(`
+  assert.deepEqual(
+    findInvalidGeneratedSelectors(`
     await page.locator("[role=\\"list\\"]").getByText('Nueva Autorizacion').click();
     await page.getByRole('list').getByText('Nueva Autorizacion').click();
-  `), []);
+  `),
+    []
+  );
 });
 
 test('usage/pricing: normalizeLlmUsage sums totals; estimateLlmCost returns a cost', () => {
   const usage = normalizeLlmUsage('anthropic', { input_tokens: 10, output_tokens: 5 });
   assert.equal(usage.total_tokens, 15);
   assert.equal(usage.provider, 'anthropic');
-  const est = estimateLlmCost('anthropic', 'claude-haiku-4-5-20251001', { input_tokens: 1000, output_tokens: 1000 });
+  const est = estimateLlmCost('anthropic', 'claude-haiku-4-5-20251001', {
+    input_tokens: 1000,
+    output_tokens: 1000
+  });
   assert.ok(Number.isFinite(est.cost_usd) && est.cost_usd > 0);
   assert.ok(est.pricing);
 });

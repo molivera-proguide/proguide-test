@@ -66,7 +66,11 @@ export async function loadRunRecord(runDir: string): Promise<ProGuide.Dict> {
   return readJson(path.join(runDir, RUN_JSON));
 }
 
-export async function legacyRunRecord(runDir: string, runId: string, error: any): Promise<ProGuide.Dict> {
+export async function legacyRunRecord(
+  runDir: string,
+  runId: string,
+  error: any
+): Promise<ProGuide.Dict> {
   let createdAt;
   try {
     createdAt = (await fs.stat(runDir)).mtime.toISOString();
@@ -108,7 +112,8 @@ export async function legacyRunRecord(runDir: string, runId: string, error: any)
     html_path: null,
     data_dir: runDir,
     load_error: error?.message || String(error || 'run.json no disponible'),
-    recovery_hint: 'El directorio existe pero no tiene run.json valido. Re-crea el run o conserva el directorio solo como evidencia legacy.'
+    recovery_hint:
+      'El directorio existe pero no tiene run.json valido. Re-crea el run o conserva el directorio solo como evidencia legacy.'
   };
 }
 
@@ -133,7 +138,10 @@ export async function loadEvents(runDir: string): Promise<ProGuide.Dict[]> {
   const eventsPath = path.join(runDir, EVENTS_JSONL);
   if (!(await exists(eventsPath))) return [];
   const text = await fs.readFile(eventsPath, 'utf8');
-  return text.split(/\r?\n/).filter((line) => line.trim()).map((line) => JSON.parse(line));
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.trim())
+    .map((line) => JSON.parse(line));
 }
 
 export async function appendEvent(runDir: string, event: ProGuide.Dict): Promise<void> {
@@ -213,11 +221,17 @@ export async function collectApiEvidence(runDir: string, caseId: string): Promis
       path: relativePath(filePath, runDir)
     });
   });
-  return entries.sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0) ||
-    String(a.path || '').localeCompare(String(b.path || '')));
+  return entries.sort(
+    (a, b) =>
+      Number(a.sequence || 0) - Number(b.sequence || 0) ||
+      String(a.path || '').localeCompare(String(b.path || ''))
+  );
 }
 
-export async function walk(directory: string, onFile: (filePath: string) => Promise<void> | void): Promise<void> {
+export async function walk(
+  directory: string,
+  onFile: (filePath: string) => Promise<void> | void
+): Promise<void> {
   const entries = await fs.readdir(directory, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = path.join(directory, entry.name);
@@ -247,17 +261,25 @@ export function statusFromSummary(counts: ProGuide.Dict, blocked: number): strin
   return 'finished';
 }
 
-export function setupFailureMessage(exitCode: number, logText: string, relativeLogPath: string): string {
+export function setupFailureMessage(
+  exitCode: number,
+  logText: string,
+  relativeLogPath: string
+): string {
   const firstUseful = firstUsefulLogLine(logText);
   const reason = firstUseful || `playwright test exited with code ${exitCode}`;
   return `setup_failed: ${reason}. See ${relativeLogPath}. Run proguide doctor --fix.`;
 }
 
 export function firstUsefulLogLine(logText: unknown): string {
-  return String(logText || '')
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .find((line) => /Cannot find module|Error|Traceback|Target page|Timeout|ERR_|playwright/i.test(line)) || '';
+  return (
+    String(logText || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find((line) =>
+        /Cannot find module|Error|Traceback|Target page|Timeout|ERR_|playwright/i.test(line)
+      ) || ''
+  );
 }
 
 export function chunkArray<T>(items: T[], size: unknown): T[][] {

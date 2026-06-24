@@ -194,7 +194,11 @@ export async function collectDomContext({
 
   await writeJson(inputPath, payload);
   await fs.writeFile(scriptPath, DOM_CONTEXT_PROBE_SCRIPT, 'utf8');
-  await fs.writeFile(logPath, `$ ${process.execPath} ${scriptPath} ${inputPath} ${outputPath}\n`, 'utf8');
+  await fs.writeFile(
+    logPath,
+    `$ ${process.execPath} ${scriptPath} ${inputPath} ${outputPath}\n`,
+    'utf8'
+  );
 
   try {
     const completed = await runProcess([process.execPath, scriptPath, inputPath, outputPath], {
@@ -206,7 +210,8 @@ export async function collectDomContext({
       const logText = await fs.readFile(logPath, 'utf8').catch(() => '');
       return {
         available: false,
-        error: firstUsefulLogLine(logText) || `dom context probe exited with code ${completed.code}`,
+        error:
+          firstUsefulLogLine(logText) || `dom context probe exited with code ${completed.code}`,
         by_case_id: {}
       };
     }

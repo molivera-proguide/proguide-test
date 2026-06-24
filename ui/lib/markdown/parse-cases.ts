@@ -9,12 +9,7 @@ import {
   normalizeApiRequestsFromSteps,
   normalizeApiAssertions
 } from '../cases/api-normalize.js';
-import {
-  buildSteps,
-  assessAutomation,
-  dataFromLines,
-  inferCaseRoute
-} from '../cases/normalize.js';
+import { buildSteps, assessAutomation, dataFromLines, inferCaseRoute } from '../cases/normalize.js';
 
 // Markdown → structured cases parser: split a Markdown document into case blocks
 // and parse each into a normalized case object. Pure (no I/O). Extracted verbatim
@@ -142,7 +137,9 @@ function splitCaseBlocks(markdown: string): CaseBlock[] {
   }
   if (current) fallbackBlocks.push(current);
   const contentBlocks = fallbackBlocks.filter(hasCaseContent);
-  return contentBlocks.length ? contentBlocks : [{ heading: 'Caso 1', lines: markdown.split(/\r?\n/) }];
+  return contentBlocks.length
+    ? contentBlocks
+    : [{ heading: 'Caso 1', lines: markdown.split(/\r?\n/) }];
 }
 
 function isCaseHeading(prefix: string, text: string): boolean {
@@ -249,31 +246,38 @@ function parseBlock(block: CaseBlock, number: number): ProGuide.Dict | null {
   const requests = normalizeApiRequestsFromSteps(fields.original_steps, {
     expected: fields.expected_results
   });
-  const type = inferCaseType(/** @type {ProGuide.CaseInput} */ ({
-    type: fields.test_type,
-    request,
-    requests,
-    steps: fields.original_steps,
-    expected: fields.expected_results
-  }));
+  const type = inferCaseType(
+    /** @type {ProGuide.CaseInput} */ {
+      type: fields.test_type,
+      request,
+      requests,
+      steps: fields.original_steps,
+      expected: fields.expected_results
+    }
+  );
   const effectiveRequest = requests[0]?.request || request;
   const executableSteps = buildSteps(fields.original_steps, { type });
-  const assertions = type === 'api'
-    ? (requests.length
+  const assertions =
+    type === 'api'
+      ? requests.length
         ? uniqueApiCaseAssertions(requests.flatMap((entry) => entry.assertions || []))
         : normalizeApiAssertions({
             expected: fields.expected_results,
             expectedStatus: effectiveRequest.expected_status
-          }))
-    : [];
+          })
+      : [];
 
   const title = String(fields.title || `Caso ${number}`).trim();
-  const [automationState, stateReason, confidence] = assessAutomation(fields.original_steps, fields.expected_results, {
-    type,
-    request: effectiveRequest,
-    requests,
-    assertions
-  });
+  const [automationState, stateReason, confidence] = assessAutomation(
+    fields.original_steps,
+    fields.expected_results,
+    {
+      type,
+      request: effectiveRequest,
+      requests,
+      assertions
+    }
+  );
   return {
     id: safeId(`caso_${number}_${title}`),
     number,
@@ -337,10 +341,34 @@ function fieldFromHeading(line: string): string | null {
 function appendField(fields: ProGuide.Dict, label: string, value: string): void {
   const cleanValue = stripListMarker(value).trim();
   if (!cleanValue) return;
-  if (['preconditions', 'data_used', 'original_steps', 'expected_results', 'tags', 'request_headers', 'request_query', 'request_body'].includes(label)) {
+  if (
+    [
+      'preconditions',
+      'data_used',
+      'original_steps',
+      'expected_results',
+      'tags',
+      'request_headers',
+      'request_query',
+      'request_body'
+    ].includes(label)
+  ) {
     fields[label] = fields[label] || [];
     fields[label].push(cleanValue);
-  } else if (['qa_owner', 'dev_owner', 'ticket', 'route', 'priority', 'title', 'test_type', 'request_method', 'request_path', 'expected_status'].includes(label)) {
+  } else if (
+    [
+      'qa_owner',
+      'dev_owner',
+      'ticket',
+      'route',
+      'priority',
+      'title',
+      'test_type',
+      'request_method',
+      'request_path',
+      'expected_status'
+    ].includes(label)
+  ) {
     fields[label] = cleanValue;
   } else if (label === 'description') {
     fields[label] = joinText(String(fields[label] || ''), cleanValue);
@@ -356,12 +384,21 @@ function isSeparatorLine(line: unknown): boolean {
 }
 
 function titleFromHeading(heading: string, number: number): string {
-  const title = stripListMarker(String(heading).replace(/^\s*(?:caso|case|test|tc)(?:\s|#|:|\.|-|_)*\d*[\s:.\-_]*/i, '').trim());
+  const title = stripListMarker(
+    String(heading)
+      .replace(/^\s*(?:caso|case|test|tc)(?:\s|#|:|\.|-|_)*\d*[\s:.\-_]*/i, '')
+      .trim()
+  );
   return title || `Caso ${number}`;
 }
 
 function cleanHeading(heading: string): string {
-  return stripListMarker(String(heading).trim().replace(/^#+|#+$/g, '').trim());
+  return stripListMarker(
+    String(heading)
+      .trim()
+      .replace(/^#+|#+$/g, '')
+      .trim()
+  );
 }
 
 function isFieldLabel(text: string): boolean {

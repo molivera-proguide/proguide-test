@@ -7,11 +7,7 @@ import { parseMarkdownCases } from '../markdown/parse-cases.js';
 import { isApiPlanCase } from '../codegen/api-spec.js';
 import { casesToTestPlan } from '../codegen/test-plan.js';
 import { collectDomContext } from '../codegen/dom-context.js';
-import {
-  generateTestsWithAgent,
-  loadExistingTestPlan,
-  extractCaseCode
-} from '../codegen/agent.js';
+import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
 import {
@@ -106,7 +102,9 @@ export async function listRunRecords(root: string): Promise<ProGuide.Dict[]> {
         records.push(await legacyRunRecord(entryDir, entry.name, error));
       }
     }
-    return records.sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    return records.sort((a, b) =>
+      String(b.created_at || '').localeCompare(String(a.created_at || ''))
+    );
   } catch {
     return [];
   }
@@ -129,14 +127,22 @@ export async function loadRunBundle(root: string, runId: string): Promise<ProGui
   return { run, cases, summary, events };
 }
 
-export async function loadGeneratedCaseCode(root: string, runId: string, caseId: string): Promise<ProGuide.Dict | null> {
+export async function loadGeneratedCaseCode(
+  root: string,
+  runId: string,
+  caseId: string
+): Promise<ProGuide.Dict | null> {
   const runDir = runPath(root, runId);
   const generatedDir = path.join(runDir, 'generated');
   if (!(await exists(generatedDir))) return null;
   let found: ProGuide.Dict | null = null;
   await walk(generatedDir, async (filePath) => {
-    if (found || !['.ts', '.js', '.cjs', '.mjs'].includes(path.extname(filePath).toLowerCase())) return;
-    if (['proguide-test-runtime.cjs', 'proguide-test-runtime.mjs'].includes(path.basename(filePath))) return;
+    if (found || !['.ts', '.js', '.cjs', '.mjs'].includes(path.extname(filePath).toLowerCase()))
+      return;
+    if (
+      ['proguide-test-runtime.cjs', 'proguide-test-runtime.mjs'].includes(path.basename(filePath))
+    )
+      return;
     const code = extractCaseCode(await fs.readFile(filePath, 'utf8'), caseId);
     if (code) {
       found = {
@@ -200,15 +206,21 @@ export async function prepareMarkdownRun({
 
   await fs.mkdir(runDir, { recursive: true });
   await saveRun(runDir, run);
-  await appendEvent(runDir, { run_id: run.id, type: 'run_created', status: run.status, message: 'Run creado.' });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'run_created',
+    status: run.status,
+    message: 'Run creado.'
+  });
   const markdown = combineMarkdownSources(sources);
   await fs.writeFile(path.join(runDir, SOURCE_MD), maskSecretText(markdown), 'utf8');
   await appendEvent(runDir, {
     run_id: run.id,
     type: 'file_received',
-    message: sources.length === 1
-      ? `Archivo recibido: ${sources[0].name}`
-      : `Archivos recibidos: ${sources.map((source) => source.name).join(', ')}`
+    message:
+      sources.length === 1
+        ? `Archivo recibido: ${sources[0].name}`
+        : `Archivos recibidos: ${sources.map((source) => source.name).join(', ')}`
   });
 
   let cases: ProGuide.Dict[];
@@ -217,10 +229,10 @@ export async function prepareMarkdownRun({
     for (const source of sources) {
       const parsed = useAgent
         ? await interpretMarkdownWithAgent(source.markdown, {
-          root,
-          sourceName: source.name,
-          usageContext: { runId: run.id, runDir }
-        })
+            root,
+            sourceName: source.name,
+            usageContext: { runId: run.id, runDir }
+          })
         : parseMarkdownCases(source.markdown, { sourceName: source.name });
       cases.push(...parsed);
     }
@@ -243,10 +255,13 @@ export async function prepareMarkdownRun({
   }
 
   await saveCasesFile(runDir, cases);
-  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(cases, {
-    sourceMd: SOURCE_MD,
-    appName: run.app_name || 'ProGuide Markdown Cases'
-  }));
+  await writeJson(
+    path.join(runDir, TEST_PLAN_JSON),
+    casesToTestPlan(cases, {
+      sourceMd: SOURCE_MD,
+      appName: run.app_name || 'ProGuide Markdown Cases'
+    })
+  );
 
   run.status = 'ready';
   run.total_cases = cases.length;
@@ -315,9 +330,18 @@ export async function prepareCasesRun({
 
   await fs.mkdir(runDir, { recursive: true });
   await saveRun(runDir, run);
-  await appendEvent(runDir, { run_id: run.id, type: 'run_created', status: run.status, message: 'Run creado.' });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'run_created',
+    status: run.status,
+    message: 'Run creado.'
+  });
   await writeJson(path.join(runDir, SOURCE_CASES_JSON), maskSecretsDeep(cases));
-  await appendEvent(runDir, { run_id: run.id, type: 'file_received', message: 'Casos estructurados recibidos.' });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'file_received',
+    message: 'Casos estructurados recibidos.'
+  });
 
   for (const testCase of normalizedCases) {
     if (run.qa_owner && !testCase.qa_owner) testCase.qa_owner = run.qa_owner;
@@ -325,10 +349,13 @@ export async function prepareCasesRun({
     if (run.ticket && !testCase.ticket) testCase.ticket = run.ticket;
   }
   await saveCasesFile(runDir, normalizedCases);
-  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(normalizedCases, {
-    sourceMd: SOURCE_CASES_JSON,
-    appName: run.app_name || 'ProGuide Markdown Cases'
-  }));
+  await writeJson(
+    path.join(runDir, TEST_PLAN_JSON),
+    casesToTestPlan(normalizedCases, {
+      sourceMd: SOURCE_CASES_JSON,
+      appName: run.app_name || 'ProGuide Markdown Cases'
+    })
+  );
 
   run.status = 'ready';
   run.total_cases = normalizedCases.length;
@@ -370,16 +397,25 @@ export async function previewMarkdownRun({
   };
 }
 
-export async function saveCasesForRun({ root, runId, casesPayload }: SaveCasesForRunInput): Promise<ProGuide.Dict> {
+export async function saveCasesForRun({
+  root,
+  runId,
+  casesPayload
+}: SaveCasesForRunInput): Promise<ProGuide.Dict> {
   const runDir = runPath(root, runId);
   const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
-  const cases = casesPayload.map((item, index) => normalizeCaseForStorage(item, index + 1, existing[index]));
+  const cases = casesPayload.map((item, index) =>
+    normalizeCaseForStorage(item, index + 1, existing[index])
+  );
   await saveCasesFile(runDir, cases);
   const run = await loadRunRecord(runDir);
-  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(cases, {
-    sourceMd: SOURCE_MD,
-    appName: run.app_name || 'ProGuide Markdown Cases'
-  }));
+  await writeJson(
+    path.join(runDir, TEST_PLAN_JSON),
+    casesToTestPlan(cases, {
+      sourceMd: SOURCE_MD,
+      appName: run.app_name || 'ProGuide Markdown Cases'
+    })
+  );
   run.status = 'ready';
   run.total_cases = cases.length;
   await saveRun(runDir, run);
@@ -409,20 +445,28 @@ export async function appendCasesToRun({
     throw new Error(`Run no encontrado: ${runId}. Root efectivo: ${root}.`);
   }
   const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
-  const additions = casesPayload.map((item, index) => normalizeCaseForStorage({
-    ...item,
-    qa_owner: item.qa_owner ?? metadata.qa_owner,
-    dev_owner: item.dev_owner ?? metadata.dev_owner,
-    ticket: item.ticket ?? metadata.ticket
-  }, existing.length + index + 1));
+  const additions = casesPayload.map((item, index) =>
+    normalizeCaseForStorage(
+      {
+        ...item,
+        qa_owner: item.qa_owner ?? metadata.qa_owner,
+        dev_owner: item.dev_owner ?? metadata.dev_owner,
+        ticket: item.ticket ?? metadata.ticket
+      },
+      existing.length + index + 1
+    )
+  );
   const cases = [...existing, ...additions];
   await saveCasesFile(runDir, cases);
   const run = await loadRunRecord(runDir);
   if (String(baseUrl || '').trim()) run.base_url = String(baseUrl || '').replace(/\/+$/, '');
-  await writeJson(path.join(runDir, TEST_PLAN_JSON), casesToTestPlan(cases, {
-    sourceMd: run.source_filename || SOURCE_MD,
-    appName: run.app_name || 'ProGuide Markdown Cases'
-  }));
+  await writeJson(
+    path.join(runDir, TEST_PLAN_JSON),
+    casesToTestPlan(cases, {
+      sourceMd: run.source_filename || SOURCE_MD,
+      appName: run.app_name || 'ProGuide Markdown Cases'
+    })
+  );
   run.status = 'ready';
   run.total_cases = cases.length;
   run.finished_at = null;
@@ -475,11 +519,19 @@ export async function executePreparedRun({
   run.base_url = actualBaseUrl;
   run.started_at = nowIso();
   await saveRun(runDir, run);
-  await appendEvent(runDir, { run_id: run.id, type: 'plan_generated', status: run.status, message: 'Generando plan ejecutable.' });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'plan_generated',
+    status: run.status,
+    message: 'Generando plan ejecutable.'
+  });
 
   const plan = fromPlan
     ? await loadExistingTestPlan(runDir, cases, run)
-    : casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
+    : casesToTestPlan(cases, {
+        sourceMd: SOURCE_MD,
+        appName: run.app_name || 'ProGuide Markdown Cases'
+      });
   if (!plan.cases.length) {
     run.status = 'blocked';
     run.finished_at = nowIso();
@@ -549,7 +601,12 @@ export async function executePreparedRun({
       domContext,
       usageContext: { runId: run.id, runDir }
     });
-    await appendEvent(runDir, { run_id: run.id, type: 'tests_generated', status: 'running', message: 'Codigo TypeScript Playwright generado.' });
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'tests_generated',
+      status: 'running',
+      message: 'Codigo TypeScript Playwright generado.'
+    });
 
     run.status = 'running';
     await saveRun(runDir, run);
@@ -574,7 +631,12 @@ export async function executePreparedRun({
     run.status = 'error';
     run.finished_at = nowIso();
     await saveRun(runDir, run);
-    await appendEvent(runDir, { run_id: run.id, type: 'error_global', status: run.status, message: error.message });
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'error_global',
+      status: run.status,
+      message: error.message
+    });
     throw error;
   }
 
@@ -599,7 +661,11 @@ export async function executePreparedRun({
     message: 'Se genero evidencia HTML; PDF no disponible desde Fastify.'
   });
   await saveRun(runDir, run);
-  await appendEvent(runDir, { run_id: run.id, type: 'run_finished', status: run.status, message: 'Run finalizado.' });
+  await appendEvent(runDir, {
+    run_id: run.id,
+    type: 'run_finished',
+    status: run.status,
+    message: 'Run finalizado.'
+  });
   return summary;
 }
-

@@ -27,7 +27,9 @@ export async function loadUiConfig(root: string): Promise<ProGuide.Dict> {
 }
 
 function parseYamlScalar(value: unknown): string | number | boolean {
-  const trimmed = String(value || '').trim().replace(/^['"]|['"]$/g, '');
+  const trimmed = String(value || '')
+    .trim()
+    .replace(/^['"]|['"]$/g, '');
   if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);
   return trimmed;

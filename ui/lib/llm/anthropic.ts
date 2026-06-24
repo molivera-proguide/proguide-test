@@ -30,11 +30,16 @@ export async function callJsonModel(
   const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
   const maxOutputTokens = positiveInteger(config.llm.max_output_tokens, 8000);
   if (provider === 'disabled') {
-    throw new Error(`El agente LLM esta deshabilitado; no se puede ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
+    throw new Error(
+      `El agente LLM esta deshabilitado; no se puede ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`
+    );
   }
   if (provider === 'anthropic') {
     const apiKey = anthropicApiKey();
-    if (!apiKey.value) throw new Error(`Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`);
+    if (!apiKey.value)
+      throw new Error(
+        `Falta ANTHROPIC_API_KEY, PROGUIDE_LLM_API_KEY o API_KEY para ${purpose}. Root efectivo: ${root}. Provider: ${provider}. Config: ${configPath}.`
+      );
     const client = new Anthropic({ apiKey: apiKey.value });
     let data;
     try {
@@ -43,12 +48,12 @@ export async function callJsonModel(
         max_tokens: maxOutputTokens,
         temperature: Number(config.llm.temperature ?? 0.2),
         system,
-        messages: [
-          { role: 'user', content: JSON.stringify(payload) }
-        ]
+        messages: [{ role: 'user', content: JSON.stringify(payload) }]
       });
     } catch (error) {
-      throw new Error(`Anthropic fallo al ${purpose}${anthropicErrorDetails(error)}`, { cause: error });
+      throw new Error(`Anthropic fallo al ${purpose}${anthropicErrorDetails(error)}`, {
+        cause: error
+      });
     }
     await recordLlmUsage({
       root,
@@ -61,14 +66,18 @@ export async function callJsonModel(
       request: { max_output_tokens: maxOutputTokens }
     }).catch(() => {});
     const text = (data.content || [])
-      .map((block) => block.type === 'text' ? block.text : '')
+      .map((block) => (block.type === 'text' ? block.text : ''))
       .join('\n');
     if (data.stop_reason === 'max_tokens') {
-      throw new Error(`Anthropic trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`);
+      throw new Error(
+        `Anthropic trunco la respuesta al ${purpose}. max_tokens=${maxOutputTokens}. Sube llm.max_output_tokens o baja llm.max_cases en ${configPath}.`
+      );
     }
     return extractJson(text, { purpose, provider, maxOutputTokens, configPath });
   }
-  throw new Error(`Proveedor LLM no soportado: ${provider}. ProGuide solo soporta anthropic. Root efectivo: ${root}. Config: ${configPath}.`);
+  throw new Error(
+    `Proveedor LLM no soportado: ${provider}. ProGuide solo soporta anthropic. Root efectivo: ${root}. Config: ${configPath}.`
+  );
 }
 
 function anthropicErrorDetails(error: any): string {
@@ -88,7 +97,12 @@ function anthropicApiKey(): { name: string; value: string | undefined } {
 
 function extractJson(
   content: string,
-  context: { purpose?: string; provider?: string; maxOutputTokens?: number; configPath?: string } = {}
+  context: {
+    purpose?: string;
+    provider?: string;
+    maxOutputTokens?: number;
+    configPath?: string;
+  } = {}
 ) {
   try {
     return JSON.parse(content);
@@ -105,6 +119,8 @@ function extractJson(
     const details = context.purpose
       ? ` al ${context.purpose}. Provider: ${context.provider}. max_tokens=${context.maxOutputTokens}. Config: ${context.configPath}.`
       : '.';
-    throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`, { cause: error });
+    throw new Error(`El agente no devolvio JSON valido${details} ${error.message}`, {
+      cause: error
+    });
   }
 }

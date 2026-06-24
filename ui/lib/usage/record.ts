@@ -20,7 +20,6 @@ import {
 // proguide-service.js; recordLlmUsage/loadUsageSummary are imported back there
 // (both part of the public API) and recordLlmUsage by lib/llm/anthropic.js.
 
-
 type RecordLlmUsageInput = {
   root: string;
   runId?: string | null;
@@ -43,7 +42,8 @@ export async function recordLlmUsage({
   request = {}
 }: RecordLlmUsageInput) {
   const normalized = normalizeLlmUsage(provider, usage);
-  if (!normalized.total_tokens && !normalized.input_tokens && !normalized.output_tokens) return null;
+  if (!normalized.total_tokens && !normalized.input_tokens && !normalized.output_tokens)
+    return null;
 
   const estimate = estimateLlmCost(provider, model, normalized);
   const entry = {
@@ -67,13 +67,19 @@ export async function recordLlmUsage({
   const effectiveRunDir = runDir || (runId ? runPath(root, runId) : null);
   if (effectiveRunDir) {
     const runUsagePath = path.join(effectiveRunDir, LLM_USAGE_JSON);
-    const current = await readJson(runUsagePath, { run_id: runId || path.basename(effectiveRunDir), entries: [] });
+    const current = await readJson(runUsagePath, {
+      run_id: runId || path.basename(effectiveRunDir),
+      entries: []
+    });
     const entries = Array.isArray(current.entries) ? current.entries : [];
     entries.push(entry);
     await writeJson(runUsagePath, {
       run_id: runId || path.basename(effectiveRunDir),
       updated_at: entry.timestamp,
-      summary: summarizeUsageEntries(entries, { scope: 'run', runId: runId || path.basename(effectiveRunDir) }),
+      summary: summarizeUsageEntries(entries, {
+        scope: 'run',
+        runId: runId || path.basename(effectiveRunDir)
+      }),
       entries
     });
     await appendEvent(effectiveRunDir, {
@@ -94,7 +100,10 @@ export async function recordLlmUsage({
   return entry;
 }
 
-export async function loadUsageSummary(root: string, { runId = null }: { runId?: string | null } = {}) {
+export async function loadUsageSummary(
+  root: string,
+  { runId = null }: { runId?: string | null } = {}
+) {
   const entries = runId
     ? await loadRunUsageEntries(root, runId)
     : await loadGlobalUsageEntries(root);
@@ -164,12 +173,16 @@ function summarizeUsageEntries(
     generated_at: nowIso(),
     entries_count: normalizedEntries.length,
     ...totals,
-    unknown_cost_entries: normalizedEntries.filter((entry) => entry.estimated_cost_usd === null).length,
+    unknown_cost_entries: normalizedEntries.filter((entry) => entry.estimated_cost_usd === null)
+      .length,
     by_provider: groupUsage(normalizedEntries, (entry) => entry.provider || 'unknown'),
     by_model: groupUsage(normalizedEntries, (entry) => entry.model || 'unknown'),
     by_run: groupUsage(normalizedEntries, (entry) => entry.run_id || 'sin_run'),
-    entries: normalizedEntries.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || ''))),
-    pricing_note: 'Costos estimados con tokens reportados por la API. La factura final puede diferir por descuentos, impuestos, tiers o cambios de proveedor.'
+    entries: normalizedEntries.sort((a, b) =>
+      String(b.timestamp || '').localeCompare(String(a.timestamp || ''))
+    ),
+    pricing_note:
+      'Costos estimados con tokens reportados por la API. La factura final puede diferir por descuentos, impuestos, tiers o cambios de proveedor.'
   };
 }
 
@@ -215,7 +228,11 @@ function groupUsage(entries: any[], keyFn: (entry: any) => unknown) {
     .map((group) => ({
       key: group.key,
       entries_count: group.entries.length,
-      last_at: group.entries.map((entry) => entry.timestamp || '').sort().at(-1) || '',
+      last_at:
+        group.entries
+          .map((entry) => entry.timestamp || '')
+          .sort()
+          .at(-1) || '',
       ...usageTotals(group.entries)
     }))
     .sort((a, b) => {

@@ -72,7 +72,11 @@ test('markdown pipeline normalizes UI and API cases deterministically', async ()
       })),
       [
         { number: 1, normalized_action: 'go to /login', confidence: 0.85 },
-        { number: 2, normalized_action: 'fill [name="email"] with qa@example.test', confidence: 0.95 },
+        {
+          number: 2,
+          normalized_action: 'fill [name="email"] with qa@example.test',
+          confidence: 0.95
+        },
         { number: 3, normalized_action: 'click [type="submit"]', confidence: 0.95 }
       ]
     );

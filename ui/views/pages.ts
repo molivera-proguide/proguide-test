@@ -59,7 +59,9 @@ function renderHistory(runs) {
     <table>
       <thead><tr><th>Fecha</th><th>Proyecto</th><th>Usuario</th><th>Estado</th><th>URL</th><th>Casos</th><th></th></tr></thead>
       <tbody>
-        ${runs.map((run) => `
+        ${runs
+          .map(
+            (run) => `
           <tr>
             <td class="mono nowrap">${escapeHtml(run.created_at || '')}</td>
             <td class="truncate" title="${attr(run.project_name || run.app_name || '')}">${escapeHtml(run.project_name || run.app_name || '-')}</td>
@@ -69,7 +71,9 @@ function renderHistory(runs) {
             <td class="mono">${run.total_cases || 0}</td>
             <td><a class="row-link" href="/runs/${encodeURIComponent(run.id)}">Abrir<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9M9 4.5 12.5 8 9 11.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></a></td>
           </tr>
-        `).join('')}
+        `
+          )
+          .join('')}
       </tbody>
     </table>
     </div>`;
@@ -84,11 +88,15 @@ function renderRunIdentity(run) {
   ];
   return `
     <section class="identity-strip reveal" style="--delay:.035s">
-      ${items.map(([label, value]) => `
+      ${items
+        .map(
+          ([label, value]) => `
         <div>
           <dt>${escapeHtml(label)}</dt>
           <dd title="${attr(value)}">${escapeHtml(value)}</dd>
-        </div>`).join('')}
+        </div>`
+        )
+        .join('')}
     </section>`;
 }
 
@@ -126,7 +134,9 @@ export function renderUsageDashboard(usage, { runId = null } = {}) {
     </section>
     <main class="usage-page">
       ${renderUsageStats(usage)}
-      ${usage.entries_count ? `
+      ${
+        usage.entries_count
+          ? `
         <section class="usage-grid">
           <section class="panel reveal" style="--delay:.08s">
             <header class="panel-head"><h2>Por modelo</h2><p class="panel-sub">${usage.by_model.length} modelo(s)</p></header>
@@ -143,25 +153,43 @@ export function renderUsageDashboard(usage, { runId = null } = {}) {
             <p class="panel-sub">${escapeHtml(usage.pricing_note)}</p>
           </header>
           ${renderUsageEntriesTable(usage.entries, { showRun: !isRun })}
-        </section>` : renderUsageEmpty()}
+        </section>`
+          : renderUsageEmpty()
+      }
     </main>`;
 }
 
 function renderUsageStats(usage) {
   const stats = [
-    ['Costo', formatUsd(usage.estimated_cost_usd), usage.unknown_cost_entries ? `${usage.unknown_cost_entries} sin estimar` : 'Estimacion local'],
+    [
+      'Costo',
+      formatUsd(usage.estimated_cost_usd),
+      usage.unknown_cost_entries ? `${usage.unknown_cost_entries} sin estimar` : 'Estimacion local'
+    ],
     ['Total tokens', formatTokens(usage.total_tokens), `${usage.entries_count} llamada(s)`],
-    ['Input', formatTokens(usage.input_tokens), `Cache read ${formatTokens(usage.cache_read_input_tokens)}`],
-    ['Output', formatTokens(usage.output_tokens), `Cache write ${formatTokens(usage.cache_creation_input_tokens)}`]
+    [
+      'Input',
+      formatTokens(usage.input_tokens),
+      `Cache read ${formatTokens(usage.cache_read_input_tokens)}`
+    ],
+    [
+      'Output',
+      formatTokens(usage.output_tokens),
+      `Cache write ${formatTokens(usage.cache_creation_input_tokens)}`
+    ]
   ];
   return `
     <section class="usage-stats reveal" style="--delay:.04s">
-      ${stats.map(([label, value, hint]) => `
+      ${stats
+        .map(
+          ([label, value, hint]) => `
         <article class="usage-stat">
           <span>${escapeHtml(label)}</span>
           <strong>${escapeHtml(value)}</strong>
           <small>${escapeHtml(hint)}</small>
-        </article>`).join('')}
+        </article>`
+        )
+        .join('')}
     </section>`;
 }
 
@@ -183,11 +211,13 @@ function renderUsageGroupTable(groups, label, { runLinks = false } = {}) {
       <table class="usage-table">
         <thead><tr><th>${escapeHtml(label)}</th><th>Llamadas</th><th>Tokens</th><th>Costo</th><th>Ultima</th></tr></thead>
         <tbody>
-          ${groups.map((group) => {
-            const title = runLinks && group.key !== 'sin_run'
-              ? `<a href="/runs/${encodeURIComponent(group.key)}/usage">${escapeHtml(group.key)}</a>`
-              : escapeHtml(group.key);
-            return `
+          ${groups
+            .map((group) => {
+              const title =
+                runLinks && group.key !== 'sin_run'
+                  ? `<a href="/runs/${encodeURIComponent(group.key)}/usage">${escapeHtml(group.key)}</a>`
+                  : escapeHtml(group.key);
+              return `
               <tr>
                 <td class="mono">${title}</td>
                 <td>${escapeHtml(group.entries_count)}</td>
@@ -195,7 +225,8 @@ function renderUsageGroupTable(groups, label, { runLinks = false } = {}) {
                 <td class="mono">${escapeHtml(formatUsd(group.estimated_cost_usd))}</td>
                 <td class="mono nowrap">${escapeHtml(shortDate(group.last_at))}</td>
               </tr>`;
-          }).join('')}
+            })
+            .join('')}
         </tbody>
       </table>
     </div>`;
@@ -213,7 +244,9 @@ function renderUsageEntriesTable(entries, { showRun = true } = {}) {
           </tr>
         </thead>
         <tbody>
-          ${entries.map((entry) => `
+          ${entries
+            .map(
+              (entry) => `
             <tr>
               <td class="mono nowrap">${escapeHtml(shortDate(entry.timestamp))}</td>
               ${showRun ? `<td class="mono">${entry.run_id ? `<a href="/runs/${encodeURIComponent(entry.run_id)}/usage">${escapeHtml(entry.run_id)}</a>` : '<span class="muted">-</span>'}</td>` : ''}
@@ -223,7 +256,9 @@ function renderUsageEntriesTable(entries, { showRun = true } = {}) {
               <td class="mono">${escapeHtml(formatTokens(entry.usage.output_tokens))}</td>
               <td class="mono">${escapeHtml(formatTokens(entry.usage.cache_creation_input_tokens + entry.usage.cache_read_input_tokens))}</td>
               <td class="mono">${escapeHtml(formatUsd(entry.estimated_cost_usd))}</td>
-            </tr>`).join('')}
+            </tr>`
+            )
+            .join('')}
         </tbody>
       </table>
     </div>`;
@@ -316,7 +351,8 @@ function initialCaseStatus(testCase, result, run) {
 
 function initialCaseMessage(testCase, result, run) {
   if (result?.message) return result.message;
-  if (isRunnableCase(testCase) && isExecutionActive(run.status)) return 'Esperando worker disponible...';
+  if (isRunnableCase(testCase) && isExecutionActive(run.status))
+    return 'Esperando worker disponible...';
   return testCase.state_reason || '';
 }
 
@@ -337,23 +373,31 @@ const PROGRESS_STEPS = [
 ];
 
 function progressStepsForRun({ apiOnlyRun = false } = {}) {
-  return apiOnlyRun
-    ? PROGRESS_STEPS.filter(([key]) => key !== 'dom')
-    : PROGRESS_STEPS;
+  return apiOnlyRun ? PROGRESS_STEPS.filter(([key]) => key !== 'dom') : PROGRESS_STEPS;
 }
 
 function isApiOnlyRun(cases = []) {
-  return Array.isArray(cases) && cases.length > 0 && cases.every((testCase) => {
-    const type = String(testCase?.type || '').toLowerCase();
-    return type === 'api' || Boolean(testCase?.request?.method && testCase?.request?.path);
-  });
+  return (
+    Array.isArray(cases) &&
+    cases.length > 0 &&
+    cases.every((testCase) => {
+      const type = String(testCase?.type || '').toLowerCase();
+      return type === 'api' || Boolean(testCase?.request?.method && testCase?.request?.path);
+    })
+  );
 }
 
-function initialRunProgress(run: ProGuide.Dict, summary: ProGuide.Dict | null, options: { apiOnlyRun?: boolean } = {}) {
+function initialRunProgress(
+  run: ProGuide.Dict,
+  summary: ProGuide.Dict | null,
+  options: { apiOnlyRun?: boolean } = {}
+) {
   const status = statusClass(run.status);
   const counts = countSummary(summary);
   const apiOnlyRun = Boolean(options.apiOnlyRun);
-  if (['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)) {
+  if (
+    ['passed', 'failed', 'finished', 'inconclusive', 'setup_failed', 'blocked'].includes(status)
+  ) {
     return {
       stage: 'report',
       status: run.status || 'finished',
@@ -413,15 +457,19 @@ function initialRunProgress(run: ProGuide.Dict, summary: ProGuide.Dict | null, o
 
 function progressStepsMarkup(activeStage, state, steps = PROGRESS_STEPS) {
   const activeIndex = steps.findIndex(([key]) => key === activeStage);
-  return steps.map(([key, label], index) => {
-    const className = [
-      'run-progress-step',
-      index < activeIndex || state.done ? 'is-done' : '',
-      index === activeIndex && state.active ? 'is-active' : '',
-      index === activeIndex && state.error ? 'is-error' : ''
-    ].filter(Boolean).join(' ');
-    return `<span class="${className}" data-progress-step="${attr(key)}"><i></i>${escapeHtml(label)}</span>`;
-  }).join('');
+  return steps
+    .map(([key, label], index) => {
+      const className = [
+        'run-progress-step',
+        index < activeIndex || state.done ? 'is-done' : '',
+        index === activeIndex && state.active ? 'is-active' : '',
+        index === activeIndex && state.error ? 'is-error' : ''
+      ]
+        .filter(Boolean)
+        .join(' ');
+      return `<span class="${className}" data-progress-step="${attr(key)}"><i></i>${escapeHtml(label)}</span>`;
+    })
+    .join('');
 }
 
 function progressCounts(cases, summary) {
@@ -441,14 +489,17 @@ function progressFinishedMessage(counts, run) {
 }
 
 function countSummary(summary) {
-  return (summary?.results || []).reduce((acc, result) => {
-    acc.total += 1;
-    if (result.status === 'passed') acc.passed += 1;
-    else if (result.status === 'failed') acc.failed += 1;
-    else if (result.status === 'setup_failed') acc.setup_failed += 1;
-    else acc.inconclusive += 1;
-    return acc;
-  }, { total: 0, passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 });
+  return (summary?.results || []).reduce(
+    (acc, result) => {
+      acc.total += 1;
+      if (result.status === 'passed') acc.passed += 1;
+      else if (result.status === 'failed') acc.failed += 1;
+      else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else acc.inconclusive += 1;
+      return acc;
+    },
+    { total: 0, passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 }
+  );
 }
 
 export function renderCaseDetail(run, testCase, summary, stepLog, generatedCode) {
@@ -460,7 +511,7 @@ export function renderCaseDetail(run, testCase, summary, stepLog, generatedCode)
     ['Estado', renderBadge(status)],
     ['Ruta', escapeHtml(testCase.route || '-')],
     ['Duracion', escapeHtml(formatSeconds(result?.duration_seconds))],
-    ['ID', `<span class="mono">${escapeHtml(testCase.id)}</span>`],
+    ['ID', `<span class="mono">${escapeHtml(testCase.id)}</span>`]
   ];
   if (testCase.ticket) detailItems.push(['Ticket', escapeHtml(testCase.ticket)]);
   if (testCase.qa_owner) detailItems.push(['QA', escapeHtml(testCase.qa_owner)]);
@@ -618,7 +669,9 @@ function renderEvidenceLinks(result, runId) {
   if (!result) return '';
   const evidence = [];
   for (const screenshot of result.screenshots || []) {
-    evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, screenshot))}">Screenshot</a>`);
+    evidence.push(
+      `<a class="chip-link" href="${attr(artifactHref(runId, screenshot))}">Screenshot</a>`
+    );
   }
   for (const video of result.videos || []) {
     evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, video))}">Video</a>`);
@@ -627,7 +680,10 @@ function renderEvidenceLinks(result, runId) {
     evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, trace))}">Trace</a>`);
   }
   for (const apiEvidence of result.api_evidence || []) {
-    if (apiEvidence?.path) evidence.push(`<a class="chip-link" href="${attr(artifactHref(runId, apiEvidence.path))}">API JSON</a>`);
+    if (apiEvidence?.path)
+      evidence.push(
+        `<a class="chip-link" href="${attr(artifactHref(runId, apiEvidence.path))}">API JSON</a>`
+      );
   }
   return evidence.join('');
 }
@@ -669,33 +725,47 @@ function renderCodeBlock(codeData, emptyText, fallbackPath, language) {
 function renderStepTimeline(testCase, result, stepLog) {
   const loggedSteps = (stepLog?.steps || []).filter((item) => item && item.step);
   if (loggedSteps.length) {
-    return `<ol class="timeline">${loggedSteps.map((item) => `
+    return `<ol class="timeline">${loggedSteps
+      .map(
+        (item) => `
       <li class="timeline-item ${escapeHtml(statusClass(item.status))}">
         <span class="timeline-status">${escapeHtml(item.status || 'step')}</span>
         <div>
           <p>${escapeHtml(item.step)}</p>
           ${item.message ? `<small>${escapeHtml(item.message)}</small>` : ''}
         </div>
-      </li>`).join('')}</ol>`;
+      </li>`
+      )
+      .join('')}</ol>`;
   }
 
   const resultSteps = (result?.steps || []).filter(Boolean);
   if (resultSteps.length) {
-    return `<ol class="timeline">${resultSteps.map((step) => `
+    return `<ol class="timeline">${resultSteps
+      .map(
+        (step) => `
       <li class="timeline-item">
         <span class="timeline-status">step</span>
         <div><p>${escapeHtml(step)}</p></div>
-      </li>`).join('')}</ol>`;
+      </li>`
+      )
+      .join('')}</ol>`;
   }
 
-  const plannedSteps = (testCase.executable_steps || []).map((step) => step.normalized_action || step.original_text).filter(Boolean);
-  const fallbackSteps = plannedSteps.length ? plannedSteps : (testCase.original_steps || []);
+  const plannedSteps = (testCase.executable_steps || [])
+    .map((step) => step.normalized_action || step.original_text)
+    .filter(Boolean);
+  const fallbackSteps = plannedSteps.length ? plannedSteps : testCase.original_steps || [];
   if (!fallbackSteps.length) return '<p class="muted">Sin pasos registrados.</p>';
-  return `<ol class="timeline">${fallbackSteps.map((step) => `
+  return `<ol class="timeline">${fallbackSteps
+    .map(
+      (step) => `
     <li class="timeline-item pending">
       <span class="timeline-status">plan</span>
       <div><p>${escapeHtml(step)}</p></div>
-    </li>`).join('')}</ol>`;
+    </li>`
+    )
+    .join('')}</ol>`;
 }
 
 export function layout(title, body) {
@@ -733,15 +803,9 @@ export function layout(title, body) {
 }
 
 function safeName(value) {
-
-  return String(value).replace(/[^A-Za-z0-9_.-]+/g, "_");
-
+  return String(value).replace(/[^A-Za-z0-9_.-]+/g, '_');
 }
 
-
-
 function attr(value) {
-
   return escapeHtml(value);
-
 }

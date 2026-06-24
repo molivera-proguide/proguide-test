@@ -7,16 +7,30 @@ import { escapeHtml } from '../lib/shared/html.js';
 
 export function renderBadge(status) {
   const label = String(status || '').replace(/_/g, ' ');
-  const indicator = isActiveStatus(status) ? '<i class="status-spinner"></i>' : '<i class="badge-dot"></i>';
+  const indicator = isActiveStatus(status)
+    ? '<i class="status-spinner"></i>'
+    : '<i class="badge-dot"></i>';
   return `<span class="badge ${escapeHtml(statusClass(status))}">${indicator}${escapeHtml(label || '-')}</span>`;
 }
 
 export function statusClass(status) {
-  return String(status || 'pending').toLowerCase().replace(/[^a-z0-9_-]+/g, '_') || 'pending';
+  return (
+    String(status || 'pending')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '_') || 'pending'
+  );
 }
 
 export function isActiveStatus(status) {
-  return ['running', 'executing', 'ejecutando', 'queued', 'started', 'generating', 'interpreting'].includes(statusClass(status));
+  return [
+    'running',
+    'executing',
+    'ejecutando',
+    'queued',
+    'started',
+    'generating',
+    'interpreting'
+  ].includes(statusClass(status));
 }
 
 export function renderPriorityBadge(value) {
@@ -70,9 +84,10 @@ export function formatTokens(value) {
 }
 
 export function formatUsd(value) {
-  if (value === null || value === undefined || !Number.isFinite(Number(value))) return 'Sin estimar';
+  if (value === null || value === undefined || !Number.isFinite(Number(value)))
+    return 'Sin estimar';
   const number = Number(value);
-  const digits = number > 0 && number < 0.01 ? 6 : (number < 1 ? 4 : 2);
+  const digits = number > 0 && number < 0.01 ? 6 : number < 1 ? 4 : 2;
   return `USD ${number.toFixed(digits)}`;
 }
 

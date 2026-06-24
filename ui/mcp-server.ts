@@ -21,19 +21,21 @@ import { casesRequireBrowser } from './lib/shared/cases.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(
   process.env.PROGUIDE_MCP_ROOT ||
-  process.env.PROGUIDE_UI_ROOT ||
-  process.env.CLAUDE_PROJECT_DIR ||
-  process.env.CURSOR_WORKSPACE_FOLDER ||
-  process.env.WORKSPACE_FOLDER ||
-  process.env.PROJECT_ROOT ||
-  process.env.INIT_CWD ||
-  process.cwd()
+    process.env.PROGUIDE_UI_ROOT ||
+    process.env.CLAUDE_PROJECT_DIR ||
+    process.env.CURSOR_WORKSPACE_FOLDER ||
+    process.env.WORKSPACE_FOLDER ||
+    process.env.PROJECT_ROOT ||
+    process.env.INIT_CWD ||
+    process.cwd()
 );
 const PROTOCOL_VERSION = '2025-06-18';
-const API_ASSERTIONS_DESCRIPTION = 'Aserciones REST soportadas: {status:200} o request.expected_status; {ok:true}; {header:"content-type", equals:"application/json"}; {header:"content-type", contains:"json"}; {body_contains:"texto"}; body path con {path:"id", exists:true}, {path:"name", equals:"Mario"}, {path:"items", contains:"item_001"}, {path:"$", isArray:true}. Usa path "" o "$" para el body raiz. No existen greater_than, length ni comparadores numericos.';
+const API_ASSERTIONS_DESCRIPTION =
+  'Aserciones REST soportadas: {status:200} o request.expected_status; {ok:true}; {header:"content-type", equals:"application/json"}; {header:"content-type", contains:"json"}; {body_contains:"texto"}; body path con {path:"id", exists:true}, {path:"name", equals:"Mario"}, {path:"items", contains:"item_001"}, {path:"$", isArray:true}. Usa path "" o "$" para el body raiz. No existen greater_than, length ni comparadores numericos.';
 const casesInputSchema = {
   type: 'array',
-  description: 'Casos normalizados o semiestructurados. Si se pasa, no hace falta markdown/source_path.',
+  description:
+    'Casos normalizados o semiestructurados. Si se pasa, no hace falta markdown/source_path.',
   items: {
     type: 'object',
     additionalProperties: true,
@@ -44,7 +46,11 @@ const casesInputSchema = {
       description: { type: 'string' },
       priority: { type: 'string' },
       route: { type: 'string' },
-      debug: { type: 'boolean', description: 'Solo API. Si true, los fallos incluyen el request real resuelto en actual_response.request para debugging local.' },
+      debug: {
+        type: 'boolean',
+        description:
+          'Solo API. Si true, los fallos incluyen el request real resuelto en actual_response.request para debugging local.'
+      },
       request: {
         type: 'object',
         additionalProperties: true,
@@ -60,7 +66,8 @@ const casesInputSchema = {
       },
       requests: {
         type: 'array',
-        description: 'Flujo REST secuencial para type=api. Cada item puede incluir request/method/path, assertions y captures/save para variables reutilizables como {{access_token}}.',
+        description:
+          'Flujo REST secuencial para type=api. Cada item puede incluir request/method/path, assertions y captures/save para variables reutilizables como {{access_token}}.',
         items: {
           type: 'object',
           additionalProperties: true,
@@ -93,7 +100,8 @@ const casesInputSchema = {
             captures: {
               type: 'object',
               additionalProperties: true,
-              description: 'Mapa variable -> body path/header spec. Ejemplo: {"access_token":"access_token"}. Alias: save.'
+              description:
+                'Mapa variable -> body path/header spec. Ejemplo: {"access_token":"access_token"}. Alias: save.'
             },
             save: { type: 'object', additionalProperties: true }
           }
@@ -116,7 +124,11 @@ const casesInputSchema = {
 };
 
 const identityInputProperties = {
-  run_user_email: { type: 'string', description: 'Email de la persona que crea o ejecuta el run. No es la credencial de login de la app.' },
+  run_user_email: {
+    type: 'string',
+    description:
+      'Email de la persona que crea o ejecuta el run. No es la credencial de login de la app.'
+  },
   run_user_name: { type: 'string', description: 'Nombre de la persona que crea o ejecuta el run.' },
   project_name: { type: 'string', description: 'Nombre del proyecto bajo prueba.' },
   project_key: { type: 'string', description: 'Clave corta o slug del proyecto bajo prueba.' }
@@ -125,17 +137,34 @@ const identityInputProperties = {
 const tools = [
   {
     name: 'run_cases',
-    description: 'Tool principal para ejecutar. Crea y ejecuta un run ProGuide desde casos estructurados o Markdown.',
+    description:
+      'Tool principal para ejecutar. Crea y ejecuta un run ProGuide desde casos estructurados o Markdown.',
     inputSchema: {
       type: 'object',
       properties: {
         cases: casesInputSchema,
-        source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
-        source_paths: { type: 'array', items: { type: 'string' }, description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.' },
-        markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path/cases.' },
-        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar.' },
+        source_path: {
+          type: 'string',
+          description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.'
+        },
+        source_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.'
+        },
+        markdown: {
+          type: 'string',
+          description: 'Contenido Markdown alternativo si no se pasa source_path/cases.'
+        },
+        append_to_run: {
+          type: 'string',
+          description: 'Run existente al que se agregan los casos antes de ejecutar.'
+        },
         base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
-        root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
+        root: {
+          type: 'string',
+          description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.'
+        },
         title: { type: 'string' },
         ticket: { type: 'string' },
         module: { type: 'string' },
@@ -145,14 +174,18 @@ const tools = [
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
-        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url en el navegador local. Default: true.'
+        }
       },
       required: ['base_url']
     }
   },
   {
     name: 'create_run',
-    description: 'Tool principal para dry-run. Crea un run local desde casos estructurados o Markdown sin ejecutar. Devuelve run_id para ejecutar despues.',
+    description:
+      'Tool principal para dry-run. Crea un run local desde casos estructurados o Markdown sin ejecutar. Devuelve run_id para ejecutar despues.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -160,7 +193,10 @@ const tools = [
         source_path: { type: 'string' },
         source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
-        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos sin ejecutar.' },
+        append_to_run: {
+          type: 'string',
+          description: 'Run existente al que se agregan los casos sin ejecutar.'
+        },
         base_url: { type: 'string' },
         root: { type: 'string' },
         title: { type: 'string' },
@@ -169,7 +205,10 @@ const tools = [
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
         ...identityInputProperties,
-        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url en el navegador local. Default: true.'
+        }
       }
     }
   },
@@ -179,13 +218,29 @@ const tools = [
     inputSchema: {
       type: 'object',
       properties: {
-        source_path: { type: 'string', description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.' },
-        source_paths: { type: 'array', items: { type: 'string' }, description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.' },
-        markdown: { type: 'string', description: 'Contenido Markdown alternativo si no se pasa source_path.' },
+        source_path: {
+          type: 'string',
+          description: 'Ruta del archivo Markdown con los casos QA. Debe estar dentro del root.'
+        },
+        source_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Rutas de varios Markdown con casos QA. Deben estar dentro del root.'
+        },
+        markdown: {
+          type: 'string',
+          description: 'Contenido Markdown alternativo si no se pasa source_path.'
+        },
         cases: casesInputSchema,
-        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar.' },
+        append_to_run: {
+          type: 'string',
+          description: 'Run existente al que se agregan los casos antes de ejecutar.'
+        },
         base_url: { type: 'string', description: 'URL base de la app bajo prueba.' },
-        root: { type: 'string', description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.' },
+        root: {
+          type: 'string',
+          description: 'Root del workspace. Default: PROGUIDE_MCP_ROOT o cwd del proyecto.'
+        },
         title: { type: 'string' },
         ticket: { type: 'string' },
         module: { type: 'string' },
@@ -195,7 +250,10 @@ const tools = [
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
-        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url en el navegador local. Default: true.'
+        }
       },
       required: ['base_url']
     }
@@ -210,7 +268,10 @@ const tools = [
         source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
         cases: casesInputSchema,
-        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos sin ejecutar.' },
+        append_to_run: {
+          type: 'string',
+          description: 'Run existente al que se agregan los casos sin ejecutar.'
+        },
         base_url: { type: 'string' },
         root: { type: 'string' },
         title: { type: 'string' },
@@ -219,13 +280,17 @@ const tools = [
         qa_owner: { type: 'string' },
         dev_owner: { type: 'string' },
         ...identityInputProperties,
-        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url en el navegador local. Default: true.'
+        }
       }
     }
   },
   {
     name: 'execute_run',
-    description: 'Genera codigo TypeScript Playwright y ejecuta un run existente. Si no se pasa run_id, puede crear uno desde cases o Markdown.',
+    description:
+      'Genera codigo TypeScript Playwright y ejecuta un run existente. Si no se pasa run_id, puede crear uno desde cases o Markdown.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -234,15 +299,26 @@ const tools = [
         source_path: { type: 'string' },
         source_paths: { type: 'array', items: { type: 'string' } },
         markdown: { type: 'string' },
-        append_to_run: { type: 'string', description: 'Run existente al que se agregan los casos antes de ejecutar si no se pasa run_id.' },
+        append_to_run: {
+          type: 'string',
+          description:
+            'Run existente al que se agregan los casos antes de ejecutar si no se pasa run_id.'
+        },
         base_url: { type: 'string' },
-        from_plan: { type: 'boolean', description: 'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.' },
+        from_plan: {
+          type: 'boolean',
+          description:
+            'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.'
+        },
         root: { type: 'string' },
         ...identityInputProperties,
         email: { type: 'string' },
         username: { type: 'string' },
         password: { type: 'string' },
-        open_browser: { type: 'boolean', description: 'Abre el run_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url en el navegador local. Default: true.'
+        }
       }
     }
   },
@@ -284,24 +360,32 @@ const tools = [
   },
   {
     name: 'start_viewer',
-    description: 'Levanta o reutiliza el visor local Fastify para ver ejecuciones ProGuide. Si se pasa run_id, devuelve tambien el link directo al run.',
+    description:
+      'Levanta o reutiliza el visor local Fastify para ver ejecuciones ProGuide. Si se pasa run_id, devuelve tambien el link directo al run.',
     inputSchema: {
       type: 'object',
       properties: {
         root: { type: 'string' },
         run_id: { type: 'string' },
-        open_browser: { type: 'boolean', description: 'Abre el run_url o viewer_url en el navegador local. Default: true.' }
+        open_browser: {
+          type: 'boolean',
+          description: 'Abre el run_url o viewer_url en el navegador local. Default: true.'
+        }
       }
     }
   },
   {
     name: 'stop_viewer',
-    description: 'Detiene el visor local ProGuide asociado al root indicado. No afecta viewers de otros workspaces.',
+    description:
+      'Detiene el visor local ProGuide asociado al root indicado. No afecta viewers de otros workspaces.',
     inputSchema: {
       type: 'object',
       properties: {
         root: { type: 'string' },
-        port: { type: 'number', description: 'Puerto inicial para buscar viewers. Default: 8787 o PROGUIDE_VIEWER_PORT.' }
+        port: {
+          type: 'number',
+          description: 'Puerto inicial para buscar viewers. Default: 8787 o PROGUIDE_VIEWER_PORT.'
+        }
       }
     }
   }
@@ -315,7 +399,8 @@ type McpViewerOptions = {
 const prompts = [
   {
     name: 'run_cases',
-    description: 'Create and execute a ProGuide run from QA cases against a base URL, then return run_url.',
+    description:
+      'Create and execute a ProGuide run from QA cases against a base URL, then return run_url.',
     arguments: [
       { name: 'base_url', description: 'Base URL of the app under test.', required: true },
       { name: 'markdown', description: 'QA test cases in Markdown.', required: false }
@@ -331,7 +416,8 @@ const prompts = [
   },
   {
     name: 'run_markdown_cases',
-    description: 'Create and execute a ProGuide run from QA Markdown cases against a base URL, then return run_url.',
+    description:
+      'Create and execute a ProGuide run from QA Markdown cases against a base URL, then return run_url.',
     arguments: [
       { name: 'base_url', description: 'Base URL of the app under test.', required: true },
       { name: 'markdown', description: 'QA test cases in Markdown.', required: true }
@@ -381,7 +467,11 @@ async function handleLine(line) {
 
 async function handleMessage(message) {
   if (!message || message.jsonrpc !== '2.0') {
-    return { jsonrpc: '2.0', id: message?.id ?? null, error: jsonRpcError(-32600, 'Invalid JSON-RPC request.') };
+    return {
+      jsonrpc: '2.0',
+      id: message?.id ?? null,
+      error: jsonRpcError(-32600, 'Invalid JSON-RPC request.')
+    };
   }
 
   const isNotification = !Object.prototype.hasOwnProperty.call(message, 'id');
@@ -412,7 +502,11 @@ async function handleMessage(message) {
       return response(message.id, getPrompt(message.params?.name, message.params?.arguments || {}));
     }
     if (isNotification) return null;
-    return { jsonrpc: '2.0', id: message.id, error: jsonRpcError(-32601, `Method not found: ${message.method}`) };
+    return {
+      jsonrpc: '2.0',
+      id: message.id,
+      error: jsonRpcError(-32601, `Method not found: ${message.method}`)
+    };
   } catch (error) {
     if (isNotification) {
       console.error(error);
@@ -443,7 +537,9 @@ async function callTool(name, args) {
       appended_cases: prepared.appended_cases,
       summary,
       ...viewer,
-      report_url_path: bundle.run.html_path ? `/artifacts/${prepared.run.id}/${bundle.run.html_path}` : ''
+      report_url_path: bundle.run.html_path
+        ? `/artifacts/${prepared.run.id}/${bundle.run.html_path}`
+        : ''
     };
     return toolResult(runMessage('ejecutado', payload), payload);
   }
@@ -451,9 +547,10 @@ async function callTool(name, args) {
   if (name === 'create_run_from_markdown' || name === 'create_run') {
     const root = resolveRoot(args.root);
     const prepared = await prepareRunFromArgs(root, args);
-    const viewer = args.open_browser === false
-      ? viewerDisabled()
-      : await attachViewer(root, prepared.run.id, args);
+    const viewer =
+      args.open_browser === false
+        ? viewerDisabled()
+        : await attachViewer(root, prepared.run.id, args);
     const payload = {
       run_id: prepared.run.id,
       run: prepared.run,
@@ -508,17 +605,24 @@ async function callTool(name, args) {
     const runId = cleanHandle(args.run_id, 'run_id');
     const caseId = cleanHandle(args.case_id, 'case_id');
     const generatedCode = await loadGeneratedCaseCode(root, runId, caseId);
-    return toolResult(generatedCode?.code ? `Codigo generado para ${caseId}.` : `No hay codigo generado para ${caseId}.`, {
-      run_id: runId,
-      case_id: caseId,
-      generated_code: generatedCode
-    });
+    return toolResult(
+      generatedCode?.code
+        ? `Codigo generado para ${caseId}.`
+        : `No hay codigo generado para ${caseId}.`,
+      {
+        run_id: runId,
+        case_id: caseId,
+        generated_code: generatedCode
+      }
+    );
   }
 
   if (name === 'list_runs') {
     const root = resolveRoot(args.root);
     const runs = await listRunRecords(root);
-    const limit = Number.isFinite(Number(args.limit)) ? Math.max(0, Number(args.limit)) : runs.length;
+    const limit = Number.isFinite(Number(args.limit))
+      ? Math.max(0, Number(args.limit))
+      : runs.length;
     return toolResult(`${Math.min(limit, runs.length)} run(s).`, {
       runs: runs.slice(0, limit)
     });
@@ -547,41 +651,46 @@ function getPrompt(name, args) {
     const toolName = name === 'run_markdown_cases' ? 'run_markdown_cases' : 'run_cases';
     return {
       description: 'Create and execute a ProGuide run from Markdown QA cases.',
-      messages: [{
-        role: 'user',
-        content: {
-          type: 'text',
-          text: [
-            'Use the ProGuide MCP tools to run QA Markdown cases.',
-            `Call ${toolName} with cases or markdown and base_url.`,
-            'Return run_id, run_url, viewer_url, status, and a concise result summary.',
-            'Do not ask the user to set provider or model; ProGuide defaults to Anthropic Haiku.',
-            `base_url: ${args.base_url || '<base_url>'}`,
-            'markdown:',
-            args.markdown || '<markdown_cases>'
-          ].join('\n')
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: [
+              'Use the ProGuide MCP tools to run QA Markdown cases.',
+              `Call ${toolName} with cases or markdown and base_url.`,
+              'Return run_id, run_url, viewer_url, status, and a concise result summary.',
+              'Do not ask the user to set provider or model; ProGuide defaults to Anthropic Haiku.',
+              `base_url: ${args.base_url || '<base_url>'}`,
+              'markdown:',
+              args.markdown || '<markdown_cases>'
+            ].join('\n')
+          }
         }
-      }]
+      ]
     };
   }
   if (name === 'create_run_from_markdown' || name === 'create_run') {
-    const toolName = name === 'create_run_from_markdown' ? 'create_run_from_markdown' : 'create_run';
+    const toolName =
+      name === 'create_run_from_markdown' ? 'create_run_from_markdown' : 'create_run';
     return {
       description: 'Create a ProGuide run from Markdown QA cases without execution.',
-      messages: [{
-        role: 'user',
-        content: {
-          type: 'text',
-          text: [
-            'Use the ProGuide MCP tools to create a QA run without executing it.',
-            `Call ${toolName} with cases or markdown and optional base_url.`,
-            'Then call get_run and return run_id, run_url if available, status, and parsed cases.',
-            `base_url: ${args.base_url || '<optional_base_url>'}`,
-            'markdown:',
-            args.markdown || '<markdown_cases>'
-          ].join('\n')
+      messages: [
+        {
+          role: 'user',
+          content: {
+            type: 'text',
+            text: [
+              'Use the ProGuide MCP tools to create a QA run without executing it.',
+              `Call ${toolName} with cases or markdown and optional base_url.`,
+              'Then call get_run and return run_id, run_url if available, status, and parsed cases.',
+              `base_url: ${args.base_url || '<optional_base_url>'}`,
+              'markdown:',
+              args.markdown || '<markdown_cases>'
+            ].join('\n')
+          }
         }
-      }]
+      ]
     };
   }
   throw new Error(`Unknown prompt: ${name}`);
@@ -723,7 +832,9 @@ async function startViewer(root: string, runId = '', options: McpViewerOptions =
   const viewer = await ensureViewer(root, {
     port: Number.isFinite(Number(options.port)) ? Number(options.port) : undefined
   });
-  const links = runId ? viewerLinks(viewer.baseUrl, runId) : { viewer_url: `${viewer.baseUrl}/runs`, run_url: '', events_url: '' };
+  const links = runId
+    ? viewerLinks(viewer.baseUrl, runId)
+    : { viewer_url: `${viewer.baseUrl}/runs`, run_url: '', events_url: '' };
   const browser = await openViewerInBrowser(links.run_url || links.viewer_url, options);
   return {
     ...links,
@@ -782,9 +893,11 @@ function runMessage(action, payload) {
   if (payload.run_url) lines.push(`Ejecucion en visor: ${payload.run_url}`);
   if (payload.viewer_url) lines.push(`Servidor del visor: ${payload.viewer_url}`);
   if (payload.viewer_port) {
-    lines.push(payload.viewer_started
-      ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
-      : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`);
+    lines.push(
+      payload.viewer_started
+        ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
+        : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`
+    );
   }
   if (payload.browser_opened) lines.push(`Navegador abierto: ${payload.browser_url}`);
   if (payload.browser_disabled) lines.push('Apertura de navegador deshabilitada.');
@@ -804,9 +917,11 @@ function viewerMessage(payload) {
   if (payload.run_url) lines.push(`Ejecucion en visor: ${payload.run_url}`);
   if (payload.viewer_url) lines.push(`Servidor del visor: ${payload.viewer_url}`);
   if (payload.viewer_port) {
-    lines.push(payload.viewer_started
-      ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
-      : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`);
+    lines.push(
+      payload.viewer_started
+        ? `Fastify viewer iniciado en puerto ${payload.viewer_port}.`
+        : `Fastify viewer reutilizado en puerto ${payload.viewer_port}.`
+    );
   }
   if (payload.browser_opened) lines.push(`Navegador abierto: ${payload.browser_url}`);
   if (payload.browser_disabled) lines.push('Apertura de navegador deshabilitada.');
@@ -820,9 +935,7 @@ function stopViewerMessage(payload) {
   }
   const stopped = payload.viewers.filter((item) => item.stopped);
   const failed = payload.viewers.filter((item) => !item.stopped);
-  const lines = [
-    `Visores detenidos: ${stopped.length}/${payload.viewers.length}.`
-  ];
+  const lines = [`Visores detenidos: ${stopped.length}/${payload.viewers.length}.`];
   for (const item of stopped) {
     lines.push(`Detenido: ${item.baseUrl}${item.pid ? ` pid=${item.pid}` : ''}`);
   }
@@ -841,14 +954,17 @@ function summaryLine(summary, run) {
 function summaryCounts(summary, run) {
   const total = Number(run?.total_cases || summary?.results?.length || 0);
   if (!total && !summary?.results?.length) return null;
-  const counted = (summary?.results || []).reduce((acc, result) => {
-    if (result.status === 'passed') acc.passed += 1;
-    else if (result.status === 'failed') acc.failed += 1;
-    else if (result.status === 'blocked') acc.blocked += 1;
-    else if (result.status === 'setup_failed') acc.setup_failed += 1;
-    else acc.inconclusive += 1;
-    return acc;
-  }, { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 });
+  const counted = (summary?.results || []).reduce(
+    (acc, result) => {
+      if (result.status === 'passed') acc.passed += 1;
+      else if (result.status === 'failed') acc.failed += 1;
+      else if (result.status === 'blocked') acc.blocked += 1;
+      else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else acc.inconclusive += 1;
+      return acc;
+    },
+    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 }
+  );
   return {
     total,
     passed: Number(run?.passed ?? counted.passed),
