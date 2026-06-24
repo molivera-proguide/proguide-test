@@ -1,4 +1,3 @@
-// @ts-check
 import { safeId } from '../shared/id.js';
 
 // Pure parsing of the Playwright JSON report: flatten specs, match each to a
@@ -6,7 +5,7 @@ import { safeId } from '../shared/id.js';
 // Extracted verbatim from proguide-service.js; the three exports below are
 // consumed by parsePlaywrightResults, which keeps the surrounding I/O.
 
-export function collectPlaywrightSpecs(report) {
+export function collectPlaywrightSpecs(report: ProGuide.Dict) {
   const specs = [];
   const visitSuite = (suite) => {
     for (const spec of suite?.specs || []) specs.push(spec);
@@ -16,7 +15,11 @@ export function collectPlaywrightSpecs(report) {
   return specs;
 }
 
-export function caseFromPlaywrightSpec(spec, caseById, caseBySafeId) {
+export function caseFromPlaywrightSpec(
+  spec: ProGuide.Dict,
+  caseById: Map<string, ProGuide.Dict>,
+  caseBySafeId: Map<string, ProGuide.Dict>
+) {
   const candidates = [
     caseIdFromTitle(spec?.title),
     caseIdFromAnnotations(spec),
@@ -30,7 +33,7 @@ export function caseFromPlaywrightSpec(spec, caseById, caseBySafeId) {
   return null;
 }
 
-function caseIdFromTitle(title) {
+function caseIdFromTitle(title: unknown) {
   const text = String(title || '').trim();
   const bracket = text.match(/^\[([^\]]+)]/);
   if (bracket) return bracket[1].trim();
@@ -38,7 +41,7 @@ function caseIdFromTitle(title) {
   return prefix ? prefix[1].trim() : '';
 }
 
-function caseIdFromAnnotations(spec) {
+function caseIdFromAnnotations(spec: ProGuide.Dict) {
   const annotations = [
     ...(spec?.annotations || []),
     ...((spec?.tests || []).flatMap((test) => test.annotations || []))
@@ -47,7 +50,7 @@ function caseIdFromAnnotations(spec) {
   return annotation?.description || '';
 }
 
-export function normalizePlaywrightSpecResult(spec) {
+export function normalizePlaywrightSpecResult(spec: ProGuide.Dict) {
   const test = spec?.tests?.[0] || {};
   const results = Array.isArray(test.results) ? test.results : [];
   const result = results.at(-1) || {};
@@ -70,7 +73,7 @@ export function normalizePlaywrightSpecResult(spec) {
   };
 }
 
-function playwrightStatus(status) {
+function playwrightStatus(status: unknown) {
   const normalized = String(status || '').toLowerCase();
   if (normalized === 'passed' || normalized === 'expected' || normalized === 'true') return 'passed';
   if (['failed', 'timedout', 'timedout', 'interrupted', 'unexpected'].includes(normalized)) return 'failed';
@@ -78,7 +81,7 @@ function playwrightStatus(status) {
   return normalized ? 'failed' : 'inconclusive';
 }
 
-function playwrightMessage(result) {
+function playwrightMessage(result: ProGuide.Dict) {
   const errors = [
     ...(result?.errors || []),
     result?.error
@@ -88,7 +91,10 @@ function playwrightMessage(result) {
   return shortPlaywrightMessage(first.message || first.value || first.stack || first);
 }
 
-function playwrightErrorDetails(result, options = {}) {
+function playwrightErrorDetails(
+  result: ProGuide.Dict,
+  options: { stripDebugMarker?: boolean } = {}
+) {
   const chunks = [];
   const errors = [
     ...(result?.errors || []),
@@ -106,7 +112,7 @@ function playwrightErrorDetails(result, options = {}) {
   return options.stripDebugMarker === false ? text : stripApiDebugMarker(text).trim();
 }
 
-function playwrightActualResponse(...values) {
+function playwrightActualResponse(...values: unknown[]) {
   const text = values.map((value) => String(value || '')).join('\n');
   const base64Match = text.match(/PROGUIDE_API_DEBUG_BASE64 ([A-Za-z0-9+/=]+)/);
   if (base64Match) {
@@ -127,17 +133,17 @@ function playwrightActualResponse(...values) {
   }
 }
 
-function shortPlaywrightMessage(value) {
+function shortPlaywrightMessage(value: unknown) {
   return String(value || '').split('\n\nProGuide API debug:')[0].trim();
 }
 
-function stripApiDebugMarker(value) {
+function stripApiDebugMarker(value: unknown) {
   return String(value || '')
     .replace(/\n?PROGUIDE_API_DEBUG_BASE64 [A-Za-z0-9+/=]+/g, '')
     .replace(/\n?PROGUIDE_API_DEBUG \{[^\n]+\}/g, '');
 }
 
-function formatPlaywrightError(error) {
+function formatPlaywrightError(error: any) {
   if (!error) return '';
   if (typeof error === 'string') return error.trim();
   const message = String(error.message || error.value || '').trim();
@@ -157,7 +163,7 @@ function formatPlaywrightError(error) {
   return uniqueTextChunks(chunks).join('\n').trim();
 }
 
-function outputEntriesText(entries) {
+function outputEntriesText(entries: any[]) {
   return (Array.isArray(entries) ? entries : [])
     .map((entry) => {
       if (typeof entry === 'string') return entry;
@@ -175,7 +181,7 @@ function outputEntriesText(entries) {
     .trim();
 }
 
-function uniqueTextChunks(chunks) {
+function uniqueTextChunks(chunks: unknown[]) {
   const seen = new Set();
   const unique = [];
   for (const chunk of chunks.map((item) => String(item || '').trim()).filter(Boolean)) {
@@ -186,7 +192,7 @@ function uniqueTextChunks(chunks) {
   return unique;
 }
 
-function flattenPlaywrightSteps(steps, prefix = '') {
+function flattenPlaywrightSteps(steps: any[], prefix = '') {
   const lines = [];
   for (const step of steps || []) {
     const title = String(step.title || '').trim();

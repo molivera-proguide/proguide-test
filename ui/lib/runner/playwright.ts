@@ -1,4 +1,3 @@
-// @ts-check
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -31,7 +30,44 @@ import {
 // proguide-service.js; runPlaywrightTests and parsePlaywrightResults are
 // imported back there (the latter is also part of the public API).
 
-export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, config, projectRoot, credentials }) {
+type PlanCase = ProGuide.Dict & {
+  id: string;
+  title: string;
+  steps?: unknown[];
+  expected?: unknown[];
+};
+
+type TestPlan = ProGuide.Dict & {
+  cases: PlanCase[];
+};
+
+type RunProcessResult = {
+  code: number;
+};
+
+type RunProcessOptions = {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  logPath: string;
+};
+
+export async function runPlaywrightTests({
+  testsDir,
+  runDir,
+  plan,
+  baseUrl,
+  config,
+  projectRoot,
+  credentials
+}: {
+  testsDir: string;
+  runDir: string;
+  plan: TestPlan;
+  baseUrl: string;
+  config: ProGuide.Dict;
+  projectRoot: string;
+  credentials: ProGuide.Dict;
+}) {
   await fs.mkdir(runDir, { recursive: true });
   const startedAt = nowIso();
   const reportPath = path.join(runDir, 'playwright-report.json');
@@ -51,7 +87,7 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
     configPath,
     ...playwrightWorkerArgs(config)
   ]);
-  const env = /** @type {NodeJS.ProcessEnv} */ ({
+  const env: NodeJS.ProcessEnv = {
     ...runtimeEnv(),
     PROGUIDE_BASE_URL: baseUrl,
     PROGUIDE_RUN_DIR: runDir,
@@ -59,7 +95,7 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
     PROGUIDE_VIDEO: normalizePlaywrightVideo(runnerConfig.video),
     PROGUIDE_SCREENSHOTS: normalizePlaywrightScreenshot(runnerConfig.screenshots),
     PROGUIDE_TRACES: normalizePlaywrightTrace(runnerConfig.traces)
-  });
+  };
   if (credentials.email) env.PROGUIDE_USER_EMAIL = credentials.email;
   if (credentials.username) env.PROGUIDE_USER_USERNAME = credentials.username;
   if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;
@@ -95,7 +131,21 @@ export async function runPlaywrightTests({ testsDir, runDir, plan, baseUrl, conf
   };
 }
 
-async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPath, runnerConfig, plan }) {
+async function writePlaywrightConfig({
+  configPath,
+  testsDir,
+  outputDir,
+  reportPath,
+  runnerConfig,
+  plan
+}: {
+  configPath: string;
+  testsDir: string;
+  outputDir: string;
+  reportPath: string;
+  runnerConfig: ProGuide.Dict;
+  plan: TestPlan;
+}) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   const expectTimeoutMs = expectTimeoutForPlan(plan);
   const configSource = [
@@ -120,7 +170,7 @@ async function writePlaywrightConfig({ configPath, testsDir, outputDir, reportPa
   await fs.writeFile(configPath, configSource, 'utf8');
 }
 
-export function expectTimeoutForPlan(plan = {}) {
+export function expectTimeoutForPlan(plan: { cases?: Array<{ steps?: unknown[] }> } = {}) {
   const timeouts = [30000];
   for (const testCase of plan.cases || []) {
     for (const step of testCase.steps || []) {
@@ -134,8 +184,8 @@ export function expectTimeoutForPlan(plan = {}) {
 }
 
 
-export function runProcess(command, { cwd, env, logPath }) {
-  return new Promise((resolve, reject) => {
+export function runProcess(command: string[], { cwd, env, logPath }: RunProcessOptions): Promise<RunProcessResult> {
+  return new Promise<RunProcessResult>((resolve, reject) => {
     const [cmd, ...args] = command;
     const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.on('error', reject);
@@ -145,17 +195,25 @@ export function runProcess(command, { cwd, env, logPath }) {
   });
 }
 
-export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
+export async function parsePlaywrightResults({
+  plan,
+  reportPath,
+  runDir
+}: {
+  plan: TestPlan;
+  reportPath: string;
+  runDir: string;
+}) {
   const caseById = new Map(plan.cases.map((testCase) => [String(testCase.id), testCase]));
   const caseBySafeId = new Map(plan.cases.map((testCase) => [safeId(testCase.id), testCase]));
-  const parsed = new Map();
+  const parsed = new Map<string, ProGuide.Dict>();
   if (await exists(reportPath)) {
     const report = await readJson(reportPath, null);
     for (const spec of collectPlaywrightSpecs(report)) {
       const testCase = caseFromPlaywrightSpec(spec, caseById, caseBySafeId);
       if (!testCase) continue;
       const normalized = normalizePlaywrightSpecResult(spec);
-      parsed.set(testCase.id, {
+      parsed.set(String(testCase.id), {
         id: testCase.id,
         title: testCase.title,
         status: normalized.status,
@@ -194,7 +252,12 @@ export async function parsePlaywrightResults({ plan, reportPath, runDir }) {
   return results;
 }
 
-async function artifactPaths(runDir, attachments, suffixes, stem) {
+async function artifactPaths(
+  runDir: string,
+  attachments: ProGuide.Dict[],
+  suffixes: Set<string>,
+  stem: string
+) {
   const direct = [];
   for (const attachment of attachments || []) {
     const filePath = attachment.path ? path.resolve(String(attachment.path)) : '';

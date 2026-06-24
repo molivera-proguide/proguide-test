@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { nowIso } from '../shared/time.js';
@@ -22,9 +21,17 @@ import {
 // (both part of the public API) and recordLlmUsage by lib/llm/anthropic.js.
 
 
-/**
- * @param {{root: string, runId?: string|null, runDir?: string|null, provider: string, model: string, purpose: string, usage: ProGuide.Dict, request?: ProGuide.Dict}} input
- */
+type RecordLlmUsageInput = {
+  root: string;
+  runId?: string | null;
+  runDir?: string | null;
+  provider: string;
+  model: string;
+  purpose: string;
+  usage: ProGuide.Dict;
+  request?: ProGuide.Dict;
+};
+
 export async function recordLlmUsage({
   root,
   runId = null,
@@ -34,7 +41,7 @@ export async function recordLlmUsage({
   purpose,
   usage,
   request = {}
-}) {
+}: RecordLlmUsageInput) {
   const normalized = normalizeLlmUsage(provider, usage);
   if (!normalized.total_tokens && !normalized.input_tokens && !normalized.output_tokens) return null;
 
@@ -87,7 +94,7 @@ export async function recordLlmUsage({
   return entry;
 }
 
-export async function loadUsageSummary(root, { runId = null } = {}) {
+export async function loadUsageSummary(root: string, { runId = null }: { runId?: string | null } = {}) {
   const entries = runId
     ? await loadRunUsageEntries(root, runId)
     : await loadGlobalUsageEntries(root);
@@ -97,7 +104,7 @@ export async function loadUsageSummary(root, { runId = null } = {}) {
   });
 }
 
-async function loadGlobalUsageEntries(root) {
+async function loadGlobalUsageEntries(root: string) {
   const logPath = globalUsageLogPath(root);
   if (!(await exists(logPath))) return [];
   const text = await fs.readFile(logPath, 'utf8');
@@ -115,7 +122,7 @@ async function loadGlobalUsageEntries(root) {
     .sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
 }
 
-async function loadRunUsageEntries(root, runId) {
+async function loadRunUsageEntries(root: string, runId: string) {
   const runDir = runPath(root, runId);
   const payload = await readJson(path.join(runDir, LLM_USAGE_JSON), null);
   if (payload && Array.isArray(payload.entries)) {
@@ -128,7 +135,7 @@ async function loadRunUsageEntries(root, runId) {
   return entries.filter((entry) => entry.run_id === runId);
 }
 
-function normalizeStoredUsageEntry(entry) {
+function normalizeStoredUsageEntry(entry: any) {
   if (!entry || typeof entry !== 'object') return null;
   const provider = String(entry.provider || '').toLowerCase();
   return {
@@ -145,7 +152,10 @@ function normalizeStoredUsageEntry(entry) {
   };
 }
 
-function summarizeUsageEntries(entries, { scope = 'workspace', runId = null } = {}) {
+function summarizeUsageEntries(
+  entries: any[],
+  { scope = 'workspace', runId = null }: { scope?: string; runId?: string | null } = {}
+) {
   const normalizedEntries = (entries || []).map(normalizeStoredUsageEntry).filter(Boolean);
   const totals = usageTotals(normalizedEntries);
   return {
@@ -163,7 +173,7 @@ function summarizeUsageEntries(entries, { scope = 'workspace', runId = null } = 
   };
 }
 
-function usageTotals(entries) {
+function usageTotals(entries: any[]) {
   const totals = {
     input_tokens: 0,
     output_tokens: 0,
@@ -193,7 +203,7 @@ function usageTotals(entries) {
   return totals;
 }
 
-function groupUsage(entries, keyFn) {
+function groupUsage(entries: any[], keyFn: (entry: any) => unknown) {
   const groups = new Map();
   for (const entry of entries || []) {
     const key = String(keyFn(entry) || 'unknown');
@@ -216,11 +226,11 @@ function groupUsage(entries, keyFn) {
     });
 }
 
-function formatUsageTokensForEvent(usage) {
+function formatUsageTokensForEvent(usage: ProGuide.Dict) {
   return String(safeNumber(usage.total_tokens));
 }
 
-function finiteOrNull(value) {
+function finiteOrNull(value: unknown): number | null {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }

@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { escapeHtml } from '../shared/html.js';
@@ -6,10 +5,20 @@ import { escapeHtml } from '../shared/html.js';
 // Render the per-run HTML evidence report (evidence.html) from the run summary.
 // Extracted verbatim from proguide-service.js; imported back there.
 
-export async function writeEvidenceReport({ summary, run, cases, runDir }) {
-  const caseById = new Map(cases.map((item) => [item.id, item]));
-  const rows = summary.results.map((result) => {
-    const testCase = caseById.get(result.id) || {};
+export async function writeEvidenceReport({
+  summary,
+  run,
+  cases,
+  runDir
+}: {
+  summary: ProGuide.Dict;
+  run: ProGuide.Dict;
+  cases: ProGuide.Dict[];
+  runDir: string;
+}) {
+  const caseById = new Map(cases.map((item) => [String(item.id), item]));
+  const rows = (summary.results || []).map((result: ProGuide.Dict) => {
+    const testCase: ProGuide.Dict = caseById.get(String(result.id)) || {};
     const errorDetails = result.error_details
       ? `<details class="error-console"><summary>Error Playwright completo</summary><pre>${escapeHtml(result.error_details)}</pre></details>`
       : '';

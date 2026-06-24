@@ -1,4 +1,3 @@
-// @ts-check
 import { safeNumber, roundMoney } from '../shared/num.js';
 
 // LLM usage normalization and local cost estimation. Only Anthropic models have
@@ -6,7 +5,9 @@ import { safeNumber, roundMoney } from '../shared/num.js';
 
 export const ANTHROPIC_PRICING_SOURCE = 'https://docs.anthropic.com/en/docs/about-claude/pricing';
 
-export const ANTHROPIC_PRICING_BY_FAMILY = {
+type AnthropicPricingFamily = 'sonnet' | 'opus' | 'haiku';
+
+export const ANTHROPIC_PRICING_BY_FAMILY: Record<AnthropicPricingFamily, ProGuide.Dict<number>> = {
   sonnet: {
     input_per_mtok: 3,
     output_per_mtok: 15,
@@ -33,9 +34,8 @@ export const ANTHROPIC_PRICING_BY_FAMILY = {
 /**
  * Map a model id to its Anthropic pricing family, or '' if unknown.
  * @param {string} model
- * @returns {string}
  */
-export function anthropicModelFamily(model) {
+export function anthropicModelFamily(model: string): AnthropicPricingFamily | '' {
   const normalized = String(model || '').toLowerCase();
   if (normalized.includes('sonnet')) return 'sonnet';
   if (normalized.includes('opus')) return 'opus';
@@ -46,9 +46,8 @@ export function anthropicModelFamily(model) {
 /**
  * Normalize a raw provider usage payload into ProGuide's canonical token shape.
  * @param {string} provider
- * @param {Record<string, any>} [usage]
  */
-export function normalizeLlmUsage(provider, usage = {}) {
+export function normalizeLlmUsage(provider: string, usage: ProGuide.Dict = {}) {
   const inputTokens = safeNumber(
     usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens
   );
@@ -89,9 +88,8 @@ export function normalizeLlmUsage(provider, usage = {}) {
  * Estimate the USD cost of a normalized usage payload using the local table.
  * @param {string} provider
  * @param {string} model
- * @param {Record<string, any>} usage
  */
-export function estimateLlmCost(provider, model, usage) {
+export function estimateLlmCost(provider: string, model: string, usage: ProGuide.Dict) {
   if (String(provider || '').toLowerCase() !== 'anthropic') {
     return {
       cost_usd: null,
