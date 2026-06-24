@@ -4,31 +4,35 @@
   "private": false,
   "type": "module",
   "bin": {
-    "proguide": "./cli.js"
+    "proguide": "./dist/cli.js"
   },
   "files": [
-    "cli.js",
-    "mcp-server.js",
-    "playwright-runtime.js",
-    "proguide-service.js",
-    "server.js",
-    "viewer.js",
-    "lib/",
-    "assets/",
-    "views/",
-    "skills/"
+    "dist/cli.js",
+    "dist/mcp-server.js",
+    "dist/playwright-runtime.js",
+    "dist/proguide-service.js",
+    "dist/server.js",
+    "dist/viewer.js",
+    "dist/package.json",
+    "dist/lib/",
+    "dist/assets/",
+    "dist/views/",
+    "dist/skills/"
   ],
   "scripts": {
-    "start": "node server.js",
-    "mcp": "node mcp-server.js",
-    "proguide": "node cli.js",
-    "test": "node --test",
+    "clean": "node scripts/clean-dist.js",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-build-assets.js",
+    "start": "npm run build && node dist/server.js",
+    "mcp": "npm run build && node dist/mcp-server.js",
+    "proguide": "npm run build && node dist/cli.js",
+    "test": "npm run build && cd dist && node --test",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run typecheck && npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test",
+    "prepack": "npm run build"
   },
   "engines": {
     "node": ">=20"

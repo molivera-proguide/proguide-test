@@ -1,14 +1,10 @@
-// @ts-check
-
 // Pure text/normalization helpers shared across the parsing and normalization
 // layers. No I/O. `norm` and `slug` are foundational and used widely.
 
 /**
  * Accent-folded, lowercased, whitespace- and emphasis-collapsed form of a value.
- * @param {unknown} value
- * @returns {string}
  */
-export function norm(value) {
+export function norm(value: unknown): string {
   return String(value || '')
     .normalize('NFKD')
     .replace(/\p{M}/gu, '')
@@ -20,10 +16,8 @@ export function norm(value) {
 
 /**
  * Strip combining diacritical marks from a value (NFKD fold).
- * @param {unknown} value
- * @returns {string}
  */
-export function stripAccents(value) {
+export function stripAccents(value: unknown): string {
   return String(value || '')
     .normalize('NFKD')
     .replace(/\p{M}/gu, '');
@@ -31,10 +25,8 @@ export function stripAccents(value) {
 
 /**
  * Slugify a value into a lowercase dash-separated token.
- * @param {unknown} value
- * @returns {string}
  */
-export function slug(value) {
+export function slug(value: unknown): string {
   return String(value || '')
     .trim()
     .toLowerCase()
@@ -45,10 +37,8 @@ export function slug(value) {
 
 /**
  * Normalize a free-form priority label to one of: critica|alta|media|baja.
- * @param {unknown} value
- * @returns {string}
  */
-export function normalizePriority(value) {
+export function normalizePriority(value: unknown): string {
   const normalized = norm(value);
   if (['critica', 'critical', 'bloqueante'].includes(normalized)) return 'critica';
   if (['alta', 'high'].includes(normalized)) return 'alta';
@@ -58,10 +48,8 @@ export function normalizePriority(value) {
 
 /**
  * Map a normalized priority to the test-plan vocabulary (low|medium|high|critical).
- * @param {unknown} value
- * @returns {string}
  */
-export function priorityForPlan(value) {
+export function priorityForPlan(value: unknown): string {
   return (
     { baja: 'low', media: 'medium', alta: 'high', critica: 'critical' }[normalizePriority(value)] ||
     'medium'
@@ -70,10 +58,8 @@ export function priorityForPlan(value) {
 
 /**
  * Constrain an automation-state value to the known set, defaulting to "listo".
- * @param {unknown} value
- * @returns {string}
  */
-export function normalizeAutomationState(value) {
+export function normalizeAutomationState(value: unknown): string {
   const normalized = String(value || '').trim();
   return ['listo', 'necesita_revision', 'no_automatizable_aun'].includes(normalized)
     ? normalized
@@ -82,10 +68,8 @@ export function normalizeAutomationState(value) {
 
 /**
  * Split comma/semicolon-separated tag input (string or iterable) into a flat list.
- * @param {string|Iterable<unknown>} value
- * @returns {string[]}
  */
-export function splitTags(value) {
+export function splitTags(value: string | Iterable<unknown>): string[] {
   const rawValues = typeof value === 'string' ? [value] : Array.from(value || []);
   return rawValues.flatMap((item) =>
     String(item)
@@ -97,10 +81,8 @@ export function splitTags(value) {
 
 /**
  * Return the first argument that is an array, or an empty array.
- * @param {...unknown} values
- * @returns {unknown[]}
  */
-export function firstArrayValue(...values) {
+export function firstArrayValue(...values: unknown[]): unknown[] {
   for (const value of values) {
     if (Array.isArray(value)) return value;
   }
@@ -109,29 +91,22 @@ export function firstArrayValue(...values) {
 
 /**
  * Append `value` to `existing` on a new line, trimming the appended text.
- * @param {string} existing
- * @param {unknown} value
- * @returns {string}
  */
-export function joinText(existing, value) {
+export function joinText(existing: string, value: unknown): string {
   return existing ? `${existing}\n${String(value).trim()}` : String(value).trim();
 }
 
 /**
  * Trim a value to a string, returning null when the result is empty.
- * @param {unknown} value
- * @returns {string|null}
  */
-export function noneIfEmpty(value) {
+export function noneIfEmpty(value: unknown): string | null {
   const text = String(value || '').trim();
   return text || null;
 }
 
 /**
  * Strip a leading bullet/dash marker from a case title for display.
- * @param {unknown} value
- * @returns {string}
  */
-export function cleanCaseTitle(value) {
+export function cleanCaseTitle(value: unknown): string {
   return String(value ?? '').replace(/^\s*[•◦⁃∙·—–�-]\s+/, '').trim();
 }

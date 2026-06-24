@@ -1,4 +1,3 @@
-// @ts-check
 import { norm } from './text.js';
 import { isPlainObject } from './object.js';
 
@@ -7,20 +6,16 @@ import { isPlainObject } from './object.js';
 
 /**
  * Whether a key name looks like it holds a secret (password, token, api key...).
- * @param {string} key
- * @returns {boolean}
  */
-export function isSecretKey(key) {
+export function isSecretKey(key: string): boolean {
   return /\b(password|pass|clave|contrasena|secret|token|api[_ -]?key)\b/i.test(norm(key));
 }
 
 /**
  * Whether a password-like key is explicitly marked as a test/non-production
  * credential and may therefore be retained.
- * @param {string} key
- * @returns {boolean}
  */
-export function allowsTestPasswordKey(key) {
+export function allowsTestPasswordKey(key: string): boolean {
   const normalized = norm(key).replace(/_/g, ' ');
   return (
     /\b(password|pass|clave|contrasena)\b/.test(normalized) &&
@@ -30,10 +25,8 @@ export function allowsTestPasswordKey(key) {
 
 /**
  * Mask a single line of text if it appears to expose a secret value.
- * @param {unknown} value
- * @returns {string}
  */
-export function maskSecretLine(value) {
+export function maskSecretLine(value: unknown): string {
   const text = String(value);
   const normalized = norm(text);
   if (!/\b(password|pass|clave|contrasena|secret|token)\b/.test(normalized)) return text;
@@ -50,29 +43,22 @@ export function maskSecretLine(value) {
 
 /**
  * Mask secrets line-by-line across a multi-line string.
- * @param {unknown} text
- * @returns {string}
  */
-export function maskSecretText(text) {
+export function maskSecretText(text: unknown): string {
   return String(text).split(/\r?\n/).map(maskSecretLine).join('\n');
 }
 
 /**
  * Mask secrets across an array of lines.
- * @param {string[]} values
- * @returns {string[]}
  */
-export function maskSecretLines(values) {
+export function maskSecretLines(values: string[]): string[] {
   return values.map(maskSecretLine);
 }
 
 /**
  * Recursively mask secret-keyed values and secret-bearing strings in a value.
- * @param {unknown} value
- * @param {string} [key]
- * @returns {unknown}
  */
-export function maskSecretsDeep(value, key = '') {
+export function maskSecretsDeep(value: unknown, key = ''): unknown {
   if (Array.isArray(value)) return value.map((entry) => maskSecretsDeep(entry));
   if (isPlainObject(value)) {
     return Object.fromEntries(
@@ -89,13 +75,11 @@ export function maskSecretsDeep(value, key = '') {
 
 /**
  * Recursively drop secret-keyed entries from an object/array structure.
- * @param {unknown} value
- * @returns {unknown}
  */
-export function sanitizeCaseData(value) {
+export function sanitizeCaseData(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeCaseData);
   if (!isPlainObject(value)) return value;
-  const sanitized = {};
+  const sanitized: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (isSecretKey(key)) continue;
     sanitized[key] = sanitizeCaseData(entry);

@@ -1,4 +1,3 @@
-// @ts-check
 import { isPlainObject } from './object.js';
 import { isSecretKey } from './secrets.js';
 import { cleanList } from '../markdown/text.js';
@@ -8,11 +7,11 @@ import { cleanList } from '../markdown/text.js';
 
 /**
  * Coerce a value, list, or "key: value" block into a plain key/value object.
- * @param {unknown} value
- * @param {{preserveSecrets?: boolean}} [options]
- * @returns {Record<string, unknown>}
  */
-export function normalizeKeyValueObject(value, options = {}) {
+export function normalizeKeyValueObject(
+  value: unknown,
+  options: { preserveSecrets?: boolean } = {}
+): Record<string, unknown> {
   if (value === undefined || value === null || value === '') return {};
   if (isPlainObject(value)) {
     return Object.fromEntries(
@@ -27,7 +26,7 @@ export function normalizeKeyValueObject(value, options = {}) {
   const parsed = parseJsonObject(value);
   if (parsed) return normalizeKeyValueObject(parsed, options);
   const lines = Array.isArray(value) ? value : String(value).split(/\r?\n/);
-  const entries = /** @type {Record<string, unknown>} */ ({});
+  const entries: Record<string, unknown> = {};
   for (const line of cleanList(lines)) {
     const match = String(line).match(/^([^:=]{1,80})\s*[:=]\s*(.+)$/);
     if (!match) continue;
@@ -40,10 +39,8 @@ export function normalizeKeyValueObject(value, options = {}) {
 
 /**
  * Normalize a request body value (object, JSON, or "key: value" lines).
- * @param {unknown} value
- * @returns {unknown}
  */
-export function normalizeRequestBody(value) {
+export function normalizeRequestBody(value: unknown): unknown {
   if (value === undefined || value === null || value === '') return undefined;
   if (isPlainObject(value)) return value;
   if (Array.isArray(value) && value.some((item) => typeof item !== 'string')) return value;
@@ -58,11 +55,9 @@ export function normalizeRequestBody(value) {
 
 /**
  * Parse a JSON object/array from a value, or return null when not JSON.
- * @param {unknown} value
- * @returns {object|unknown[]|null}
  */
-export function parseJsonObject(value) {
-  if (isPlainObject(value)) return /** @type {object} */ (value);
+export function parseJsonObject(value: unknown): object | unknown[] | null {
+  if (isPlainObject(value)) return value;
   const text = Array.isArray(value) ? cleanList(value).join('\n') : String(value || '').trim();
   if (!/^[[{]/.test(text)) return null;
   try {
@@ -75,10 +70,8 @@ export function parseJsonObject(value) {
 
 /**
  * Parse a loose scalar/JSON value (strings, booleans, numbers, null, objects).
- * @param {unknown} value
- * @returns {unknown}
  */
-export function parseLooseValue(value) {
+export function parseLooseValue(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (value === null) return null;
   if (typeof value !== 'string') return value;
@@ -98,10 +91,8 @@ export function parseLooseValue(value) {
 
 /**
  * Stringify a value for inline use: strings pass through, others are JSON.
- * @param {unknown} value
- * @returns {string}
  */
-export function stringifyInlineValue(value) {
+export function stringifyInlineValue(value: unknown): string {
   if (typeof value === 'string') return value;
   return JSON.stringify(value);
 }

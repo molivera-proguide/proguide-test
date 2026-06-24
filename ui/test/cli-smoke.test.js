@@ -10,6 +10,7 @@ import { rootIdentity, viewerHasCapabilities, viewerHealthMatchesRoot, viewerPor
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
+const SOURCE_UI_ROOT = path.basename(UI_ROOT) === 'dist' ? path.resolve(UI_ROOT, '..') : UI_ROOT;
 const CLI = path.join(UI_ROOT, 'cli.js');
 
 const SAMPLE_MARKDOWN = `## Caso 1 - Login exitoso
@@ -129,7 +130,7 @@ test('update skills installs packaged Claude Code skill', () => {
 });
 
 test('packaged Claude Code skill mirrors repository skill source', () => {
-  const repoRoot = path.resolve(UI_ROOT, '..');
+  const repoRoot = path.resolve(SOURCE_UI_ROOT, '..');
   assert.equal(
     fs.readFileSync(path.join(UI_ROOT, 'skills', 'qa-test-cases', 'SKILL.md'), 'utf8'),
     fs.readFileSync(path.join(repoRoot, 'skills', 'SKILL.md'), 'utf8')
@@ -504,7 +505,7 @@ test('generated ESM runtime shim works in type module workspaces', () => {
     ].join('\n'), 'utf8');
 
     const result = spawnSync(process.execPath, [
-      path.join(UI_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
+      path.join(SOURCE_UI_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
       'test',
       '--config',
       path.join(root, 'playwright.config.cjs'),

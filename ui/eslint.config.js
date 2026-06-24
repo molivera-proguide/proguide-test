@@ -25,6 +25,7 @@ export default [
   {
     ignores: [
       'node_modules/**',
+      'dist/**',
       'proguide_tests/**',
       'test-results/**',
       'playwright-report/**',

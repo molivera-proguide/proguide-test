@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -8,10 +7,8 @@ import path from 'node:path';
 
 /**
  * Ordered list of candidate .env file paths for a workspace root.
- * @param {string} root
- * @returns {string[]}
  */
-export function envFileCandidates(root) {
+export function envFileCandidates(root: string): string[] {
   return [
     process.env.PROGUIDE_ENV_FILE,
     path.join(process.env.USERPROFILE || process.env.HOME || '', '.proguide', '.env'),
@@ -24,9 +21,8 @@ export function envFileCandidates(root) {
 /**
  * Load environment variables from the candidate .env files into process.env.
  * Missing or unreadable files are skipped; variables already set are preserved.
- * @param {string} root
  */
-export async function loadDotEnv(root) {
+export async function loadDotEnv(root: string): Promise<void> {
   for (const envPath of envFileCandidates(root)) {
     let text;
     try {

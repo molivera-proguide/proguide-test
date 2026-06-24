@@ -1,9 +1,7 @@
-// @ts-check
-
 // Canonical default UI/runner/LLM config. Returned as a fresh deep copy each call
 // so callers (cli readConfig, run-store/config loadUiConfig) can mutate or spread
 // without sharing state. config.yaml overrides are layered on top by the loaders.
-export function defaultConfig() {
+export function defaultConfig(): ProGuide.Dict {
   return {
     runner: {
       browser: 'chromium',
