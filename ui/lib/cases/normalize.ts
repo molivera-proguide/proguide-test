@@ -1,4 +1,3 @@
-// @ts-check
 import { norm, stripAccents } from '../shared/text.js';
 import { isPlainObject } from '../shared/object.js';
 import { isSecretKey, allowsTestPasswordKey } from '../shared/secrets.js';
@@ -18,7 +17,9 @@ const NOT_AUTOMATABLE_RE = /\b(captcha|2fa|otp|token fisico|sms|llamada|telefono
 const REVIEW_STEP_RE = /\b(validar que corresponda|segun criterio|revisar visualmente|comprobar manualmente|buscar el expediente|ubicar el expediente|datos de ambiente|consultar con)\b/i;
 const NAVIGATION_RE = /\b(ir|abrir|navegar|visitar|acceder|entrar|dirigirse|volver)\b/i;
 
-export function buildSteps(originalSteps, options = {}) {
+type AutomationAssessment = [string, string, number];
+
+export function buildSteps(originalSteps: string[], options: ProGuide.Dict = {}) {
   return originalSteps.map((step, index) => ({
     number: index + 1,
     original_text: step,
@@ -36,7 +37,7 @@ export function buildSteps(originalSteps, options = {}) {
   }));
 }
 
-export function normalizeStep(step) {
+export function normalizeStep(step: unknown): string {
   const normalized = norm(step);
   const explicit = explicitStep(step);
   if (explicit) return explicit;
@@ -59,10 +60,10 @@ export function normalizeStep(step) {
   if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized)) return 'submit form';
   if (NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
-  return step;
+  return String(step || '');
 }
 
-export function assessAutomation(steps, expected, options = {}) {
+export function assessAutomation(steps: string[], expected: string[], options: ProGuide.Dict = {}): AutomationAssessment {
   const joinedSteps = steps.join('\n');
   const joinedExpected = expected.join('\n');
   if (options.type === 'api') {
@@ -88,23 +89,23 @@ export function assessAutomation(steps, expected, options = {}) {
   return ['listo', 'Caso listo para automatizar con el resolvedor actual.', 0.9];
 }
 
-function hasConcreteExpected(expected) {
+function hasConcreteExpected(expected: string[]): boolean {
   return expected.some((item) => /\b(url|muestra|shows|visible|contains|contiene|mensaje|texto|dashboard|home|error|status|codigo|http|body|response|json|header)\b/i.test(item));
 }
 
-function stepConfidence(step, options = {}) {
+function stepConfidence(step: unknown, options: ProGuide.Dict = {}): number {
   if (options.type === 'api') {
     if (normalizeApiStep(step) || parseExpectedApiAssertion(step)) return 0.95;
     return 0.7;
   }
   if (explicitStep(step)) return 0.95;
   if (normalizeApiStep(step)) return 0.95;
-  if (NOT_AUTOMATABLE_RE.test(step)) return 0.2;
-  if (REVIEW_STEP_RE.test(step)) return 0.45;
+  if (NOT_AUTOMATABLE_RE.test(String(step || ''))) return 0.2;
+  if (REVIEW_STEP_RE.test(String(step || ''))) return 0.45;
   return normalizeStep(step) !== step ? 0.85 : 0.7;
 }
 
-export function explicitStep(step) {
+export function explicitStep(step: unknown): string | null {
   const text = String(step || '').trim();
   const timing = normalizeTimingStep(text);
   if (timing) return timing;
@@ -136,7 +137,7 @@ export function explicitStep(step) {
   return null;
 }
 
-function normalizeTimingStep(text) {
+function normalizeTimingStep(text: unknown): string | null {
   const waitMatch = String(text || '').match(/^\s*(?:wait|esperar)\s+(\d{1,5})\s*(?:seconds?|segundos?)\s*$/i);
   if (waitMatch) return `wait ${Number(waitMatch[1])} seconds`;
 
@@ -149,7 +150,7 @@ function normalizeTimingStep(text) {
   return null;
 }
 
-function normalizeUrlAssertion(text) {
+function normalizeUrlAssertion(text: unknown): string | null {
   const source = String(text || '').trim();
   const patterns = [
     /^\s*(?:expect|validar|verificar|comprobar)\s+(?:current\s+|actual\s+)?(?:url|ruta)\s+(?:to\s+)?(?:contain|contains|contiene|contener)\s+(.+?)\s*$/i,
@@ -164,12 +165,12 @@ function normalizeUrlAssertion(text) {
   return null;
 }
 
-function normalizeTextExpectation(text) {
+function normalizeTextExpectation(text: unknown): string | null {
   const match = String(text || '').match(/^\s*expect\s+text\s+["'](.+?)["'](?:\s+(?:to\s+be\s+)?visible)?\s*$/i);
   return match ? `expect text ${JSON.stringify(match[1].trim())}` : null;
 }
 
-function normalizeContextualClick(text) {
+function normalizeContextualClick(text: unknown): string | null {
   const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s+(?:inside|dentro\s+de|dentro)\s+(.+?)\s*$/i);
   if (!match) return null;
   const label = stripWrappingQuotes(match[1].trim().replace(/[.,;:]+$/, ''));
@@ -178,13 +179,13 @@ function normalizeContextualClick(text) {
   return `click text ${JSON.stringify(label)} inside ${formatSelectorDsl(selector)}`;
 }
 
-function normalizeListItemClick(text) {
+function normalizeListItemClick(text: unknown): string | null {
   const match = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+listitem\s+["'](.+?)["']\s*$/i);
   if (!match) return null;
   return `click [li:has-text(${JSON.stringify(match[1].trim())})]`;
 }
 
-function normalizeCssSelectorAction(text) {
+function normalizeCssSelectorAction(text: unknown): string | null {
   const clickMatch = String(text || '').match(/^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+(.+?)\s*$/i);
   if (clickMatch) {
     const selector = cleanCssSelectorTarget(clickMatch[1]);
@@ -212,20 +213,20 @@ function normalizeCssSelectorAction(text) {
   return null;
 }
 
-function cleanCssSelectorTarget(value) {
+function cleanCssSelectorTarget(value: unknown): string {
   return stripWrappingQuotes(String(value || '').trim().replace(/[.,;]+$/, ''));
 }
 
-function formatSelectorDsl(selector) {
+function formatSelectorDsl(selector: string): string {
   if (isSimpleBracketSelector(selector)) return selector;
   return `[${selector}]`;
 }
 
-function isSimpleBracketSelector(selector) {
+function isSimpleBracketSelector(selector: unknown): boolean {
   return /^\[[^\]]+\]$/.test(String(selector || '').trim());
 }
 
-function isCssSelectorTarget(selector) {
+function isCssSelectorTarget(selector: unknown): boolean {
   const value = String(selector || '').trim();
   if (!value) return false;
   if (/^(?:#|\.|:|\*)/.test(value)) return true;
@@ -233,14 +234,14 @@ function isCssSelectorTarget(selector) {
   return /^[A-Za-z][A-Za-z0-9_-]*(?:[#.:]|\[|::?[\w-]+|\s*[>+~]\s*)/.test(value);
 }
 
-function extractExplicitSelector(text) {
+function extractExplicitSelector(text: unknown): string | null {
   const bracketSelector = String(text || '').match(/\[[^\]]+\]/)?.[0];
   if (bracketSelector) return bracketSelector;
   const token = extractSelectorToken(text);
   return token ? `[data-testid="${escapeSelectorValue(token)}"]` : null;
 }
 
-function extractSelectorToken(text) {
+function extractSelectorToken(text: unknown): string {
   const normalizedText = stripAccents(String(text || ''));
   const patterns = [
     /\b(?:campo|input|elemento|selector|boton|enlace|link|badge|contador|toggle|id|data-testid)\s+["']?([A-Za-z][A-Za-z0-9_-]{1,80})["']?/i,
@@ -257,18 +258,18 @@ function extractSelectorToken(text) {
   return fallback && isSelectorLikeToken(fallback[1]) ? fallback[1] : '';
 }
 
-function isSelectorLikeToken(token) {
+function isSelectorLikeToken(token: unknown): boolean {
   const value = String(token || '').trim();
   if (!/^[A-Za-z][A-Za-z0-9_-]{1,80}$/.test(value)) return false;
   if (/[-_]/.test(value)) return true;
   return /[a-z][A-Z]/.test(value);
 }
 
-function escapeSelectorValue(value) {
+function escapeSelectorValue(value: unknown): string {
   return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-function valueAfterSelector(text, selector, pattern) {
+function valueAfterSelector(text: unknown, selector: string, pattern: RegExp): string {
   const source = String(text || '');
   const selectorIndex = source.indexOf(selector);
   const afterSelector = selectorIndex >= 0 ? source.slice(selectorIndex + selector.length) : source;
@@ -282,7 +283,7 @@ function valueAfterSelector(text, selector, pattern) {
   return match[1].trim().replace(/^["']|["']$/g, '').replace(/[.;]+$/, '').trim();
 }
 
-function stripWrappingQuotes(value) {
+function stripWrappingQuotes(value: unknown): string {
   const text = String(value || '').trim();
   if (text.length >= 2 && text[0] === text.at(-1) && ['"', "'"].includes(text[0])) {
     return text.slice(1, -1);
@@ -290,7 +291,7 @@ function stripWrappingQuotes(value) {
   return text;
 }
 
-export function mergeCaseData(primary = {}, fallback = {}) {
+export function mergeCaseData(primary: unknown = {}, fallback: unknown = {}): ProGuide.Dict {
   const merged = { ...(isPlainObject(fallback) ? fallback : {}) };
   if (!isPlainObject(primary)) return merged;
   for (const [key, value] of Object.entries(primary)) {
@@ -304,8 +305,8 @@ export function mergeCaseData(primary = {}, fallback = {}) {
   return merged;
 }
 
-export function dataFromLines(lines) {
-  const data = {};
+export function dataFromLines(lines: unknown): ProGuide.Dict {
+  const data: ProGuide.Dict = {};
   for (const line of cleanList(lines)) {
     const match = String(line).match(/^([^:]{2,60}):\s*(.+)$/);
     if (!match) continue;
@@ -333,7 +334,11 @@ export function dataFromLines(lines) {
   return data;
 }
 
-export function inferCaseRoute(explicitRoute, originalSteps = [], executableSteps = []) {
+export function inferCaseRoute(
+  explicitRoute: unknown,
+  originalSteps: unknown[] = [],
+  executableSteps: ProGuide.Dict[] = []
+): string {
   const explicit = normalizeRouteValue(explicitRoute);
   if (explicit && explicit !== '/') return explicit;
 
@@ -350,19 +355,19 @@ export function inferCaseRoute(explicitRoute, originalSteps = [], executableStep
   return inferred || explicit || '/';
 }
 
-function routeFromNormalizedAction(action) {
+function routeFromNormalizedAction(action: unknown): string | null {
   const match = String(action || '').trim().match(/^go to\s+(.+)$/i);
   return match ? match[1] : null;
 }
 
-function normalizeRouteValue(value) {
+function normalizeRouteValue(value: unknown): string {
   const text = String(value || '').trim().replace(/[.,;]+$/, '');
   if (!text) return '';
   if (/^https?:\/\//i.test(text)) return text.replace(/\/+$/, '');
   return text.startsWith('/') ? text : `/${text}`;
 }
 
-function extractRoute(step) {
+function extractRoute(step: unknown): string | null {
   const text = String(step);
   if (normalizeUrlAssertion(text)) return null;
   const normalized = norm(text);
@@ -380,7 +385,7 @@ function extractRoute(step) {
   return value.startsWith('/') ? value : `/${value}`;
 }
 
-function extractClickTarget(step) {
+function extractClickTarget(step: unknown): string | null {
   const patterns = [
     /(?:hacer\s+)?clic\s+(?:en\s+)?(?:el\s+boton\s+|boton\s+)?["']?([^"']+?)["']?$/i,
     /(?:click|press|presionar|seleccionar)\s+(?:button\s+|boton\s+)?["']?([^"']+?)["']?$/i

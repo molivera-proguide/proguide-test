@@ -1,4 +1,3 @@
-// @ts-check
 import { normalizePriority, normalizeAutomationState, splitTags, firstArrayValue, noneIfEmpty } from '../shared/text.js';
 import { safeId } from '../shared/id.js';
 import { maskSecretLines, sanitizeCaseData } from '../shared/secrets.js';
@@ -44,7 +43,7 @@ Rules:
 - Keep password/secret/token values masked as ******.
 - Use priority values baja, media, alta, critica.`;
 
-export function normalizationWarnings(cases) {
+export function normalizationWarnings(cases: ProGuide.Dict[]) {
   const warnings = [];
   for (const testCase of cases) {
     if (testCase.automation_state !== 'listo') {
@@ -100,7 +99,18 @@ export function normalizationWarnings(cases) {
   return warnings;
 }
 
-export async function interpretMarkdownWithAgent(markdown, { root, sourceName, usageContext = null }) {
+export async function interpretMarkdownWithAgent(
+  markdown: string,
+  {
+    root,
+    sourceName,
+    usageContext = null
+  }: {
+    root: string;
+    sourceName: string;
+    usageContext?: ProGuide.UsageContext | null;
+  }
+) {
   const config = await loadUiConfig(root);
   const baseline = parseMarkdownCases(markdown, { sourceName });
   const payload = {
@@ -121,12 +131,11 @@ export async function interpretMarkdownWithAgent(markdown, { root, sourceName, u
   return cases.slice(0, config.llm.max_cases).length ? cases.slice(0, config.llm.max_cases) : baseline;
 }
 
-/**
- * @param {ProGuide.CaseInput} item
- * @param {number} number
- * @param {ProGuide.CaseInput} [fallback]
- */
-export function normalizeCaseForStorage(item, number, fallback = {}) {
+export function normalizeCaseForStorage(
+  item: ProGuide.CaseInput,
+  number: number,
+  fallback: ProGuide.CaseInput = {}
+) {
   const title = String(item.title || fallback.title || `Caso ${number}`).trim();
   const originalSteps = cleanList(item.original_steps || item.steps || fallback.original_steps || fallback.steps || []);
   const expectedResults = cleanList(item.expected_results || item.expected || fallback.expected_results || fallback.expected || []);
@@ -172,7 +181,7 @@ export function normalizeCaseForStorage(item, number, fallback = {}) {
     expectedStatus: effectiveRequest.expected_status
   }) : [];
   if (type === 'api') rejectUnsupportedApiAssertions(assertions, title);
-  const apiExecutableSteps = type === 'api' && !originalSteps.length
+  const apiExecutableSteps: ProGuide.Dict[] = type === 'api' && !originalSteps.length
     ? buildApiExecutableSteps({
       request: effectiveRequest,
       requests: flowRequests,
@@ -180,7 +189,7 @@ export function normalizeCaseForStorage(item, number, fallback = {}) {
       captures: normalizeApiCaptures(item.captures ?? item.save ?? item.extract ?? fallback.captures ?? fallback.save ?? fallback.extract)
     })
     : [];
-  const executableSteps = Array.isArray(item.executable_steps) && item.executable_steps.length
+  const executableSteps: ProGuide.Dict[] = Array.isArray(item.executable_steps) && item.executable_steps.length
     ? item.executable_steps.map((step, index) => ({
       number: Number(step.number || index + 1),
       original_text: String(step.original_text || originalSteps[index] || ''),
@@ -243,7 +252,7 @@ export function normalizeCaseForStorage(item, number, fallback = {}) {
   };
 }
 
-function markdownAgentSchema() {
+function markdownAgentSchema(): ProGuide.Dict {
   return {
     cases: [{
       id: 'caso_1_login_valido',
@@ -299,7 +308,7 @@ function markdownAgentSchema() {
   };
 }
 
-function coerceCasesPayload(data) {
+function coerceCasesPayload(data: ProGuide.Dict): ProGuide.CaseInput[] {
   if (Array.isArray(data.cases)) return data.cases;
   if (Array.isArray(data.normalized_cases)) return data.normalized_cases;
   if (Array.isArray(data.test_cases)) return data.test_cases;

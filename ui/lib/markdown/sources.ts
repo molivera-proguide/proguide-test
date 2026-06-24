@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -6,7 +5,13 @@ import path from 'node:path';
 // multiple sources. Extracted verbatim from run-store/runs.js; readMarkdownSources,
 // markdownSourceFilename and combineMarkdownSources are imported back there.
 
-async function readMarkdownText(filePath) {
+type MarkdownSource = {
+  path: string;
+  name: string;
+  markdown: string;
+};
+
+async function readMarkdownText(filePath: string): Promise<string> {
   const data = await fs.readFile(filePath);
   if (data.length >= 2 && data[0] === 0xff && data[1] === 0xfe) {
     return repairDecodedMarkdown(new TextDecoder('utf-16le').decode(data.subarray(2)));
@@ -20,7 +25,7 @@ async function readMarkdownText(filePath) {
   return repairDecodedMarkdown(new TextDecoder('utf-8', { fatal: false }).decode(data));
 }
 
-export async function readMarkdownSources(sourceMd) {
+export async function readMarkdownSources(sourceMd: string | string[]): Promise<MarkdownSource[]> {
   const paths = (Array.isArray(sourceMd) ? sourceMd : [sourceMd]).filter(Boolean);
   if (!paths.length) throw new Error('Debes pasar al menos un archivo Markdown.');
   return Promise.all(paths.map(async (filePath) => ({
@@ -30,20 +35,20 @@ export async function readMarkdownSources(sourceMd) {
   })));
 }
 
-export function markdownSourceFilename(sources) {
+export function markdownSourceFilename(sources: MarkdownSource[]): string {
   if (sources.length === 1) return sources[0].name;
   const names = sources.map((source) => source.name).join(', ');
   return names.length <= 180 ? names : `${sources.length} markdown files`;
 }
 
-export function combineMarkdownSources(sources) {
+export function combineMarkdownSources(sources: MarkdownSource[]): string {
   if (sources.length === 1) return sources[0].markdown;
   return sources
     .map((source) => `<!-- source: ${source.name} -->\n\n${source.markdown.trim()}`)
     .join('\n\n');
 }
 
-function swapBytes(buffer) {
+function swapBytes(buffer: Uint8Array): Buffer {
   const swapped = Buffer.from(buffer);
   for (let index = 0; index + 1 < swapped.length; index += 2) {
     const next = swapped[index];
@@ -53,6 +58,6 @@ function swapBytes(buffer) {
   return swapped;
 }
 
-function repairDecodedMarkdown(text) {
+function repairDecodedMarkdown(text: string): string {
   return text.replace(/^(\s*)\ufffd(?=\s+)/gm, '$1-');
 }

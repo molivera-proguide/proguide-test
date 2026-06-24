@@ -1,4 +1,3 @@
-// @ts-check
 import { norm, normalizePriority, splitTags, joinText, noneIfEmpty } from '../shared/text.js';
 import { safeId } from '../shared/id.js';
 import { maskSecretText, maskSecretLines } from '../shared/secrets.js';
@@ -21,7 +20,12 @@ import {
 // and parse each into a normalized case object. Pure (no I/O). Extracted verbatim
 // from proguide-service.js; only parseMarkdownCases is consumed there.
 
-const FIELD_ALIASES = {
+type CaseBlock = {
+  heading: string;
+  lines: string[];
+};
+
+const FIELD_ALIASES: ProGuide.Dict<string> = {
   titulo: 'title',
   title: 'title',
   descripcion: 'description',
@@ -93,9 +97,12 @@ const FIELD_ALIASES = {
   url: 'route'
 };
 
-export function parseMarkdownCases(markdown, { sourceName = 'source.md' } = {}) {
+export function parseMarkdownCases(
+  markdown: string,
+  { sourceName = 'source.md' }: { sourceName?: string } = {}
+) {
   const blocks = splitCaseBlocks(markdown);
-  const cases = [];
+  const cases: ProGuide.Dict[] = [];
   blocks.forEach((block, index) => {
     const testCase = parseBlock(block, index + 1);
     if (testCase) cases.push(testCase);
@@ -107,9 +114,9 @@ export function parseMarkdownCases(markdown, { sourceName = 'source.md' } = {}) 
   return cases;
 }
 
-function splitCaseBlocks(markdown) {
-  const blocks = [];
-  let current = null;
+function splitCaseBlocks(markdown: string): CaseBlock[] {
+  const blocks: CaseBlock[] = [];
+  let current: CaseBlock | null = null;
   for (const line of markdown.split(/\r?\n/)) {
     const heading = line.match(/^(#{1,6})\s+(.+?)\s*$/);
     if (heading && isCaseHeading(heading[1], heading[2])) {
@@ -122,7 +129,7 @@ function splitCaseBlocks(markdown) {
   if (current) blocks.push(current);
   if (blocks.length) return blocks;
 
-  const fallbackBlocks = [];
+  const fallbackBlocks: CaseBlock[] = [];
   current = null;
   for (const line of markdown.split(/\r?\n/)) {
     const heading = line.match(/^(#{2,3})\s+(.+?)\s*$/);
@@ -138,14 +145,14 @@ function splitCaseBlocks(markdown) {
   return contentBlocks.length ? contentBlocks : [{ heading: 'Caso 1', lines: markdown.split(/\r?\n/) }];
 }
 
-function isCaseHeading(prefix, text) {
+function isCaseHeading(prefix: string, text: string): boolean {
   const normalized = norm(text);
   if (/^(?:caso|case|test|tc)(?:\s|#|:|\.|-|_|\d|$)/.test(normalized)) return true;
   if (/\btc[\s._-]*\d+\b/.test(normalized)) return true;
   return false;
 }
 
-function hasCaseContent(block) {
+function hasCaseContent(block: CaseBlock): boolean {
   let currentField = null;
   let hasSteps = false;
   let hasExpected = false;
@@ -172,8 +179,8 @@ function hasCaseContent(block) {
   return hasSteps && hasExpected;
 }
 
-function parseBlock(block, number) {
-  const fields = {
+function parseBlock(block: CaseBlock, number: number): ProGuide.Dict | null {
+  const fields: ProGuide.Dict = {
     title: titleFromHeading(block.heading, number),
     description: '',
     priority: 'media',
@@ -303,9 +310,9 @@ function parseBlock(block, number) {
   };
 }
 
-function uniqueApiCaseAssertions(assertions) {
-  const seen = new Set();
-  const unique = [];
+function uniqueApiCaseAssertions(assertions: ProGuide.ApiAssertion[]): ProGuide.ApiAssertion[] {
+  const seen = new Set<string>();
+  const unique: ProGuide.ApiAssertion[] = [];
   for (const assertion of assertions || []) {
     const key = JSON.stringify(assertion);
     if (seen.has(key)) continue;
@@ -315,19 +322,19 @@ function uniqueApiCaseAssertions(assertions) {
   return unique;
 }
 
-function extractLabel(line) {
+function extractLabel(line: string): [string | null, string] {
   const match = line.match(/^([^:]{2,40}):\s*(.*)$/);
   if (!match) return [null, ''];
   const field = FIELD_ALIASES[norm(match[1])];
   return field ? [field, match[2].trim()] : [null, ''];
 }
 
-function fieldFromHeading(line) {
+function fieldFromHeading(line: string): string | null {
   const label = line.replace(/^#+\s*/, '').trim();
   return FIELD_ALIASES[norm(label)] || null;
 }
 
-function appendField(fields, label, value) {
+function appendField(fields: ProGuide.Dict, label: string, value: string): void {
   const cleanValue = stripListMarker(value).trim();
   if (!cleanValue) return;
   if (['preconditions', 'data_used', 'original_steps', 'expected_results', 'tags', 'request_headers', 'request_query', 'request_body'].includes(label)) {
@@ -340,23 +347,23 @@ function appendField(fields, label, value) {
   }
 }
 
-function looksLikeStep(line) {
+function looksLikeStep(line: string): boolean {
   return /^(?:\d+[).\s-]+|paso\s+\d+[:.\s-]+)/i.test(norm(line)) || Boolean(normalizeApiStep(line));
 }
 
-function isSeparatorLine(line) {
+function isSeparatorLine(line: unknown): boolean {
   return /^[-*_]{3,}$/.test(String(line || '').trim());
 }
 
-function titleFromHeading(heading, number) {
+function titleFromHeading(heading: string, number: number): string {
   const title = stripListMarker(String(heading).replace(/^\s*(?:caso|case|test|tc)(?:\s|#|:|\.|-|_)*\d*[\s:.\-_]*/i, '').trim());
   return title || `Caso ${number}`;
 }
 
-function cleanHeading(heading) {
+function cleanHeading(heading: string): string {
   return stripListMarker(String(heading).trim().replace(/^#+|#+$/g, '').trim());
 }
 
-function isFieldLabel(text) {
+function isFieldLabel(text: string): boolean {
   return Boolean(FIELD_ALIASES[text]);
 }

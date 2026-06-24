@@ -1,4 +1,3 @@
-// @ts-check
 import { norm, stripAccents, firstArrayValue } from '../shared/text.js';
 import { isPlainObject } from '../shared/object.js';
 import { safeId } from '../shared/id.js';
@@ -18,30 +17,26 @@ import { cleanList, stripListMarker, stripMarkdownEmphasis } from '../markdown/t
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']);
 const API_CASE_TYPES = new Set(['api', 'rest', 'restful', 'http', 'api rest', 'api restful']);
 
-/**
- * @param {ProGuide.CaseInput} [input]
- * @returns {'api'|'ui'}
- */
-export function inferCaseType({ type, request, requests = [], steps = [] } = {}) {
+export function inferCaseType({ type, request, requests = [], steps = [] }: ProGuide.CaseInput = {}): 'api' | 'ui' {
   const explicitType = norm(type).replace(/[_-]+/g, ' ');
   if (API_CASE_TYPES.has(explicitType)) return 'api';
   if (request?.method && request?.path) return 'api';
   if (Array.isArray(requests) && requests.some((item) => {
-    const entry = /** @type {ProGuide.Dict} */ (item || {});
+    const entry = (item || {}) as ProGuide.Dict;
     return entry.request?.method && entry.request?.path;
   })) return 'api';
   if (cleanList(steps).some((step) => normalizeApiStep(step))) return 'api';
   return 'ui';
 }
 
-export function normalizeApiStep(step) {
+export function normalizeApiStep(step: unknown): string | null {
   const request = apiRequestFromStep(step);
   if (!request) return null;
   const body = request.body === undefined ? '' : ` body ${stringifyInlineValue(request.body)}`;
   return `api ${request.method} ${request.path}${body}`;
 }
 
-export function normalizeApiCaseStep(step) {
+export function normalizeApiCaseStep(step: unknown): string {
   const requestStep = normalizeApiStep(step);
   if (requestStep) return requestStep;
   const assertion = parseExpectedApiAssertion(step);
@@ -49,7 +44,7 @@ export function normalizeApiCaseStep(step) {
   return String(step || '').trim();
 }
 
-function formatApiAssertion(assertion) {
+function formatApiAssertion(assertion: ProGuide.ApiAssertion): string {
   if (assertion.type === 'status') return `status ${assertion.expected}`;
   if (assertion.type === 'ok') return 'ok';
   if (assertion.type === 'header') return `header ${assertion.name} ${assertion.operator || 'equals'} ${assertion.expected}`;
@@ -58,11 +53,7 @@ function formatApiAssertion(assertion) {
   return JSON.stringify(assertion);
 }
 
-/**
- * @param {unknown} step
- * @returns {ProGuide.ApiRequest|null}
- */
-export function apiRequestFromStep(step) {
+export function apiRequestFromStep(step: unknown): ProGuide.ApiRequest | null {
   const text = String(step || '').trim();
   const match = text.match(/^(?:(?:api|rest|http|request|llamar|invocar)\s+)?(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(\S+)(.*)$/i);
   if (!match) return null;
@@ -77,14 +68,10 @@ export function apiRequestFromStep(step) {
   };
 }
 
-/**
- * @param {ProGuide.Dict} [input]
- * @returns {ProGuide.ApiRequest}
- */
-export function normalizeApiRequest(input = {}) {
-  const stepRequest = /** @type {Partial<ProGuide.ApiRequest>} */ (cleanList(input.steps || [])
+export function normalizeApiRequest(input: ProGuide.Dict = {}): ProGuide.ApiRequest {
+  const stepRequest = (cleanList(input.steps || [])
     .map(apiRequestFromStep)
-    .find(Boolean) || {});
+    .find(Boolean) || {}) as Partial<ProGuide.ApiRequest>;
   const explicitType = API_CASE_TYPES.has(norm(input.type).replace(/[_-]+/g, ' '));
   const explicitPath = input.path || input.endpoint || input.request_path || input.url;
   const method = normalizeHttpMethod(
@@ -113,18 +100,21 @@ export function normalizeApiRequest(input = {}) {
     stepRequest.expected_status ??
     parseExpectedStatus(cleanList(input.expected || []).join('\n'))
   );
-  const request = /** @type {ProGuide.ApiRequest} */ ({
+  const request: ProGuide.ApiRequest = {
     method: method || (requestPath && (explicitType || explicitPath || stepRequest.path) ? 'GET' : ''),
     path: requestPath,
     headers: firstNormalizedKeyValue(input.headers, input.request_headers, stepRequest.headers),
     query: firstNormalizedKeyValue(input.query, input.params, input.request_query, stepRequest.query),
     expected_status: expectedStatus
-  });
+  };
   if (body !== undefined) request.body = body;
   return request;
 }
 
-export function normalizeApiRequestsFromSteps(steps, { expected = [] } = {}) {
+export function normalizeApiRequestsFromSteps(
+  steps: unknown,
+  { expected = [] }: { expected?: unknown } = {}
+): ProGuide.ApiRequestEntry[] {
   const entries = cleanList(steps)
     .map((step, index) => apiRequestEntryFromStep(step, index))
     .filter(Boolean);
@@ -135,7 +125,7 @@ export function normalizeApiRequestsFromSteps(steps, { expected = [] } = {}) {
   return normalizeApiRequests(entries);
 }
 
-function applyExpectedResultsToStepEntries(entries, expectedLines) {
+function applyExpectedResultsToStepEntries(entries: ProGuide.Dict[], expectedLines: string[]): void {
   if (!entries.length || !expectedLines.length) return;
   const unscopedLines = [];
   for (const line of expectedLines) {
@@ -153,7 +143,7 @@ function applyExpectedResultsToStepEntries(entries, expectedLines) {
   }
 }
 
-function appendExpectedLine(entry, line) {
+function appendExpectedLine(entry: ProGuide.Dict | undefined, line: string): void {
   if (!entry) return;
   entry.expected_results = [...cleanList(entry.expected_results || []), line];
   const status = parseExpectedStatus(line);
@@ -162,7 +152,7 @@ function appendExpectedLine(entry, line) {
   }
 }
 
-function expectedStepIndex(line, entriesCount) {
+function expectedStepIndex(line: unknown, entriesCount: number): number | null {
   const text = stripAccents(stripMarkdownEmphasis(stripListMarker(String(line || '')))).toLowerCase();
   const match = text.match(/\b(?:paso|step|request|peticion|solicitud|llamada)\s*#?\s*(\d{1,3})\b/) ||
     text.match(/^\s*(\d{1,3})[).:-]\s+/);
@@ -172,20 +162,23 @@ function expectedStepIndex(line, entriesCount) {
   return number - 1;
 }
 
-/**
- * @param {unknown} value
- * @returns {ProGuide.ApiRequestEntry[]}
- */
-export function normalizeApiRequests(value) {
+export function normalizeApiRequests(value: unknown): ProGuide.ApiRequestEntry[] {
   return firstArrayValue(value)
     .map((entry, index) => normalizeApiRequestEntry(entry, index))
     .filter((entry) => entry.request.method && entry.request.path);
 }
 
-/**
- * @param {{request?: ProGuide.ApiRequest, requests?: ProGuide.ApiRequestEntry[], assertions?: ProGuide.ApiAssertion[], captures?: ProGuide.ApiCapture[]}} [input]
- */
-export function buildApiExecutableSteps({ request, requests = [], assertions = [], captures = [] } = {}) {
+export function buildApiExecutableSteps({
+  request,
+  requests = [],
+  assertions = [],
+  captures = []
+}: {
+  request?: ProGuide.ApiRequest | null;
+  requests?: ProGuide.ApiRequestEntry[];
+  assertions?: ProGuide.ApiAssertion[];
+  captures?: ProGuide.ApiCapture[];
+} = {}) {
   const entries = requests.length
     ? requests
     : (request?.method && request?.path ? [{
@@ -220,9 +213,9 @@ export function buildApiExecutableSteps({ request, requests = [], assertions = [
   }));
 }
 
-function normalizeApiRequestEntry(entry, index) {
-  const source = isPlainObject(entry) ? entry : {};
-  const nestedRequest = isPlainObject(source.request) ? source.request : {};
+function normalizeApiRequestEntry(entry: unknown, index: number): ProGuide.ApiRequestEntry {
+  const source: ProGuide.Dict = isPlainObject(entry) ? entry : {};
+  const nestedRequest: ProGuide.Dict = isPlainObject(source.request) ? source.request : {};
   const request = normalizeApiRequest({
     ...nestedRequest,
     type: 'api',
@@ -251,15 +244,10 @@ function normalizeApiRequestEntry(entry, index) {
   };
 }
 
-/**
- * @param {unknown} step
- * @param {number} index
- * @returns {ProGuide.Dict|null}
- */
-function apiRequestEntryFromStep(step, index) {
+function apiRequestEntryFromStep(step: unknown, index: number): ProGuide.Dict | null {
   const request = apiRequestFromStep(step);
   if (!request) return null;
-  const entry = /** @type {ProGuide.Dict} */ ({
+  const entry: ProGuide.Dict = {
     id: `request_${index + 1}`,
     title: `${request.method} ${request.path}`,
     method: request.method,
@@ -268,16 +256,12 @@ function apiRequestEntryFromStep(step, index) {
     query: request.query,
     expected_status: request.expected_status,
     captures: request.captures
-  });
+  };
   if (request.body !== undefined) entry.body = request.body;
   return entry;
 }
 
-/**
- * @param {unknown} tail
- * @returns {Partial<ProGuide.ApiRequest>}
- */
-function apiRequestDecorationsFromStepTail(tail) {
+function apiRequestDecorationsFromStepTail(tail: unknown): Partial<ProGuide.ApiRequest> {
   const text = String(tail || '').trim();
   const cleanTail = stripCaptureClauses(text);
   const body = parseInlineBody(cleanTail);
@@ -285,17 +269,17 @@ function apiRequestDecorationsFromStepTail(tail) {
   const query = parseInlineKeyValueSegment(cleanTail, /(?:query|params?|parametros?)/i);
   const expectedStatus = parseExpectedStatus(cleanTail);
   const captures = parseInlineCaptures(text);
-  const decorations = /** @type {Partial<ProGuide.ApiRequest>} */ ({
+  const decorations: Partial<ProGuide.ApiRequest> = {
     headers,
     query,
     expected_status: expectedStatus
-  });
+  };
   if (body !== undefined) decorations.body = body;
   if (captures.length) decorations.captures = captures;
   return decorations;
 }
 
-function parseInlineBody(tail) {
+function parseInlineBody(tail: unknown): unknown {
   const text = String(tail || '');
   const match = text.match(/\b(?:con\s+)?(?:body|payload|cuerpo)\b\s*(?::|=)?\s*/i);
   if (!match) return undefined;
@@ -304,7 +288,7 @@ function parseInlineBody(tail) {
   return bodyText ? parseLooseValue(bodyText) : undefined;
 }
 
-function parseInlineKeyValueSegment(tail, keywordPattern) {
+function parseInlineKeyValueSegment(tail: unknown, keywordPattern: RegExp): ProGuide.Dict {
   const text = String(tail || '');
   const pattern = new RegExp(`\\b(?:con\\s+)?${keywordPattern.source}\\b\\s*(?::|=)?\\s*(.+)$`, 'i');
   const match = text.match(pattern);
@@ -319,8 +303,8 @@ function parseInlineKeyValueSegment(tail, keywordPattern) {
   return pair ? { [pair[1]]: parseLooseValue(pair[2]) } : {};
 }
 
-function parseInlineCaptures(tail) {
-  const captures = [];
+function parseInlineCaptures(tail: unknown): ProGuide.ApiCapture[] {
+  const captures: ProGuide.Dict[] = [];
   const text = String(tail || '');
   const pattern = /(?:capturar|capture|save|guardar|extraer|extract)\s+(?:campo|field|valor|value)?\s*`?([A-Za-z_][A-Za-z0-9_]*)`?(?:\s+(?:como|as)\s+`?([A-Za-z_][A-Za-z0-9_]*)`?)?/ig;
   for (const match of text.matchAll(pattern)) {
@@ -331,13 +315,13 @@ function parseInlineCaptures(tail) {
   return normalizeApiCaptures(captures);
 }
 
-function stripCaptureClauses(value) {
+function stripCaptureClauses(value: unknown): string {
   return String(value || '')
     .replace(/\s*(?:[\u2013\u2014-]\s*)?(?:capturar|capture|save|guardar|extraer|extract)\s+(?:campo|field|valor|value)?\s*`?[A-Za-z_][A-Za-z0-9_]*`?(?:\s+(?:como|as)\s+`?[A-Za-z_][A-Za-z0-9_]*`?)?/ig, '')
     .trim();
 }
 
-function readInlineValue(value) {
+function readInlineValue(value: unknown): string {
   const text = String(value || '').trim();
   if (!text) return '';
   const balanced = readBalancedJsonLike(text);
@@ -348,7 +332,7 @@ function readInlineValue(value) {
     .trim();
 }
 
-function readBalancedJsonLike(value) {
+function readBalancedJsonLike(value: unknown): string {
   const text = String(value || '').trim();
   const opener = text[0];
   const closer = opener === '{' ? '}' : (opener === '[' ? ']' : '');
@@ -383,7 +367,7 @@ function readBalancedJsonLike(value) {
   return '';
 }
 
-function firstNormalizedBody(...values) {
+function firstNormalizedBody(...values: unknown[]): unknown {
   for (const value of values) {
     const normalized = normalizeRequestBody(value);
     if (normalized !== undefined) return normalized;
@@ -391,7 +375,7 @@ function firstNormalizedBody(...values) {
   return undefined;
 }
 
-function firstNormalizedKeyValue(...values) {
+function firstNormalizedKeyValue(...values: unknown[]): ProGuide.Dict {
   for (const value of values) {
     const normalized = normalizeKeyValueObject(value, { preserveSecrets: true });
     if (Object.keys(normalized).length) return normalized;
@@ -399,20 +383,20 @@ function firstNormalizedKeyValue(...values) {
   return {};
 }
 
-export function normalizeApiCaptures(value) {
+export function normalizeApiCaptures(value: unknown): ProGuide.ApiCapture[] {
   if (value === undefined || value === null || value === '') return [];
   if (Array.isArray(value)) {
-    return value.flatMap((entry) => normalizeApiCaptureEntry(entry)).filter(Boolean);
+    return value.flatMap((entry) => normalizeApiCaptureEntry(entry)).filter((entry): entry is ProGuide.ApiCapture => Boolean(entry));
   }
   if (isPlainObject(value)) {
     return Object.entries(value)
       .map(([name, entry]) => normalizeApiCaptureEntry(entry, name))
-      .filter(Boolean);
+      .filter((entry): entry is ProGuide.ApiCapture => Boolean(entry));
   }
-  return cleanList(value).map(parseApiCaptureLine).filter(Boolean);
+  return cleanList(value).map(parseApiCaptureLine).filter((entry): entry is ProGuide.ApiCapture => Boolean(entry));
 }
 
-function normalizeApiCaptureEntry(entry, fallbackName = '') {
+function normalizeApiCaptureEntry(entry: unknown, fallbackName = ''): ProGuide.ApiCapture | null {
   if (typeof entry === 'string') {
     const path = normalizeCapturePath(entry);
     return path !== null ? normalizeApiCaptureObject({ name: fallbackName, path }) : null;
@@ -425,7 +409,7 @@ function normalizeApiCaptureEntry(entry, fallbackName = '') {
   });
 }
 
-function normalizeApiCaptureObject(entry) {
+function normalizeApiCaptureObject(entry: ProGuide.Dict): ProGuide.ApiCapture | null {
   const name = normalizeCaptureName(entry.name);
   const header = String(entry.header || '').trim().toLowerCase();
   const path = normalizeCapturePath(entry.path);
@@ -435,7 +419,7 @@ function normalizeApiCaptureObject(entry) {
     : { name, source: 'body', path };
 }
 
-function parseApiCaptureLine(line) {
+function parseApiCaptureLine(line: unknown): ProGuide.ApiCapture | null {
   const text = String(line || '').trim();
   const match = text.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|:|<-|from)\s*(.+)$/i);
   if (!match) return null;
@@ -448,12 +432,12 @@ function parseApiCaptureLine(line) {
   });
 }
 
-function normalizeCaptureName(value) {
+function normalizeCaptureName(value: unknown): string {
   const text = String(value || '').trim();
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(text) ? text : '';
 }
 
-function normalizeCapturePath(value) {
+function normalizeCapturePath(value: unknown): string | null {
   if (value === undefined || value === null) return null;
   return String(value)
     .trim()
@@ -461,7 +445,7 @@ function normalizeCapturePath(value) {
     .replace(/^<root>$/i, '');
 }
 
-function describeApiPayload(value) {
+function describeApiPayload(value: unknown): string {
   if (value === undefined || value === null || value === '') return '';
   if (Array.isArray(value)) return `array(${value.length})`;
   if (isPlainObject(value)) {
@@ -471,23 +455,31 @@ function describeApiPayload(value) {
   return typeof value;
 }
 
-function normalizeHttpMethod(value) {
+function normalizeHttpMethod(value: unknown): string {
   const method = String(value || '').trim().toUpperCase();
   return HTTP_METHODS.has(method) ? method : '';
 }
 
-function normalizeApiPath(value) {
+function normalizeApiPath(value: unknown): string {
   const text = String(value || '').trim().replace(/[.,;]+$/, '');
   if (!text) return '';
   if (/^https?:\/\//i.test(text)) return text;
   return text.startsWith('/') ? text : `/${text}`;
 }
 
-export function normalizeApiAssertions({ assertions = [], expected = [], expectedStatus = null } = {}) {
-  const normalized = [];
+export function normalizeApiAssertions({
+  assertions = [],
+  expected = [],
+  expectedStatus = null
+}: {
+  assertions?: unknown;
+  expected?: unknown;
+  expectedStatus?: unknown;
+} = {}): ProGuide.ApiAssertion[] {
+  const normalized: ProGuide.ApiAssertion[] = [];
   const status = normalizeExpectedStatus(expectedStatus) ?? parseExpectedStatus(cleanList(expected).join('\n'));
   if (status !== null) normalized.push({ type: 'status', expected: status });
-  for (const assertion of assertions || []) {
+  for (const assertion of firstArrayValue(assertions)) {
     const parsed = normalizeApiAssertion(assertion);
     if (parsed) normalized.push(parsed);
   }
@@ -502,14 +494,14 @@ export function normalizeApiAssertions({ assertions = [], expected = [], expecte
   return unique;
 }
 
-export function rejectUnsupportedApiAssertions(assertions, context = '') {
+export function rejectUnsupportedApiAssertions(assertions: ProGuide.ApiAssertion[], context = ''): void {
   const unsupported = (assertions || []).find((assertion) => assertion?.type === 'unsupported');
   if (!unsupported) return;
   const suffix = context ? ` en ${context}` : '';
   throw new Error(`Asercion API no soportada${suffix}: ${unsupported.reason || 'unsupported_assertion'}. Usa status, ok, header, body_contains o body_path con equals/exists/contains/isArray. Usa path "" o "$" para el body raiz.`);
 }
 
-function normalizeApiAssertion(assertion) {
+function normalizeApiAssertion(assertion: any): ProGuide.ApiAssertion {
   if (!assertion) return unsupportedApiAssertion(assertion, 'empty_assertion');
   if (typeof assertion === 'string') return parseExpectedApiAssertion(assertion) || unsupportedApiAssertion(assertion, 'unsupported_text_assertion');
   if (!isPlainObject(assertion)) return unsupportedApiAssertion(assertion, 'unsupported_assertion_value');
@@ -541,7 +533,7 @@ function normalizeApiAssertion(assertion) {
   }
   if (assertion.type === 'body_path') {
     const operator = ['exists', 'contains', 'is_array'].includes(assertion.operator) ? assertion.operator : 'equals';
-    const normalized = {
+    const normalized: ProGuide.ApiAssertion = {
       type: 'body_path',
       path: normalizeApiBodyPath(firstDefined(assertion.path, assertion.field, assertion.json_path, '')),
       operator
@@ -597,8 +589,8 @@ function normalizeApiAssertion(assertion) {
   return unsupportedApiAssertion(assertion, 'unsupported_assertion_object');
 }
 
-function uniqueApiAssertions(assertions) {
-  const unique = [];
+function uniqueApiAssertions(assertions: ProGuide.ApiAssertion[]): ProGuide.ApiAssertion[] {
+  const unique: ProGuide.ApiAssertion[] = [];
   const seen = new Set();
   for (const assertion of assertions || []) {
     const key = JSON.stringify(assertion);
@@ -609,16 +601,16 @@ function uniqueApiAssertions(assertions) {
   return unique;
 }
 
-function normalizeApiBodyPath(value) {
+function normalizeApiBodyPath(value: unknown): string {
   const text = String(value ?? '').trim();
   return text === '$' ? '' : text.replace(/^\$\./, '').replace(/^\$/, '');
 }
 
-function firstDefined(...values) {
+function firstDefined(...values: unknown[]): unknown {
   return values.find((value) => value !== undefined && value !== null);
 }
 
-function unsupportedApiAssertion(assertion, reason) {
+function unsupportedApiAssertion(assertion: unknown, reason: string): ProGuide.ApiAssertion {
   return {
     type: 'unsupported',
     reason,
@@ -626,7 +618,7 @@ function unsupportedApiAssertion(assertion, reason) {
   };
 }
 
-export function parseExpectedApiAssertion(line) {
+export function parseExpectedApiAssertion(line: unknown): ProGuide.ApiAssertion | null {
   const text = stripExpectedStepPrefix(stripMarkdownEmphasis(stripListMarker(String(line || '').trim()))).trim();
   if (!text) return null;
   const status = parseExpectedStatus(text);
@@ -714,7 +706,7 @@ export function parseExpectedApiAssertion(line) {
   return null;
 }
 
-function parseExpectedStatus(value) {
+function parseExpectedStatus(value: unknown): number | null {
   const text = stripExpectedStepPrefix(String(value || ''));
   const normalized = norm(text);
   if (!/\b(status|estado|codigo|http)\b/.test(normalized) && !/^\s*[1-5][0-9]{2}\s*$/.test(text)) {
@@ -724,7 +716,7 @@ function parseExpectedStatus(value) {
   return match ? normalizeExpectedStatus(match[1]) : null;
 }
 
-function stripExpectedStepPrefix(value) {
+function stripExpectedStepPrefix(value: unknown): string {
   const text = String(value || '');
   const ascii = stripAccents(text);
   const match = ascii.match(/^\s*(?:paso|step|request|peticion|solicitud|llamada)\s*#?\s*\d{1,3}\s*[:.)-]?\s*/i) ||
@@ -732,7 +724,7 @@ function stripExpectedStepPrefix(value) {
   return match ? text.slice(match[0].length) : text;
 }
 
-function normalizeExpectedStatus(value) {
+function normalizeExpectedStatus(value: unknown): number | null {
   const number = Number(String(value ?? '').match(/[1-5][0-9]{2}/)?.[0] ?? NaN);
   return Number.isInteger(number) && number >= 100 && number <= 599 ? number : null;
 }
