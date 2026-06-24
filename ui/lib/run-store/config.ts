@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { PROGUIDE_DIR, exists } from './io.js';
@@ -8,7 +7,7 @@ import { defaultConfig } from '../config/defaults.js';
 // for the runner, identity and llm sections. loadUiConfig is imported back into
 // run-store/runs.js.
 
-export async function loadUiConfig(root) {
+export async function loadUiConfig(root: string): Promise<ProGuide.Dict> {
   const config = defaultConfig();
   const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
   if (!(await exists(configPath))) return config;
@@ -27,7 +26,7 @@ export async function loadUiConfig(root) {
   return config;
 }
 
-function parseYamlScalar(value) {
+function parseYamlScalar(value: unknown): string | number | boolean {
   const trimmed = String(value || '').trim().replace(/^['"]|['"]$/g, '');
   if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === 'true';
   if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) return Number(trimmed);

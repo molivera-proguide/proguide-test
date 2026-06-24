@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadDotEnv } from '../shared/env.js';
@@ -59,11 +58,45 @@ import {
 // run-identity resolution, UI config loading and Markdown source reading
 // helpers. This is the orchestration core the public facade re-exports.
 
-export async function listRunRecords(root) {
+type PrepareMarkdownRunInput = {
+  root: string;
+  sourceMd: string | string[];
+  baseUrl?: string;
+  metadata?: ProGuide.Metadata;
+  useAgent?: boolean;
+};
+
+type PrepareCasesRunInput = {
+  root: string;
+  cases: ProGuide.CaseInput[];
+  baseUrl?: string;
+  metadata?: ProGuide.Metadata;
+};
+
+type SaveCasesForRunInput = {
+  root: string;
+  runId: string;
+  casesPayload: ProGuide.CaseInput[];
+};
+
+type AppendCasesToRunInput = SaveCasesForRunInput & {
+  baseUrl?: string;
+  metadata?: ProGuide.Metadata;
+};
+
+type ExecutePreparedRunInput = {
+  root: string;
+  runId: string;
+  baseUrl?: string;
+  credentials?: ProGuide.Dict;
+  fromPlan?: boolean;
+};
+
+export async function listRunRecords(root: string): Promise<ProGuide.Dict[]> {
   const runsDir = runsRoot(root);
   try {
     const entries = await fs.readdir(runsDir, { withFileTypes: true });
-    const records = [];
+    const records: ProGuide.Dict[] = [];
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       const entryDir = path.join(runsDir, entry.name);
@@ -79,7 +112,7 @@ export async function listRunRecords(root) {
   }
 }
 
-export async function loadRunBundle(root, runId) {
+export async function loadRunBundle(root: string, runId: string): Promise<ProGuide.Dict> {
   const runDir = runPath(root, runId);
   if (!(await exists(runDir))) {
     throw new Error(`Run no encontrado: ${runId}. Root efectivo: ${root}.`);
@@ -96,11 +129,11 @@ export async function loadRunBundle(root, runId) {
   return { run, cases, summary, events };
 }
 
-export async function loadGeneratedCaseCode(root, runId, caseId) {
+export async function loadGeneratedCaseCode(root: string, runId: string, caseId: string): Promise<ProGuide.Dict | null> {
   const runDir = runPath(root, runId);
   const generatedDir = path.join(runDir, 'generated');
   if (!(await exists(generatedDir))) return null;
-  let found = null;
+  let found: ProGuide.Dict | null = null;
   await walk(generatedDir, async (filePath) => {
     if (found || !['.ts', '.js', '.cjs', '.mjs'].includes(path.extname(filePath).toLowerCase())) return;
     if (['proguide-test-runtime.cjs', 'proguide-test-runtime.mjs'].includes(path.basename(filePath))) return;
@@ -115,10 +148,13 @@ export async function loadGeneratedCaseCode(root, runId, caseId) {
   return found;
 }
 
-/**
- * @param {{root: string, sourceMd: string|string[], baseUrl?: string, metadata?: ProGuide.Metadata, useAgent?: boolean}} input
- */
-export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {}, useAgent = false }) {
+export async function prepareMarkdownRun({
+  root,
+  sourceMd,
+  baseUrl,
+  metadata = {},
+  useAgent = false
+}: PrepareMarkdownRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
   const config = await loadUiConfig(root);
@@ -126,7 +162,7 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   const sources = await readMarkdownSources(sourceMd);
   const sourceFilename = markdownSourceFilename(sources);
   const runDir = await newRunDir(root);
-  const run = {
+  const run: ProGuide.Dict = {
     id: path.basename(runDir),
     created_at: nowIso(),
     started_at: null,
@@ -175,7 +211,7 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
       : `Archivos recibidos: ${sources.map((source) => source.name).join(', ')}`
   });
 
-  let cases;
+  let cases: ProGuide.Dict[];
   try {
     cases = [];
     for (const source of sources) {
@@ -225,10 +261,12 @@ export async function prepareMarkdownRun({ root, sourceMd, baseUrl, metadata = {
   return { run, cases };
 }
 
-/**
- * @param {{root: string, cases: ProGuide.CaseInput[], baseUrl?: string, metadata?: ProGuide.Metadata}} input
- */
-export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
+export async function prepareCasesRun({
+  root,
+  cases,
+  baseUrl,
+  metadata = {}
+}: PrepareCasesRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
   const config = await loadUiConfig(root);
@@ -239,7 +277,7 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   const normalizedCases = cases.map((item, index) => normalizeCaseForStorage(item, index + 1));
 
   const runDir = await newRunDir(root);
-  const run = {
+  const run: ProGuide.Dict = {
     id: path.basename(runDir),
     created_at: nowIso(),
     started_at: null,
@@ -305,14 +343,16 @@ export async function prepareCasesRun({ root, cases, baseUrl, metadata = {} }) {
   return { run, cases: normalizedCases };
 }
 
-/**
- * @param {{root: string, sourceMd: string|string[], metadata?: ProGuide.Metadata, useAgent?: boolean}} input
- */
-export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAgent = false }) {
+export async function previewMarkdownRun({
+  root,
+  sourceMd,
+  metadata = {},
+  useAgent = false
+}: Omit<PrepareMarkdownRunInput, 'baseUrl'>): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
   const sources = await readMarkdownSources(sourceMd);
-  const cases = [];
+  const cases: ProGuide.Dict[] = [];
   for (const source of sources) {
     const parsed = useAgent
       ? await interpretMarkdownWithAgent(source.markdown, { root, sourceName: source.name })
@@ -330,10 +370,7 @@ export async function previewMarkdownRun({ root, sourceMd, metadata = {}, useAge
   };
 }
 
-/**
- * @param {{root: string, runId: string, casesPayload: ProGuide.CaseInput[]}} input
- */
-export async function saveCasesForRun({ root, runId, casesPayload }) {
+export async function saveCasesForRun({ root, runId, casesPayload }: SaveCasesForRunInput): Promise<ProGuide.Dict> {
   const runDir = runPath(root, runId);
   const existing = await readJson(path.join(runDir, NORMALIZED_CASES_JSON), []);
   const cases = casesPayload.map((item, index) => normalizeCaseForStorage(item, index + 1, existing[index]));
@@ -355,10 +392,13 @@ export async function saveCasesForRun({ root, runId, casesPayload }) {
   return { cases };
 }
 
-/**
- * @param {{root: string, runId: string, casesPayload: ProGuide.CaseInput[], baseUrl?: string, metadata?: ProGuide.Metadata}} input
- */
-export async function appendCasesToRun({ root, runId, casesPayload, baseUrl = '', metadata = {} }) {
+export async function appendCasesToRun({
+  root,
+  runId,
+  casesPayload,
+  baseUrl = '',
+  metadata = {}
+}: AppendCasesToRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
   if (!Array.isArray(casesPayload) || !casesPayload.length) {
@@ -405,7 +445,13 @@ export async function appendCasesToRun({ root, runId, casesPayload, baseUrl = ''
   return { run, cases, appended_cases: additions };
 }
 
-export async function executePreparedRun({ root, runId, baseUrl, credentials = {}, fromPlan = false }) {
+export async function executePreparedRun({
+  root,
+  runId,
+  baseUrl,
+  credentials = {},
+  fromPlan = false
+}: ExecutePreparedRunInput): Promise<ProGuide.Dict> {
   await loadDotEnv(root);
   const runDir = runPath(root, runId);
   const run = await loadRunRecord(runDir);
@@ -451,7 +497,7 @@ export async function executePreparedRun({ root, runId, baseUrl, credentials = {
   await writeJson(path.join(runDir, TEST_PLAN_JSON), plan);
   const generatedDir = path.join(runDir, 'generated');
 
-  let summary;
+  let summary: ProGuide.Dict;
   try {
     let domContext = {
       available: false,

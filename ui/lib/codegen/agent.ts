@@ -80,8 +80,8 @@ export async function generateTestsWithAgent({
   await fs.mkdir(outputDir, { recursive: true });
   await writePlaywrightRuntimeShim(outputDir);
 
-  const apiCases = (plan.cases || []).filter(isApiPlanCase);
-  const uiCases = (plan.cases || []).filter((testCase) => !isApiPlanCase(testCase));
+  const apiCases: ProGuide.Dict[] = (plan.cases || []).filter(isApiPlanCase);
+  const uiCases: ProGuide.Dict[] = (plan.cases || []).filter((testCase: ProGuide.Dict) => !isApiPlanCase(testCase));
   if (apiCases.length) {
     await fs.writeFile(path.join(outputDir, 'test_api_cases.spec.ts'), generateApiTestSpec(apiCases), 'utf8');
     if (usageContext?.runDir) {

@@ -1,4 +1,3 @@
-// @ts-check
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -8,7 +7,11 @@ import { slug } from '../shared/text.js';
 // source provenance from metadata, UI config, env vars, git and project files.
 // Extracted verbatim from run-store/runs.js; resolveRunIdentity is imported back there.
 
-export async function resolveRunIdentity(root, metadata = {}, config = {}) {
+export async function resolveRunIdentity(
+  root: string,
+  metadata: ProGuide.Dict = {},
+  config: ProGuide.Dict = {}
+): Promise<ProGuide.Dict> {
   const rootPath = path.resolve(root);
   const identityConfig = config.identity || {};
   const git = gitIdentity(rootPath);
@@ -98,7 +101,7 @@ export async function resolveRunIdentity(root, metadata = {}, config = {}) {
   };
 }
 
-function gitIdentity(root) {
+function gitIdentity(root: string): ProGuide.Dict<string> {
   return {
     email: gitValue(root, ['config', '--get', 'user.email']),
     name: gitValue(root, ['config', '--get', 'user.name']),
@@ -108,7 +111,7 @@ function gitIdentity(root) {
   };
 }
 
-function gitValue(root, args) {
+function gitValue(root: string, args: string[]): string {
   const result = spawnSync('git', ['-C', root, ...args], {
     encoding: 'utf8',
     timeout: 2500,
@@ -118,7 +121,7 @@ function gitValue(root, args) {
   return String(result.stdout || '').trim();
 }
 
-async function packageProjectName(root) {
+async function packageProjectName(root: string): Promise<string> {
   const packagePath = path.join(root, 'package.json');
   try {
     const data = JSON.parse(await fs.readFile(packagePath, 'utf8'));
@@ -128,7 +131,7 @@ async function packageProjectName(root) {
   }
 }
 
-async function pyprojectProjectName(root) {
+async function pyprojectProjectName(root: string): Promise<string> {
   try {
     const text = await fs.readFile(path.join(root, 'pyproject.toml'), 'utf8');
     const match = text.match(/^\s*name\s*=\s*["']([^"']+)["']/m);
@@ -138,7 +141,7 @@ async function pyprojectProjectName(root) {
   }
 }
 
-function projectNameFromRemote(remote) {
+function projectNameFromRemote(remote: unknown): string {
   const text = String(remote || '').trim();
   if (!text) return '';
   const withoutQuery = text.split(/[?#]/)[0];
@@ -146,22 +149,22 @@ function projectNameFromRemote(remote) {
   return cleanProjectName(last.replace(/\.git$/i, ''));
 }
 
-function cleanProjectName(value) {
+function cleanProjectName(value: unknown): string {
   const text = String(value || '').trim();
   if (!text) return '';
   return text.replace(/^@[^/]+\//, '');
 }
 
-function firstValue(...values) {
+function firstValue(...values: unknown[]): string {
   return values.map((value) => String(value ?? '').trim()).find(Boolean) || '';
 }
 
-function sourceFor(entries) {
+function sourceFor(entries: Array<[string, unknown]>): string {
   const found = entries.find(([, value]) => String(value ?? '').trim());
   return found?.[0] || '';
 }
 
-function emailDomain(email) {
+function emailDomain(email: unknown): string {
   const match = String(email || '').trim().match(/@([^@\s]+)$/);
   return match ? match[1].toLowerCase() : '';
 }
