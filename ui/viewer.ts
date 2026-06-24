@@ -5,11 +5,22 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const viewerCache = /** @type {Map<string, {baseUrl: string, port: number, started: boolean}>} */ (new Map());
+type ViewerInfo = { baseUrl: string; port: number; started: boolean };
+type ViewerOptions = {
+  host?: string;
+  port?: unknown;
+  attempts?: unknown;
+  startTimeoutMs?: unknown;
+  timeoutMs?: unknown;
+  requiredCapabilities?: string[];
+};
+type ShutdownResult = { stopped: boolean; message: string };
+
+const viewerCache = new Map<string, ViewerInfo>();
 const REQUIRED_VIEWER_CAPABILITIES = ['usage'];
 const DEFAULT_VIEWER_START_TIMEOUT_MS = 15000;
 
-export async function ensureViewer(root, options = {}) {
+export async function ensureViewer(root: string, options: ViewerOptions = {}): Promise<ViewerInfo> {
   const rootPath = normalizeRootPath(root);
   const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
   const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
@@ -77,7 +88,7 @@ export async function ensureViewer(root, options = {}) {
   throw new Error(`No se pudo iniciar el visor Fastify desde el puerto ${firstPort}.`);
 }
 
-export async function stopViewer(root, options = {}) {
+export async function stopViewer(root: string, options: ViewerOptions = {}) {
   const rootPath = normalizeRootPath(root);
   const host = options.host || process.env.PROGUIDE_VIEWER_HOST || process.env.PROGUIDE_UI_HOST || '127.0.0.1';
   const firstPort = positiveNumber(options.port, process.env.PROGUIDE_VIEWER_PORT, process.env.PROGUIDE_UI_PORT, 8787);
@@ -114,28 +125,31 @@ export async function stopViewer(root, options = {}) {
   };
 }
 
-export async function viewerMatchesRoot(baseUrl, root, options = {}) {
+export async function viewerMatchesRoot(baseUrl: string, root: string, options: ViewerOptions = {}): Promise<boolean> {
   const health = await fetchViewerHealth(baseUrl);
   return viewerHealthMatchesRoot(health, root, options);
 }
 
-export function viewerHealthMatchesRoot(health, root, options = {}) {
+export function viewerHealthMatchesRoot(
+  health: ProGuide.ViewerHealth | null,
+  root: string,
+  options: ViewerOptions = {}
+): boolean {
   const requiredCapabilities = options.requiredCapabilities || REQUIRED_VIEWER_CAPABILITIES;
   return health?.service === 'proguide-test-viewer' &&
     rootIdentity(health.root) === rootIdentity(root) &&
     viewerHasCapabilities(health, requiredCapabilities);
 }
 
-export function viewerHasCapabilities(health, requiredCapabilities = REQUIRED_VIEWER_CAPABILITIES) {
+export function viewerHasCapabilities(
+  health: ProGuide.ViewerHealth | null,
+  requiredCapabilities = REQUIRED_VIEWER_CAPABILITIES
+): boolean {
   const capabilities = Array.isArray(health?.capabilities) ? health.capabilities : [];
   return requiredCapabilities.every((capability) => capabilities.includes(capability));
 }
 
-/**
- * @param {string} baseUrl
- * @returns {Promise<ProGuide.ViewerHealth|null>}
- */
-export async function fetchViewerHealth(baseUrl) {
+export async function fetchViewerHealth(baseUrl: string): Promise<ProGuide.ViewerHealth | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 700);
   try {
@@ -149,7 +163,7 @@ export async function fetchViewerHealth(baseUrl) {
   }
 }
 
-export function viewerLinks(baseUrl, runId) {
+export function viewerLinks(baseUrl: string, runId: string): { viewer_url: string; run_url: string; events_url: string } {
   const encodedRun = encodeURIComponent(runId);
   return {
     viewer_url: `${baseUrl}/runs`,
@@ -158,15 +172,15 @@ export function viewerLinks(baseUrl, runId) {
   };
 }
 
-export function viewerBaseUrl(host, port) {
+export function viewerBaseUrl(host: string, port: number): string {
   const browserHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
   const formattedHost = browserHost.includes(':') && !browserHost.startsWith('[') ? `[${browserHost}]` : browserHost;
   return `http://${formattedHost}:${port}`;
 }
 
-export function viewerPortCandidates({ firstPort, attempts }) {
-  const ports = [];
-  const appendRange = (start, count) => {
+export function viewerPortCandidates({ firstPort, attempts }: { firstPort: unknown; attempts: unknown }): number[] {
+  const ports: number[] = [];
+  const appendRange = (start: unknown, count: unknown) => {
     const base = positiveNumber(start, 8787);
     const limit = positiveNumber(count, 20);
     for (let offset = 0; offset < limit; offset += 1) ports.push(base + offset);
@@ -176,12 +190,24 @@ export function viewerPortCandidates({ firstPort, attempts }) {
   return [...new Set(ports)];
 }
 
-export function rootIdentity(value) {
+export function rootIdentity(value: unknown): string {
   const resolved = normalizeRootPath(value);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
 
-async function stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepPort }) {
+async function stopDuplicateViewers({
+  rootPath,
+  host,
+  firstPort,
+  attempts,
+  keepPort
+}: {
+  rootPath: string;
+  host: string;
+  firstPort: number;
+  attempts: number;
+  keepPort: number;
+}): Promise<void> {
   for (const port of viewerPortCandidates({ firstPort, attempts })) {
     if (port === keepPort) continue;
     const baseUrl = viewerBaseUrl(host, port);
@@ -192,7 +218,7 @@ async function stopDuplicateViewers({ rootPath, host, firstPort, attempts, keepP
   }
 }
 
-async function shutdownViewer(baseUrl, root, health) {
+async function shutdownViewer(baseUrl: string, root: string, health: ProGuide.ViewerHealth): Promise<ShutdownResult> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 1200);
   try {
@@ -220,12 +246,12 @@ async function shutdownViewer(baseUrl, root, health) {
     process.kill(pid);
     await sleep(500);
     return { stopped: !(await fetchViewerHealth(baseUrl)), message: 'pid_terminated' };
-  } catch (error) {
+  } catch (error: any) {
     return { stopped: false, message: error.message || String(error) };
   }
 }
 
-async function stopStartingChild(child, baseUrl, root) {
+async function stopStartingChild(child: ReturnType<typeof spawn> | undefined, baseUrl: string, root: string): Promise<void> {
   if (!child?.pid) return;
   const health = await fetchViewerHealth(baseUrl);
   if (health?.service === 'proguide-test-viewer' && rootIdentity(health.root) === rootIdentity(root)) {
@@ -240,7 +266,7 @@ async function stopStartingChild(child, baseUrl, root) {
   }
 }
 
-async function waitForViewer(baseUrl, root, options = {}) {
+async function waitForViewer(baseUrl: string, root: string, options: ViewerOptions = {}): Promise<boolean> {
   const timeoutMs = positiveNumber(options.timeoutMs, process.env.PROGUIDE_VIEWER_START_TIMEOUT_MS, DEFAULT_VIEWER_START_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -250,7 +276,7 @@ async function waitForViewer(baseUrl, root, options = {}) {
   return false;
 }
 
-function normalizeRootPath(value) {
+function normalizeRootPath(value: unknown): string {
   const resolved = path.resolve(String(value || ''));
   try {
     return fs.realpathSync.native(resolved);
@@ -259,7 +285,7 @@ function normalizeRootPath(value) {
   }
 }
 
-function positiveNumber(...values) {
+function positiveNumber(...values: unknown[]): number {
   for (const value of values) {
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
@@ -267,6 +293,6 @@ function positiveNumber(...values) {
   return 1;
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

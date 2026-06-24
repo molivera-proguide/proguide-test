@@ -349,7 +349,7 @@ function isApiOnlyRun(cases = []) {
   });
 }
 
-function initialRunProgress(run, summary, options = {}) {
+function initialRunProgress(run: ProGuide.Dict, summary: ProGuide.Dict | null, options: { apiOnlyRun?: boolean } = {}) {
   const status = statusClass(run.status);
   const counts = countSummary(summary);
   const apiOnlyRun = Boolean(options.apiOnlyRun);

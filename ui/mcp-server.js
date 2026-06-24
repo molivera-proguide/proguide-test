@@ -693,7 +693,7 @@ function cleanHandle(value, label) {
 async function attachViewer(root, runId, options = {}) {
   try {
     const viewer = await startViewer(root, runId, options);
-    console.error(`[ProGuide] Visor de resultados: ${'run_url' in viewer ? viewer.run_url : viewer.viewer_url}`);
+    console.error(`[ProGuide] Visor de resultados: ${viewer.run_url || viewer.viewer_url}`);
     return viewer;
   } catch (error) {
     const message = error.message || String(error);
@@ -718,7 +718,7 @@ async function startViewer(root, runId = '', options = {}) {
   const viewer = await ensureViewer(root, {
     port: Number.isFinite(Number(options.port)) ? Number(options.port) : undefined
   });
-  const links = runId ? viewerLinks(viewer.baseUrl, runId) : { viewer_url: `${viewer.baseUrl}/runs` };
+  const links = runId ? viewerLinks(viewer.baseUrl, runId) : { viewer_url: `${viewer.baseUrl}/runs`, run_url: '', events_url: '' };
   const browser = await openViewerInBrowser(links.run_url || links.viewer_url, options);
   return {
     ...links,

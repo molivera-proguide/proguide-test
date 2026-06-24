@@ -11,7 +11,7 @@ const INSTALL_TIMEOUT_MS = positiveNumber(process.env.PROGUIDE_RUNTIME_INSTALL_T
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const requireFromHere = createRequire(import.meta.url);
 
-export async function ensurePlaywrightRuntime(root, options = {}) {
+export async function ensurePlaywrightRuntime(root: string, options: { requireBrowser?: boolean; fix?: boolean } = {}) {
   const resolvedRoot = path.resolve(root);
   loadDotEnvSync(resolvedRoot);
 
@@ -50,12 +50,12 @@ export function playwrightRuntime() {
   };
 }
 
-export function playwrightCommand(args = []) {
+export function playwrightCommand(args: string[] = []) {
   const runtime = playwrightRuntime();
   return [runtime.node, runtime.cli, ...args];
 }
 
-export function runtimeEnv(extra = {}) {
+export function runtimeEnv(extra: NodeJS.ProcessEnv = {}) {
   return {
     ...process.env,
     ...extra,
@@ -63,15 +63,15 @@ export function runtimeEnv(extra = {}) {
   };
 }
 
-export function proguideRequireAnchor() {
+export function proguideRequireAnchor(): string {
   return path.join(__dirname, 'package.json');
 }
 
-export function playwrightCliPath() {
+export function playwrightCliPath(): string {
   return requireFromHere.resolve('@playwright/test/cli');
 }
 
-export function playwrightImportProbe() {
+export function playwrightImportProbe(): string {
   return [
     'const { createRequire } = require("node:module");',
     'const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || __filename);',
@@ -80,7 +80,7 @@ export function playwrightImportProbe() {
   ].join(' ');
 }
 
-export function playwrightBrowserProbe() {
+export function playwrightBrowserProbe(): string {
   return [
     'const { createRequire } = require("node:module");',
     'const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || __filename);',
@@ -93,7 +93,7 @@ export function playwrightBrowserProbe() {
   ].join(' ');
 }
 
-function commandOk(spec, args) {
+function commandOk(spec: { command: string; args?: string[]; env?: NodeJS.ProcessEnv }, args: string[]): boolean {
   const result = spawnSync(spec.command, [...(spec.args || []), ...args], {
     encoding: 'utf8',
     timeout: CHECK_TIMEOUT_MS,
@@ -103,7 +103,11 @@ function commandOk(spec, args) {
   return result.status === 0;
 }
 
-function runChecked(spec, args, options = {}) {
+function runChecked(
+  spec: { command: string; args?: string[]; env?: NodeJS.ProcessEnv },
+  args: string[],
+  options: { timeout?: number; label?: string } = {}
+) {
   const result = spawnSync(spec.command, [...(spec.args || []), ...args], {
     encoding: 'utf8',
     timeout: options.timeout || INSTALL_TIMEOUT_MS,
@@ -116,23 +120,23 @@ function runChecked(spec, args, options = {}) {
   throw new Error(`No se pudo ${options.label || 'ejecutar comando'}: ${commandText(spec, args)} (${output})`);
 }
 
-function commandText(spec, args) {
+function commandText(spec: { command: string; args?: string[] }, args: string[]): string {
   return [spec.command, ...(spec.args || []), ...args].map((part) => {
     const text = String(part);
     return /\s/.test(text) ? `"${text}"` : text;
   }).join(' ');
 }
 
-function firstUsefulLine(value) {
+function firstUsefulLine(value: unknown): string {
   return String(value || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
 }
 
-function positiveNumber(value, fallback) {
+function positiveNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function loadDotEnvSync(root) {
+function loadDotEnvSync(root: string): void {
   for (const envPath of envFileCandidates(root)) {
     if (!existsSync(envPath)) continue;
     let text;
@@ -151,7 +155,7 @@ function loadDotEnvSync(root) {
   }
 }
 
-function envFileCandidates(root) {
+function envFileCandidates(root: string): string[] {
   return [
     process.env.PROGUIDE_ENV_FILE,
     path.join(os.homedir(), '.proguide', '.env'),
