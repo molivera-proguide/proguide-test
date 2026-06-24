@@ -38,6 +38,12 @@ const EXIT = {
   invalidInput: 5
 };
 
+type CliParsed = {
+  command: string;
+  options: ProGuide.Dict;
+  positionals: string[];
+};
+
 const HELP_COMMON_OPTIONS = [
   { option: '--root <path>', description: 'Workspace root. Por defecto usa variables del cliente MCP o el directorio actual.' },
   { option: '--json', description: 'Salida JSON estable para automatizacion y otros LLMs.' },
@@ -196,7 +202,7 @@ const HELP_COMMANDS = [
   }
 ];
 
-async function main(argv) {
+async function main(argv: string[]) {
   const parsed = parseArgv(argv);
 
   if (parsed.options.version || parsed.command === 'version') {
@@ -1060,9 +1066,9 @@ function writeDotted(config, key, value) {
   target[parts.at(-1)] = value;
 }
 
-function parseArgv(argv) {
-  const options = {};
-  const positionals = [];
+function parseArgv(argv: string[]): CliParsed {
+  const options: ProGuide.Dict = {};
+  const positionals: string[] = [];
   let command = '';
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -1087,7 +1093,7 @@ function parseArgv(argv) {
   return { command, options, positionals };
 }
 
-function parseLongOption(token, argv, index) {
+function parseLongOption(token: string, argv: string[], index: number): { key: string; value: string | boolean; index: number } {
   const raw = token.slice(2);
   const equalIndex = raw.indexOf('=');
   if (equalIndex >= 0) {
@@ -1424,8 +1430,8 @@ function writeJson(payload) {
  * @param {number} exitCode
  * @returns {ProGuide.CliError}
  */
-function cliError(message, exitCode) {
-  const error = /** @type {ProGuide.CliError} */ (new Error(message));
+function cliError(message: string, exitCode: number): ProGuide.CliError {
+  const error = new Error(message) as ProGuide.CliError;
   error.exitCode = exitCode;
   return error;
 }
@@ -1454,8 +1460,8 @@ function renderDoctor(payload) {
     .join('\n');
 }
 
-function readStdin() {
-  return new Promise((resolve, reject) => {
+function readStdin(): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     let data = '';
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', (chunk) => {

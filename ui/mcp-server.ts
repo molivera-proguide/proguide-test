@@ -307,6 +307,11 @@ const tools = [
   }
 ];
 
+type McpViewerOptions = {
+  port?: unknown;
+  open_browser?: boolean;
+};
+
 const prompts = [
   {
     name: 'run_cases',
@@ -690,7 +695,7 @@ function cleanHandle(value, label) {
   return text;
 }
 
-async function attachViewer(root, runId, options = {}) {
+async function attachViewer(root: string, runId: string, options: McpViewerOptions = {}) {
   try {
     const viewer = await startViewer(root, runId, options);
     console.error(`[ProGuide] Visor de resultados: ${viewer.run_url || viewer.viewer_url}`);
@@ -714,7 +719,7 @@ function viewerDisabled() {
   };
 }
 
-async function startViewer(root, runId = '', options = {}) {
+async function startViewer(root: string, runId = '', options: McpViewerOptions = {}) {
   const viewer = await ensureViewer(root, {
     port: Number.isFinite(Number(options.port)) ? Number(options.port) : undefined
   });
@@ -728,7 +733,7 @@ async function startViewer(root, runId = '', options = {}) {
   };
 }
 
-async function openViewerInBrowser(url, options = {}) {
+async function openViewerInBrowser(url: string, options: McpViewerOptions = {}) {
   if (!shouldOpenBrowser(options)) {
     return { browser_opened: false, browser_url: '', browser_disabled: true };
   }
@@ -744,7 +749,7 @@ async function openViewerInBrowser(url, options = {}) {
   }
 }
 
-function shouldOpenBrowser(options = {}) {
+function shouldOpenBrowser(options: McpViewerOptions = {}) {
   if (options.open_browser === false) return false;
   if (String(process.env.PROGUIDE_OPEN_BROWSER || '').trim() === '0') return false;
   return true;
