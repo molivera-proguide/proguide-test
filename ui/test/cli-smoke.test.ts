@@ -13,6 +13,11 @@ const UI_ROOT = path.resolve(__dirname, '..');
 const SOURCE_UI_ROOT = path.basename(UI_ROOT) === 'dist' ? path.resolve(UI_ROOT, '..') : UI_ROOT;
 const CLI = path.join(UI_ROOT, 'cli.js');
 
+type RunCliOptions = {
+  input?: string;
+  env?: Record<string, string>;
+};
+
 const SAMPLE_MARKDOWN = `## Caso 1 - Login exitoso
 
 Criticidad: alta
@@ -832,7 +837,7 @@ test('mcp exposes the full tool surface', () => {
   assert.equal(executeRun.inputSchema.properties.from_plan.type, 'boolean');
 });
 
-function runCli(args, options = {}) {
+function runCli(args: string[], options: RunCliOptions = {}) {
   const env = {
     ...process.env,
     ...(options.env || {})
@@ -855,11 +860,11 @@ function runCli(args, options = {}) {
 /**
  * @returns {any}
  */
-function parseJson(stdout) {
+function parseJson(stdout: string): any {
   return JSON.parse(stdout);
 }
 
-function lastJsonLine(stdout) {
+function lastJsonLine(stdout: string) {
   return stdout.split(/\r?\n/).filter((line) => line.trim().startsWith('{')).at(-1);
 }
 

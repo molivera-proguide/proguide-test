@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -18,6 +20,16 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_ROOT = path.resolve(__dirname, '..');
 const SERVER = path.join(UI_ROOT, 'server.js');
+
+type SampleApi = {
+  baseUrl: string;
+  close: () => Promise<void>;
+};
+
+type ViewerProcess = {
+  child: ReturnType<typeof spawn>;
+  output: string[];
+};
 
 test('prepareMarkdownRun normalizes REST API Markdown cases', async () => {
   const root = makeTempRoot();
@@ -681,23 +693,28 @@ function makeTempRoot() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'proguide-api-e2e-'));
 }
 
-function startSampleApi() {
+function startSampleApi(): Promise<SampleApi> {
   const server = http.createServer((request, response) => {
     void handleSampleApiRequest(request, response);
   });
-  return new Promise((resolve, reject) => {
+  return new Promise<SampleApi>((resolve, reject) => {
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => {
-      const address = /** @type {import('node:net').AddressInfo} */ (server.address());
+      const address = server.address() as AddressInfo;
       resolve({
         baseUrl: `http://127.0.0.1:${address.port}`,
-        close: () => new Promise((done) => server.close(done))
+        close: () => new Promise<void>((done, rejectClose) => {
+          server.close((error) => {
+            if (error) rejectClose(error);
+            else done();
+          });
+        })
       });
     });
   });
 }
 
-async function handleSampleApiRequest(request, response) {
+async function handleSampleApiRequest(request: IncomingMessage, response: ServerResponse) {
   const url = new URL(request.url || '/', 'http://127.0.0.1');
   if (request.method === 'GET' && url.pathname === '/health') {
     return sendJson(response, 200, { service: 'sample-api', ok: true });
@@ -728,8 +745,8 @@ async function handleSampleApiRequest(request, response) {
   return sendJson(response, 404, { error: 'not_found' });
 }
 
-function readJsonBody(request) {
-  return new Promise((resolve) => {
+function readJsonBody(request: IncomingMessage): Promise<any> {
+  return new Promise<any>((resolve) => {
     let text = '';
     request.setEncoding('utf8');
     request.on('data', (chunk) => {
@@ -745,12 +762,12 @@ function readJsonBody(request) {
   });
 }
 
-function sendJson(response, status, payload) {
+function sendJson(response: ServerResponse, status: number, payload: unknown) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload));
 }
 
-function startViewer(root, port) {
+function startViewer(root: string, port: number): ViewerProcess {
   const child = spawn(process.execPath, [SERVER], {
     cwd: UI_ROOT,
     env: {
@@ -772,7 +789,7 @@ function startViewer(root, port) {
 /**
  * @returns {Promise<any>}
  */
-async function waitForJson(url, viewer) {
+async function waitForJson(url: string, viewer: ViewerProcess): Promise<any> {
   // Generous deadline: the viewer boots fastify + the large proguide-service
   // module, which can take several seconds under load when the full suite runs
   // many spawned processes in parallel. Polling returns as soon as it is ready,
@@ -794,19 +811,19 @@ async function waitForJson(url, viewer) {
 /**
  * @returns {Promise<any>}
  */
-async function fetchJson(url) {
+async function fetchJson(url: string): Promise<any> {
   const response = await fetch(url);
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
   return response.json();
 }
 
-async function fetchText(url) {
+async function fetchText(url: string): Promise<string> {
   const response = await fetch(url);
   assert.equal(response.ok, true, `${url} returned ${response.status}`);
   return response.text();
 }
 
-async function stopViewer(viewer, baseUrl, root) {
+async function stopViewer(viewer: ViewerProcess, baseUrl: string, root: string) {
   try {
     await fetch(`${baseUrl}/api/shutdown`, {
       method: 'POST',
@@ -820,17 +837,17 @@ async function stopViewer(viewer, baseUrl, root) {
   if (viewer.child.exitCode === null) viewer.child.kill();
 }
 
-function freePort() {
-  return new Promise((resolve, reject) => {
+function freePort(): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
     const server = net.createServer();
     server.on('error', reject);
     server.listen(0, '127.0.0.1', () => {
-      const { port } = /** @type {import('node:net').AddressInfo} */ (server.address());
+      const { port } = server.address() as AddressInfo;
       server.close(() => resolve(port));
     });
   });
 }
 
-function sleep(ms) {
+function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -20,8 +20,8 @@
     "dist/skills/"
   ],
   "scripts": {
-    "clean": "node scripts/clean-dist.js",
-    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-build-assets.js",
+    "clean": "jiti scripts/clean-dist.ts",
+    "build": "npm run clean && tsc -p tsconfig.build.json && jiti scripts/copy-build-assets.ts",
     "start": "npm run build && node dist/server.js",
     "mcp": "npm run build && node dist/mcp-server.js",
     "proguide": "npm run build && node dist/cli.js",
@@ -48,6 +48,7 @@
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.6.0",
+    "jiti": "^2.7.0",
     "prettier": "^3.8.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.62.0"
