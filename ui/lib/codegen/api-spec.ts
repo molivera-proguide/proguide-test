@@ -1,4 +1,3 @@
-// @ts-check
 import {
   normalizeApiRequest,
   normalizeApiRequests,
@@ -11,13 +10,13 @@ import {
 // building (no I/O). Extracted verbatim from proguide-service.js; isApiPlanCase
 // and generateApiTestSpec are imported back there.
 
-export function isApiPlanCase(testCase) {
+export function isApiPlanCase(testCase: ProGuide.Dict): boolean {
   return String(testCase?.type || '').toLowerCase() === 'api' ||
     (Array.isArray(testCase?.requests) && testCase.requests.some((item) => item?.request?.method && item?.request?.path)) ||
     Boolean(testCase?.request?.method && testCase?.request?.path);
 }
 
-export function generateApiTestSpec(planCases) {
+export function generateApiTestSpec(planCases: ProGuide.Dict[]): string {
   const cases = planCases.map((testCase) => {
     return {
       id: testCase.id,
@@ -401,7 +400,7 @@ export function generateApiTestSpec(planCases) {
   ].join('\n');
 }
 
-function normalizeApiPlanRequests(testCase) {
+function normalizeApiPlanRequests(testCase: ProGuide.Dict): ProGuide.ApiRequestEntry[] {
   const flowRequests = normalizeApiRequests(testCase.requests || []);
   if (flowRequests.length) return flowRequests;
   const request = normalizeApiRequest({

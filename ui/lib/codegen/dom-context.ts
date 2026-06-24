@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { runtimeEnv } from '../../playwright-runtime.js';
@@ -159,7 +158,19 @@ main().catch((error) => {
 });
 `;
 
-export async function collectDomContext({ root, runDir, plan, baseUrl, config }) {
+export async function collectDomContext({
+  root,
+  runDir,
+  plan,
+  baseUrl,
+  config
+}: {
+  root: string;
+  runDir: string;
+  plan: ProGuide.Dict;
+  baseUrl: string;
+  config: ProGuide.Dict;
+}) {
   const cases = (plan.cases || [])
     .filter((testCase) => !isApiPlanCase(testCase))
     .slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
@@ -204,7 +215,7 @@ export async function collectDomContext({ root, runDir, plan, baseUrl, config })
       return { available: false, error: 'dom context probe did not produce JSON', by_case_id: {} };
     }
     return context;
-  } catch (error) {
+  } catch (error: any) {
     return { available: false, error: error.message || String(error), by_case_id: {} };
   }
 }

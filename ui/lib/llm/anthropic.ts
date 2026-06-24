@@ -1,4 +1,3 @@
-// @ts-check
 import Anthropic from '@anthropic-ai/sdk';
 import path from 'node:path';
 import { loadDotEnv } from '../shared/env.js';
@@ -10,7 +9,22 @@ import { recordLlmUsage } from '../usage/record.js';
 // from proguide-service.js; callJsonModel is imported back there (the API-key,
 // error-detail and JSON-extraction helpers stay internal).
 
-export async function callJsonModel(config, { root, system, payload, purpose, usageContext = null }) {
+export async function callJsonModel(
+  config: ProGuide.Dict,
+  {
+    root,
+    system,
+    payload,
+    purpose,
+    usageContext = null
+  }: {
+    root: string;
+    system: string;
+    payload: ProGuide.Dict;
+    purpose: string;
+    usageContext?: ProGuide.UsageContext | null;
+  }
+) {
   await loadDotEnv(root);
   const provider = String(config.llm.provider || 'disabled').toLowerCase();
   const configPath = path.join(root, PROGUIDE_DIR, 'config.yaml');
@@ -57,7 +71,7 @@ export async function callJsonModel(config, { root, system, payload, purpose, us
   throw new Error(`Proveedor LLM no soportado: ${provider}. ProGuide solo soporta anthropic. Root efectivo: ${root}. Config: ${configPath}.`);
 }
 
-function anthropicErrorDetails(error) {
+function anthropicErrorDetails(error: any): string {
   if (error instanceof Anthropic.APIError) {
     const status = error.status ? ` (${error.status})` : '';
     const message = error.message || error.name || 'sin detalle';
@@ -66,13 +80,16 @@ function anthropicErrorDetails(error) {
   return `: ${error?.message || String(error)}`;
 }
 
-function anthropicApiKey() {
+function anthropicApiKey(): { name: string; value: string | undefined } {
   const names = ['ANTHROPIC_API_KEY', 'PROGUIDE_LLM_API_KEY', 'API_KEY'];
   const name = names.find((item) => process.env[item]);
   return { name: name || names[0], value: name ? process.env[name] : '' };
 }
 
-function extractJson(content, context = {}) {
+function extractJson(
+  content: string,
+  context: { purpose?: string; provider?: string; maxOutputTokens?: number; configPath?: string } = {}
+) {
   try {
     return JSON.parse(content);
   } catch (error) {

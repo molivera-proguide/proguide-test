@@ -1,4 +1,3 @@
-// @ts-check
 import { priorityForPlan } from '../shared/text.js';
 import { maskSecretLines } from '../shared/secrets.js';
 import { nowIso } from '../shared/time.js';
@@ -13,8 +12,11 @@ import { mergeCaseData, dataFromLines, inferCaseRoute } from '../cases/normalize
 // Pure transform (no I/O). Extracted verbatim from proguide-service.js; the
 // single export is imported back there.
 
-export function casesToTestPlan(cases, { sourceMd, appName }) {
-  const plannedCases = [];
+export function casesToTestPlan(
+  cases: ProGuide.Dict[],
+  { sourceMd, appName }: { sourceMd: string; appName: string }
+) {
+  const plannedCases: ProGuide.Dict[] = [];
   for (const testCase of cases) {
     if (testCase.excluded) continue;
     if (testCase.automation_state !== 'listo') continue;

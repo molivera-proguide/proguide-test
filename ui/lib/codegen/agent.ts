@@ -1,4 +1,3 @@
-// @ts-check
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { proguideRequireAnchor } from '../../playwright-runtime.js';
@@ -61,10 +60,23 @@ Rules:
   {"files":[{"path":"test_markdown_cases.spec.ts","content":"...typescript code..."}]}
 - Do not include markdown fences.`;
 
-/**
- * @param {{root: string, plan: ProGuide.Dict, cases: ProGuide.CaseInput[], outputDir: string, config: ProGuide.Dict, domContext?: ProGuide.Dict, usageContext?: ProGuide.UsageContext|null}} input
- */
-export async function generateTestsWithAgent({ root, plan, cases, outputDir, config, domContext = {}, usageContext = null }) {
+export async function generateTestsWithAgent({
+  root,
+  plan,
+  cases,
+  outputDir,
+  config,
+  domContext = {},
+  usageContext = null
+}: {
+  root: string;
+  plan: ProGuide.Dict;
+  cases: ProGuide.CaseInput[];
+  outputDir: string;
+  config: ProGuide.Dict;
+  domContext?: ProGuide.Dict;
+  usageContext?: ProGuide.UsageContext | null;
+}) {
   await fs.mkdir(outputDir, { recursive: true });
   await writePlaywrightRuntimeShim(outputDir);
 
@@ -87,7 +99,7 @@ export async function generateTestsWithAgent({ root, plan, cases, outputDir, con
 
   const batchSize = positiveInteger(config.llm.max_cases, 12);
   const batches = chunkArray(uiCases, batchSize);
-  const usedPaths = new Set();
+  const usedPaths = new Set<string>();
   if (apiCases.length) usedPaths.add('test_api_cases.spec.ts');
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
     const batchCases = batches[batchIndex];
@@ -130,7 +142,7 @@ export async function generateTestsWithAgent({ root, plan, cases, outputDir, con
   await validateGeneratedCode(outputDir, plan);
 }
 
-async function writePlaywrightRuntimeShim(outputDir) {
+async function writePlaywrightRuntimeShim(outputDir: string): Promise<void> {
   const source = [
     "import { createRequire } from 'node:module';",
     `const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || ${JSON.stringify(proguideRequireAnchor())});`,
@@ -143,7 +155,19 @@ async function writePlaywrightRuntimeShim(outputDir) {
   await fs.writeFile(path.join(outputDir, 'proguide-test-runtime.mjs'), source, 'utf8');
 }
 
-function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, batchIndex, batchCount }) {
+function buildCodeGenerationPayload({
+  planCases,
+  sourceCases,
+  domContext = {},
+  batchIndex,
+  batchCount
+}: {
+  planCases: ProGuide.Dict[];
+  sourceCases: ProGuide.CaseInput[];
+  domContext?: ProGuide.Dict;
+  batchIndex: number;
+  batchCount: number;
+}) {
   const outputPath = batchCount > 1
     ? `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`
     : 'test_markdown_cases.spec.ts';
@@ -186,16 +210,16 @@ function buildCodeGenerationPayload({ planCases, sourceCases, domContext = {}, b
         preconditions: sourceCase.preconditions || [],
         data_used: sourceCase.data_used || [],
         data: sourceCase.data || testCase.data || {},
-        dom_context: /** @type {ProGuide.Dict} */ (domContext).by_case_id?.[testCase.id] || {
+        dom_context: domContext.by_case_id?.[testCase.id] || {
           available: false,
-          reason: /** @type {ProGuide.Dict} */ (domContext).error || 'dom_context_not_collected'
+          reason: domContext.error || 'dom_context_not_collected'
         }
       };
     })
   };
 }
 
-export async function loadExistingTestPlan(runDir, cases, run) {
+export async function loadExistingTestPlan(runDir: string, cases: ProGuide.CaseInput[], run: ProGuide.Dict) {
   const planPath = path.join(runDir, TEST_PLAN_JSON);
   const existing = await readJson(planPath, null);
   if (existing && Array.isArray(existing.cases)) {
@@ -204,7 +228,7 @@ export async function loadExistingTestPlan(runDir, cases, run) {
   return casesToTestPlan(cases, { sourceMd: SOURCE_MD, appName: run.app_name || 'ProGuide Markdown Cases' });
 }
 
-export function extractCaseCode(moduleText, caseId) {
+export function extractCaseCode(moduleText: string, caseId: string): string {
   const lines = moduleText.split(/\r?\n/);
   const testLineIndex = lines.findIndex((line) => {
     const text = String(line);
@@ -224,7 +248,7 @@ export function extractCaseCode(moduleText, caseId) {
   return '';
 }
 
-function normalizeGeneratedFiles(data) {
+function normalizeGeneratedFiles(data: ProGuide.Dict) {
   const files = Array.isArray(data.files) ? data.files : [];
   return files
     .map((file, index) => ({
@@ -234,7 +258,7 @@ function normalizeGeneratedFiles(data) {
     .filter((file) => String(file.content || '').trim());
 }
 
-function safeGeneratedPath(value) {
+function safeGeneratedPath(value: unknown): string {
   const normalized = String(value || 'test_markdown_cases.spec.ts').replace(/\\/g, '/').split('/').filter(Boolean).join('/');
   if (!normalized || normalized.startsWith('..') || path.isAbsolute(normalized)) {
     throw new Error(`Ruta de codigo generada no permitida: ${value}`);
@@ -245,7 +269,12 @@ function safeGeneratedPath(value) {
   return normalized;
 }
 
-function targetGeneratedPath(value, batchIndex, batchCount, usedPaths) {
+function targetGeneratedPath(
+  value: unknown,
+  batchIndex: number,
+  batchCount: number,
+  usedPaths: Set<string>
+): string {
   let relative = safeGeneratedPath(value);
   if (batchCount > 1 && path.basename(relative) === 'test_markdown_cases.spec.ts') {
     relative = path.posix.join(path.posix.dirname(relative), `test_markdown_cases_${String(batchIndex + 1).padStart(3, '0')}.spec.ts`);
@@ -265,8 +294,8 @@ function targetGeneratedPath(value, batchIndex, batchCount, usedPaths) {
   return candidate;
 }
 
-async function validateGeneratedCode(outputDir, plan) {
-  const specFiles = [];
+async function validateGeneratedCode(outputDir: string, plan: ProGuide.Dict): Promise<void> {
+  const specFiles: string[] = [];
   await walk(outputDir, async (filePath) => {
     if (/\.spec\.(?:ts|js)$/i.test(path.basename(filePath))) {
       specFiles.push(filePath);
@@ -290,8 +319,8 @@ async function validateGeneratedCode(outputDir, plan) {
   }
 }
 
-export function findInvalidGeneratedSelectors(source) {
-  const invalid = [];
+export function findInvalidGeneratedSelectors(source: unknown): string[] {
+  const invalid: Array<{ selector: string; index: number }> = [];
   const patterns = [
     /\blocator\s*\(\s*'((?:\\.|[^'\\])*)'/g,
     /\blocator\s*\(\s*"((?:\\.|[^"\\])*)"/g,
@@ -303,7 +332,7 @@ export function findInvalidGeneratedSelectors(source) {
       if (/^\s*role\s*=/.test(selector)) invalid.push({ selector, index: match.index || 0 });
     }
   }
-  const seen = new Set();
+  const seen = new Set<string>();
   return invalid
     .sort((left, right) => left.index - right.index)
     .map((item) => item.selector)
@@ -314,7 +343,7 @@ export function findInvalidGeneratedSelectors(source) {
     });
 }
 
-function unescapeJsStringFragment(value) {
+function unescapeJsStringFragment(value: unknown): string {
   return String(value || '')
     .replace(/\\'/g, "'")
     .replace(/\\"/g, '"')
