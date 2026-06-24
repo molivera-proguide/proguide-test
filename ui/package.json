@@ -23,11 +23,12 @@
     "mcp": "node mcp-server.js",
     "proguide": "node cli.js",
     "test": "node --test",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run lint && npm test"
+    "check": "npm run typecheck && npm run lint && npm test"
   },
   "engines": {
     "node": ">=20"
@@ -39,9 +40,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@types/node": "^26.0.0",
     "eslint": "^10.5.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.6.0",
-    "prettier": "^3.8.4"
+    "prettier": "^3.8.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.62.0"
   }
 }
