@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "allowJs": true,
+    "checkJs": true,
+    "noImplicitAny": false,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true
+  },
+  "include": ["**/*.js", "**/*.ts", "**/*.mts", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist", "proguide_tests", "test-results", "playwright-report"]
+}

@@ -11,6 +11,7 @@ Eres un asistente de QA. Tu objetivo es producir casos de prueba que el runner d
 ## Flujo de trabajo obligatorio
 
 ### Paso 0 — Contexto de la app o API
+
 Los QA son transversales a proyectos de distintos clientes: a veces hay acceso al código
 fuente y a veces no. **Para UI, la fuente de verdad es siempre la aplicación corriendo,
 no el código.** Obtén el vocabulario real de la UI (textos literales de botones, labels,
@@ -41,6 +42,7 @@ Nunca inventes textos de botones o campos: si no los conoces, consíguelos por a
 estas vías antes de dar los casos por definitivos.
 
 ### Paso 1 — Redactar los casos con la plantilla
+
 Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 
 - **Para API REST, usa casos estructurados antes que pasos UI.** Un caso simple usa
@@ -162,6 +164,7 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - No incluyas comentarios HTML ni notas dentro del Markdown final del caso.
 
 ### Paso 2 — Dry-run de validación (antes de ejecutar)
+
 1. Llama a `mcp__proguide-test__create_run` (tool principal de dry-run; crea SIN
    ejecutar) con los casos.
 2. Revisa en la respuesta los `executable_steps`: cada uno trae `normalized_action` y
@@ -184,6 +187,7 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
    Por eso la ejecución real (Paso 4) es la que manda.
 
 ### Paso 3 — Ejecutar
+
 Llama a `mcp__proguide-test__run_cases` (tool principal de ejecucion) con
 `open_browser: true` para que el usuario vea el reporte. Pasa siempre `base_url`,
 `title`, `module` y `root` (raíz del proyecto). `create_run_from_markdown` y
@@ -191,6 +195,7 @@ Llama a `mcp__proguide-test__run_cases` (tool principal de ejecucion) con
 `run_cases`.
 
 ### Paso 4 — Iterar con la evidencia (calibración)
+
 La primera ejecución de un caso nuevo es de calibración, no de regresión. Si falla:
 
 1. **Lee el `message` del resultado.** Los errores de Playwright incluyen el árbol de
@@ -205,24 +210,25 @@ La primera ejecución de un caso nuevo es de calibración, no de regresión. Si 
    no repitan la calibración.
 
 ### Paso 5 — Reportar
+
 Al terminar, informa al usuario: estado de cada caso (passed/failed), el `run_url` del
 visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real de la app
 (no por el selector), repórtalo como hallazgo, no lo "arregles" relajando la verificación.
 
 ## Errores comunes y su solución
 
-| Síntoma | Causa | Solución |
-|---|---|---|
-| `strict mode violation: resolved to N elements` | Texto/rol ambiguo | Usar data-testid o contexto posicional ("in the X row...") |
-| `Timeout waiting for get_by_placeholder("...")` | El placeholder real es otro | Mirar el árbol del error o el código; usar el placeholder/label exacto |
-| `click` hace timeout 30s y el dry-run se veía en 0.95 | Selector real no existe o clase CSS cambiante | Usar texto literal del botón (`Click the "X" button`) o un `data-testid`/`id` real |
-| Aserción final falla con `5000ms exceeded` aunque el elemento aparece después | El assert dependía del timeout default de Playwright o de una respuesta lenta | Usar `wait N seconds` antes del assert y/o `set assertion timeout to N seconds` |
-| Un TC pasa y otro falla en login al ejecutarlos juntos | `fullyParallel: true` + mismo usuario → contención SSO | Ejecutar cada TC en un `execute_run` separado |
-| Flujo web-suite → web-health queda esperando SSO en TST | Validación de token fría puede tardar 300-600s | Poner `set test timeout to 900 seconds` como primer paso |
-| Falla un paso compuesto | Varias acciones en un paso | Dividir en pasos atómicos |
-| Verificación de precio/número falla | El valor aparece varias veces | Verificar por texto único (nombre/título) |
-| Caso pasa solo / falla en suite | Dependencia entre casos | Hacer cada caso autocontenido |
-| API login pasa pero el siguiente request da 401 | Token hardcodeado o no capturado | Usar `capturar campo access_token` en Markdown o `requests` + `captures` en JSON |
-| API cross-service pega al host equivocado | URL relativa con `base_url` incorrecto o caso viejo sin parser multi-step | Usar URL absoluta en el step/request de ese servicio |
-| API create_run falla por aserción no soportada | Operador fuera del contrato | Cambiar a `equals`, `exists`, `contains`, `isArray`, `status`, `ok`, `header` o `body_contains` |
-| API register/create falla en el segundo run | Datos no idempotentes | Usar sufijo dinamico, teardown o setup separado |
+| Síntoma                                                                       | Causa                                                                         | Solución                                                                                        |
+| ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `strict mode violation: resolved to N elements`                               | Texto/rol ambiguo                                                             | Usar data-testid o contexto posicional ("in the X row...")                                      |
+| `Timeout waiting for get_by_placeholder("...")`                               | El placeholder real es otro                                                   | Mirar el árbol del error o el código; usar el placeholder/label exacto                          |
+| `click` hace timeout 30s y el dry-run se veía en 0.95                         | Selector real no existe o clase CSS cambiante                                 | Usar texto literal del botón (`Click the "X" button`) o un `data-testid`/`id` real              |
+| Aserción final falla con `5000ms exceeded` aunque el elemento aparece después | El assert dependía del timeout default de Playwright o de una respuesta lenta | Usar `wait N seconds` antes del assert y/o `set assertion timeout to N seconds`                 |
+| Un TC pasa y otro falla en login al ejecutarlos juntos                        | `fullyParallel: true` + mismo usuario → contención SSO                        | Ejecutar cada TC en un `execute_run` separado                                                   |
+| Flujo web-suite → web-health queda esperando SSO en TST                       | Validación de token fría puede tardar 300-600s                                | Poner `set test timeout to 900 seconds` como primer paso                                        |
+| Falla un paso compuesto                                                       | Varias acciones en un paso                                                    | Dividir en pasos atómicos                                                                       |
+| Verificación de precio/número falla                                           | El valor aparece varias veces                                                 | Verificar por texto único (nombre/título)                                                       |
+| Caso pasa solo / falla en suite                                               | Dependencia entre casos                                                       | Hacer cada caso autocontenido                                                                   |
+| API login pasa pero el siguiente request da 401                               | Token hardcodeado o no capturado                                              | Usar `capturar campo access_token` en Markdown o `requests` + `captures` en JSON                |
+| API cross-service pega al host equivocado                                     | URL relativa con `base_url` incorrecto o caso viejo sin parser multi-step     | Usar URL absoluta en el step/request de ese servicio                                            |
+| API create_run falla por aserción no soportada                                | Operador fuera del contrato                                                   | Cambiar a `equals`, `exists`, `contains`, `isArray`, `status`, `ok`, `header` o `body_contains` |
+| API register/create falla en el segundo run                                   | Datos no idempotentes                                                         | Usar sufijo dinamico, teardown o setup separado                                                 |

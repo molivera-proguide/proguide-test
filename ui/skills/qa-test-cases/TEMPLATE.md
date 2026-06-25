@@ -11,16 +11,19 @@ separados por `---`.
 **Route:** /[ruta-inicial-del-caso]
 
 **Preconditions:**
+
 - La aplicación está corriendo en [URL base]
 - [Usuario/rol necesario y cómo se obtiene]
 - [Estado de datos requerido, ej: "el producto X tiene stock disponible"]
 
 **Data:**
+
 - campo_1: valor
 - campo_2: valor
 - test password: valor-no-productivo-si-aplica
 
 **Steps:**
+
 1. /[ruta-inicial-del-caso]
 2. click [data-testid="[testid]"]
 3. fill [name="[field_name]"] with "[valor]"
@@ -28,6 +31,7 @@ separados por `---`.
 5. expect text "[texto único en la página]"
 
 **Expected Results:**
+
 - [Resultado observable 1 — debe ser verificable en pantalla]
 - [Resultado observable 2]
 ```
@@ -45,10 +49,12 @@ durante varios minutos.
 **Route:** /login
 
 **Data:**
+
 - username: [usuario-no-productivo]
 - test password: [password-no-productivo]
 
 **Steps:**
+
 1. set test timeout to 900 seconds
 2. Ir a /login
 3. fill #username with "[usuario-no-productivo]"
@@ -60,6 +66,7 @@ durante varios minutos.
 9. expect text "[texto único esperado]"
 
 **Expected Results:**
+
 - La segunda aplicación queda autenticada y muestra [texto único esperado]
 ```
 
@@ -76,10 +83,12 @@ a un servicio distinto del `base_url`.
 **Route:** /[ruta-principal-o-final]
 
 **Steps:**
+
 1. POST https://api-user.tst.proguidemc.com/user/login con body {"username":"{{username}}","password":"{{password}}"} — capturar campo token
 2. GET /ruta-del-endpoint con header Authorization: Bearer {{token}}
 
 **Expected Results:**
+
 - Step 1: status 200
 - Step 1: body.token exists
 - Step 2: status 200
@@ -159,16 +168,19 @@ carrito y completar el checkout hasta la confirmación de orden.
 **Route:** /
 
 **Preconditions:**
+
 - La aplicación está corriendo en http://localhost:5173
 - El producto "AuraSound ANC Wireless" tiene stock disponible
 
 **Data:**
+
 - product_name: AuraSound ANC Wireless
 - shipping_name: John Doe
 - shipping_email: john@test.com
 - card_number: 4111111111111111
 
 **Steps:**
+
 1. /
 2. click [data-testid="login-link"]
 3. click [data-testid="quick-login-customer"]
@@ -187,6 +199,7 @@ carrito y completar el checkout hasta la confirmación de orden.
 16. expect text "Order"
 
 **Expected Results:**
+
 - El login autentica correctamente
 - El badge del carrito muestra 1 tras agregar el producto
 - El checkout avanza sin errores
