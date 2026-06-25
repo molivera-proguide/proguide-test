@@ -26,9 +26,22 @@ solo fallback.
 
 1. **Explorar la app en vivo (funciona siempre, con o sin código).** Confirma con el
    usuario la URL base y que la app esté accesible. Si tienes herramientas de navegador
-   disponibles (Claude in Chrome, chrome-devtools, preview), navega las pantallas bajo
-   prueba y extrae del snapshot/árbol de accesibilidad los textos literales y atributos
-   de los elementos que los pasos van a usar.
+   disponibles (Claude in Chrome, Playwright MCP, Chrome DevTools MCP, chrome-devtools,
+   preview), navega las pantallas bajo prueba y extrae del snapshot/árbol de
+   accesibilidad y del DOM los textos literales, tags reales y atributos de los
+   elementos que los pasos van a usar. Si el usuario trabaja con Claude Code o Cursor y
+   no tiene Claude in Chrome, usa Playwright MCP para navegar/tomar snapshots y Chrome
+   DevTools MCP para inspeccionar DOM, consola y red. Si esos MCP no están disponibles,
+   antes de redactar casos UI estables informa que faltan y sugiere instalarlos:
+   `claude mcp add playwright npx @playwright/mcp@latest`,
+   `claude mcp add chrome-devtools --scope user npx chrome-devtools-mcp@latest`, o en
+   Cursor `Settings → MCP → Add new MCP Server` con `npx @playwright/mcp@latest` y
+   `npx -y chrome-devtools-mcp@latest`. Si el usuario no puede instalarlos, continúa con
+   "Preguntar al usuario" y trata la primera ejecución como calibración.
+   Para cada acción crítica, materializa lo observado en DSL explícito: no escribas
+   `click "TEXT"` si el DOM muestra que el elemento es `li`, `a`, card o componente MUI;
+   usa `click li:has-text("TEXT")`, `click [selector]`, `fill [selector] with ...` o
+   `expect [selector]...` según el tag/atributo real.
 2. **Código fuente, solo si está disponible en el workspace.** Busca `data-testid`, `id`,
    placeholders y textos visibles de los componentes involucrados. Es un complemento,
    no un requisito.
