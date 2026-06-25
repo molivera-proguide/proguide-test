@@ -35,13 +35,8 @@ jobs:
         run: npm ci
 
       - name: Check syntax
-        run: |
-          node --check ui/cli.js
-          node --check ui/mcp-server.js
-          node --check ui/viewer.js
-          node --check ui/server.js
-          node --check ui/playwright-runtime.js
-          node --check ui/proguide-service.js
+        working-directory: ui
+        run: npm run typecheck
 
       - name: Run tests
         working-directory: ui
