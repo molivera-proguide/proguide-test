@@ -117,7 +117,11 @@ async function main() {
   const byCaseId = {};
 
   const browser = await browserType.launch({ headless: true });
-  const context = await browser.newContext();
+  const contextOptions = {};
+  if (payload.storage_state_path && fs.existsSync(payload.storage_state_path)) {
+    contextOptions.storageState = payload.storage_state_path;
+  }
+  const context = await browser.newContext(contextOptions);
   for (const testCase of payload.cases || []) {
     const caseId = testCase.id || '';
     const route = testCase.route || '/';
@@ -165,18 +169,29 @@ export async function collectDomContext({
   runDir,
   plan,
   baseUrl,
-  config
+  config,
+  credentials = {}
 }: {
   root: string;
   runDir: string;
   plan: ProGuide.Dict;
   baseUrl: string;
   config: ProGuide.Dict;
+  credentials?: ProGuide.Dict;
 }) {
   const cases = (plan.cases || [])
     .filter((testCase) => !isApiPlanCase(testCase))
     .slice(0, positiveInteger(config.llm.dom_context_max_cases, 12));
   if (!cases.length) return { available: false, error: 'no_plan_cases', by_case_id: {} };
+
+  let storageStatePath = '';
+  const authConfig = config.auth || {};
+  if (authConfig.login_route) {
+    const session = await ensureSession({ root, baseUrl, config, credentials });
+    if (session.available && session.storageStatePath) {
+      storageStatePath = session.storageStatePath;
+    }
+  }
 
   const inputPath = path.join(runDir, 'dom_context_input.json');
   const outputPath = path.join(runDir, 'dom_context.json');
@@ -187,6 +202,7 @@ export async function collectDomContext({
     browser: config.runner.browser || 'chromium',
     timeout_ms: positiveInteger(config.llm.dom_context_timeout_ms, 6000),
     max_controls: positiveInteger(config.llm.dom_context_max_controls, 80),
+    storage_state_path: storageStatePath,
     cases: cases.map((testCase) => ({
       id: testCase.id,
       title: testCase.title,

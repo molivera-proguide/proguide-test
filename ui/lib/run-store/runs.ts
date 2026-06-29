@@ -568,7 +568,8 @@ export async function executePreparedRun({
         runDir,
         plan,
         baseUrl: actualBaseUrl,
-        config
+        config,
+        credentials
       });
       await appendEvent(runDir, {
         run_id: run.id,
