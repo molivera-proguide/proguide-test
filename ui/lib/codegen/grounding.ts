@@ -10,6 +10,75 @@ function stripWrappingQuotes(val: string): string {
   return val.replace(/^["']|["']$/g, '');
 }
 
+function normText(val: unknown): string {
+  return String(val || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // strip accents
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function bigrams(value: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < value.length - 1; i += 1) out.push(value.slice(i, i + 2));
+  return out;
+}
+
+// Lightweight, dependency-free similarity in [0,1]: exact > substring >
+// character-bigram Dice coefficient. Character bigrams (not whole words) so that
+// variants/typos like "Cancelacion" vs "Cancelar" rank close.
+function similarity(a: unknown, b: unknown): number {
+  const x = normText(a);
+  const y = normText(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  if (x.includes(y) || y.includes(x)) return 0.9;
+  const bx = bigrams(x);
+  const by = bigrams(y);
+  if (!bx.length || !by.length) return 0;
+  const counts = new Map<string, number>();
+  for (const gram of by) counts.set(gram, (counts.get(gram) || 0) + 1);
+  let inter = 0;
+  for (const gram of bx) {
+    const remaining = counts.get(gram) || 0;
+    if (remaining > 0) {
+      inter += 1;
+      counts.set(gram, remaining - 1);
+    }
+  }
+  return (2 * inter) / (bx.length + by.length);
+}
+
+function ctrlTextBlob(ctrl: ProGuide.Dict): string {
+  return [ctrl.text, (ctrl.label || []).join(' '), ctrl.aria_label, ctrl.placeholder]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function rankedCandidates(controls: ProGuide.Dict[], target: string, limit = 5): ProGuide.Dict[] {
+  return controls
+    .map((ctrl) => ({ ctrl, score: similarity(target, ctrlTextBlob(ctrl)) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map(({ ctrl }) => ({ selector: ctrl.selector_hint, text: ctrl.text, role: ctrl.role }));
+}
+
+// True only when grounding actively confirmed every element-targeting step of a
+// case (status `resolved`). Used at execution time to decide that a later
+// locator failure is a real regression, not a calibration miss. Returns false
+// when no grounding ran or any target was unresolved/ambiguous/unverified.
+export function caseGroundingConfirmed(testCase: ProGuide.Dict): boolean {
+  const steps = testCase?.executable_steps || [];
+  let targeted = 0;
+  for (const step of steps) {
+    if (!parseStepTarget(step.normalized_action || step.original_text || '')) continue;
+    targeted += 1;
+    if (!step.grounding || step.grounding.status !== 'resolved') return false;
+  }
+  return targeted > 0;
+}
+
 export function parseStepTarget(action: string): { type: 'selector' | 'text'; value: string } | null {
   if (!action) return null;
   
@@ -150,14 +219,14 @@ export function groundStepAgainstSnapshot(
       return { status: 'unverified', candidates: [] };
     }
   } else {
-    // Text target
-    const textVal = target.value.toLowerCase().trim();
-    
+    // Text target (accent- and case-insensitive)
+    const textVal = normText(target.value);
+
     for (const ctrl of controls) {
-      const ctrlText = String(ctrl.text || '').toLowerCase().trim();
-      const ctrlLabel = (ctrl.label || []).map((l: string) => l.toLowerCase().trim());
-      const ctrlAria = String(ctrl.aria_label || '').toLowerCase().trim();
-      const ctrlPlaceholder = String(ctrl.placeholder || '').toLowerCase().trim();
+      const ctrlText = normText(ctrl.text);
+      const ctrlLabel = (ctrl.label || []).map((l: string) => normText(l));
+      const ctrlAria = normText(ctrl.aria_label);
+      const ctrlPlaceholder = normText(ctrl.placeholder);
 
       if (
         ctrlText === textVal ||
@@ -173,9 +242,9 @@ export function groundStepAgainstSnapshot(
     // Check headings and visible text for assertion steps
     const isAssertion = /expect/i.test(action);
     if (matches.length === 0 && isAssertion) {
-      const visibleText = String(snapshot.visible_text || '').toLowerCase();
-      const headings = (snapshot.headings || []).map((h: string) => h.toLowerCase());
-      if (visibleText.includes(textVal) || headings.some(h => h.includes(textVal))) {
+      const visibleText = normText(snapshot.visible_text);
+      const headings = (snapshot.headings || []).map((h: string) => normText(h));
+      if (visibleText.includes(textVal) || headings.some((h) => h.includes(textVal))) {
         return {
           status: 'resolved',
           resolved_selector: 'text="' + target.value + '"',
@@ -201,14 +270,10 @@ export function groundStepAgainstSnapshot(
       }))
     };
   } else {
-    const candidates = controls.slice(0, 5).map((m: any) => ({
-      selector: m.selector_hint,
-      text: m.text,
-      role: m.role
-    }));
+    // Surface the closest elements first so the agent can pick the right one.
     return {
       status: 'not_found',
-      candidates
+      candidates: rankedCandidates(controls, target.value, 5)
     };
   }
 }

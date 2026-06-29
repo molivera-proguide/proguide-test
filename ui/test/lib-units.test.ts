@@ -439,3 +439,74 @@ test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works cor
   assert.equal(res6.status, 'unverified');
 });
 
+
+test('codegen/grounding: accent-insensitive match and ranked candidates', async () => {
+  const { groundStepAgainstSnapshot, caseGroundingConfirmed } = await import(
+    '../lib/codegen/grounding.js'
+  );
+  const snapshot = {
+    controls: [
+      { selector_hint: '[data-testid="submit"]', text: 'Accéder', role: 'button' },
+      { selector_hint: '#cancel', text: 'Cancelar', role: 'button' },
+      { selector_hint: '#help', text: 'Ayuda', role: 'link' }
+    ],
+    headings: [],
+    visible_text: ''
+  };
+
+  // "Acceder" (no accent) resolves against "Accéder".
+  const res = groundStepAgainstSnapshot({ normalized_action: 'click button Acceder' }, snapshot);
+  assert.equal(res.status, 'resolved');
+  assert.equal(res.resolved_selector, '[data-testid="submit"]');
+
+  // Missing text -> not_found with the closest candidate ranked first.
+  const miss = groundStepAgainstSnapshot(
+    { normalized_action: 'click button Cancelacion' },
+    snapshot
+  );
+  assert.equal(miss.status, 'not_found');
+  assert.equal(miss.candidates[0].text, 'Cancelar');
+
+  // caseGroundingConfirmed: true only when every targeted step resolved.
+  assert.equal(
+    caseGroundingConfirmed({
+      executable_steps: [
+        { normalized_action: 'fill [#username] with "x"', grounding: { status: 'resolved' } },
+        { normalized_action: 'wait 2 seconds' }
+      ]
+    }),
+    true
+  );
+  assert.equal(
+    caseGroundingConfirmed({
+      executable_steps: [
+        { normalized_action: 'fill [#username] with "x"', grounding: { status: 'not_found' } }
+      ]
+    }),
+    false
+  );
+  assert.equal(caseGroundingConfirmed({ executable_steps: [] }), false);
+});
+
+test('runner/results: grounded-confirmed locator failure stays failed (Prong A<->B)', async () => {
+  const { normalizePlaywrightSpecResult } = await import('../lib/runner/results.js');
+  const spec = {
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            errors: [{ message: "Locator: getByText('Link Analysis')\nError: element(s) not found" }]
+          }
+        ]
+      }
+    ]
+  };
+  // Without grounding confirmation -> calibration.
+  assert.equal(normalizePlaywrightSpecResult(spec).status, 'needs_calibration');
+  // Grounding had confirmed the target existed -> a runtime miss is a real bug.
+  assert.equal(
+    normalizePlaywrightSpecResult(spec, { groundingConfirmed: true }).status,
+    'failed'
+  );
+});

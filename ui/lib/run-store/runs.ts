@@ -7,7 +7,7 @@ import { parseMarkdownCases } from '../markdown/parse-cases.js';
 import { isApiPlanCase } from '../codegen/api-spec.js';
 import { casesToTestPlan } from '../codegen/test-plan.js';
 import { collectDomContext } from '../codegen/dom-context.js';
-import { groundCases } from '../codegen/grounding.js';
+import { groundCases, caseGroundingConfirmed } from '../codegen/grounding.js';
 import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
@@ -598,6 +598,16 @@ export async function executePreparedRun({
       message: 'No hay casos para generar codigo. Revisa normalized_cases.json.'
     });
     throw new Error('No hay casos para generar codigo.');
+  }
+
+  // Carry the dry-run grounding verdict onto each plan case so result
+  // classification can tell a real regression (grounding had confirmed the
+  // target) from a calibration miss.
+  const groundedCaseIds = new Set(
+    cases.filter((testCase) => caseGroundingConfirmed(testCase)).map((testCase) => String(testCase.id))
+  );
+  for (const planCase of plan.cases) {
+    planCase.grounding_confirmed = groundedCaseIds.has(String(planCase.id));
   }
 
   await writeJson(path.join(runDir, TEST_PLAN_JSON), plan);

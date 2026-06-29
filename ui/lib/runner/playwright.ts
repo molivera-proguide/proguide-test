@@ -252,7 +252,9 @@ export async function parsePlaywrightResults({
     for (const spec of collectPlaywrightSpecs(report)) {
       const testCase = caseFromPlaywrightSpec(spec, caseById, caseBySafeId);
       if (!testCase) continue;
-      const normalized = normalizePlaywrightSpecResult(spec);
+      const normalized = normalizePlaywrightSpecResult(spec, {
+        groundingConfirmed: Boolean(testCase.grounding_confirmed)
+      });
       parsed.set(String(testCase.id), {
         id: testCase.id,
         title: testCase.title,

@@ -52,7 +52,10 @@ function caseIdFromAnnotations(spec: ProGuide.Dict) {
   return annotation?.description || '';
 }
 
-export function normalizePlaywrightSpecResult(spec: ProGuide.Dict) {
+export function normalizePlaywrightSpecResult(
+  spec: ProGuide.Dict,
+  options: { groundingConfirmed?: boolean } = {}
+) {
   const test = spec?.tests?.[0] || {};
   const results = Array.isArray(test.results) ? test.results : [];
   const result = results.at(-1) || {};
@@ -68,9 +71,16 @@ export function normalizePlaywrightSpecResult(spec: ProGuide.Dict) {
   // violation, locator not found) are a calibration issue, not a real product
   // bug. Re-classify so they don't contaminate the bug rate. Real assertion
   // failures (toHaveText/toHaveURL/status mismatch) keep `failed`.
+  //
+  // Prong A<->B coherence: if the dry-run grounding CONFIRMED every target of
+  // this case existed on the real screen, a runtime locator failure is a real
+  // regression (the element was there, now it isn't), so keep `failed` instead
+  // of downgrading to `needs_calibration`.
   const finalStatus =
     status === 'failed' && isLocatorError(`${message}\n${errorDetails}`)
-      ? 'needs_calibration'
+      ? options.groundingConfirmed
+        ? 'failed'
+        : 'needs_calibration'
       : status;
 
   return {
