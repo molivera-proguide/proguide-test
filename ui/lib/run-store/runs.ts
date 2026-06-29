@@ -7,6 +7,7 @@ import { parseMarkdownCases } from '../markdown/parse-cases.js';
 import { isApiPlanCase } from '../codegen/api-spec.js';
 import { casesToTestPlan } from '../codegen/test-plan.js';
 import { collectDomContext } from '../codegen/dom-context.js';
+import { groundCases } from '../codegen/grounding.js';
 import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
@@ -62,6 +63,8 @@ type PrepareMarkdownRunInput = {
   baseUrl?: string;
   metadata?: ProGuide.Metadata;
   useAgent?: boolean;
+  credentials?: ProGuide.Dict;
+  ground?: boolean;
 };
 
 type PrepareCasesRunInput = {
@@ -69,6 +72,8 @@ type PrepareCasesRunInput = {
   cases: ProGuide.CaseInput[];
   baseUrl?: string;
   metadata?: ProGuide.Metadata;
+  credentials?: ProGuide.Dict;
+  ground?: boolean;
 };
 
 type SaveCasesForRunInput = {
@@ -162,7 +167,9 @@ export async function prepareMarkdownRun({
   sourceMd,
   baseUrl,
   metadata = {},
-  useAgent = false
+  useAgent = false,
+  credentials = {},
+  ground = true
 }: PrepareMarkdownRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -258,6 +265,17 @@ export async function prepareMarkdownRun({
     if (run.ticket && !testCase.ticket) testCase.ticket = run.ticket;
   }
 
+  const cleanBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  if (cleanBaseUrl && ground !== false) {
+    await groundCases({
+      root,
+      baseUrl: cleanBaseUrl,
+      config,
+      credentials,
+      cases
+    });
+  }
+
   await saveCasesFile(runDir, cases);
   await writeJson(
     path.join(runDir, TEST_PLAN_JSON),
@@ -284,7 +302,9 @@ export async function prepareCasesRun({
   root,
   cases,
   baseUrl,
-  metadata = {}
+  metadata = {},
+  credentials = {},
+  ground = true
 }: PrepareCasesRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
@@ -353,6 +373,18 @@ export async function prepareCasesRun({
     if (run.dev_owner && !testCase.dev_owner) testCase.dev_owner = run.dev_owner;
     if (run.ticket && !testCase.ticket) testCase.ticket = run.ticket;
   }
+
+  const cleanBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  if (cleanBaseUrl && ground !== false) {
+    await groundCases({
+      root,
+      baseUrl: cleanBaseUrl,
+      config,
+      credentials,
+      cases: normalizedCases
+    });
+  }
+
   await saveCasesFile(runDir, normalizedCases);
   await writeJson(
     path.join(runDir, TEST_PLAN_JSON),
@@ -378,9 +410,12 @@ export async function prepareCasesRun({
 export async function previewMarkdownRun({
   root,
   sourceMd,
+  baseUrl,
   metadata = {},
-  useAgent = false
-}: Omit<PrepareMarkdownRunInput, 'baseUrl'>): Promise<ProGuide.Dict> {
+  useAgent = false,
+  credentials = {},
+  ground = true
+}: PrepareMarkdownRunInput): Promise<ProGuide.Dict> {
   await ensureLayout(root);
   await loadDotEnv(root);
   const sources = await readMarkdownSources(sourceMd);
@@ -396,6 +431,19 @@ export async function previewMarkdownRun({
     if (metadata.dev_owner && !testCase.dev_owner) testCase.dev_owner = metadata.dev_owner;
     if (metadata.ticket && !testCase.ticket) testCase.ticket = metadata.ticket;
   }
+
+  const cleanBaseUrl = String(baseUrl || '').replace(/\/+$/, '');
+  if (cleanBaseUrl && ground !== false) {
+    const config = await loadUiConfig(root);
+    await groundCases({
+      root,
+      baseUrl: cleanBaseUrl,
+      config,
+      credentials,
+      cases
+    });
+  }
+
   return {
     cases,
     warnings: normalizationWarnings(cases)

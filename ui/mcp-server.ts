@@ -765,7 +765,8 @@ async function prepareRunFromArgs(root, args) {
       root,
       cases: args.cases,
       baseUrl: args.base_url || '',
-      metadata: metadataFromArgs(args)
+      metadata: metadataFromArgs(args),
+      credentials: credentialsFromArgs(args)
     });
   }
   const sourceMd = await resolveMarkdownSource(root, args);
@@ -774,7 +775,8 @@ async function prepareRunFromArgs(root, args) {
     sourceMd,
     baseUrl: args.base_url || '',
     metadata: metadataFromArgs(args),
-    useAgent: false
+    useAgent: false,
+    credentials: credentialsFromArgs(args)
   });
 }
 

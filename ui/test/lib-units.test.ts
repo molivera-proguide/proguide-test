@@ -372,3 +372,51 @@ test('run-store/io: statusFromSummary precedence setup_failed > failed > needs_c
   assert.equal(statusFromSummary({ passed: 2, failed: 0, needs_calibration: 1 }, 0), 'needs_calibration');
 });
 
+test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works correctly', async () => {
+  const { parseStepTarget, groundStepAgainstSnapshot } = await import('../lib/codegen/grounding.js');
+
+  assert.deepEqual(parseStepTarget('click button Acceder'), { type: 'text', value: 'Acceder' });
+  assert.deepEqual(parseStepTarget('click #username'), { type: 'selector', value: '#username' });
+  assert.deepEqual(parseStepTarget('fill [name="email"] with user'), { type: 'selector', value: '[name="email"]' });
+  assert.deepEqual(parseStepTarget('expect text "Dashboard"'), { type: 'text', value: 'Dashboard' });
+
+  const snapshot = {
+    controls: [
+      { selector_hint: '#username', id: 'username', text: '' },
+      { selector_hint: 'button:has-text("Acceder")', text: 'Acceder', role: 'button' }
+    ],
+    visible_text: 'Bienvenido a la app. Dashboard cargado.',
+    headings: ['Dashboard']
+  };
+
+  const step1 = { normalized_action: 'click #username' };
+  const res1 = groundStepAgainstSnapshot(step1, snapshot);
+  assert.equal(res1.status, 'resolved');
+  assert.equal(res1.resolved_selector, '#username');
+
+  const step2 = { normalized_action: 'click button Acceder' };
+  const res2 = groundStepAgainstSnapshot(step2, snapshot);
+  assert.equal(res2.status, 'resolved');
+  assert.equal(res2.resolved_selector, 'button:has-text("Acceder")');
+
+  const step3 = { normalized_action: 'expect text "Dashboard"' };
+  const res3 = groundStepAgainstSnapshot(step3, snapshot);
+  assert.equal(res3.status, 'resolved');
+  assert.equal(res3.resolved_selector, 'text="Dashboard"');
+
+  const step4 = { normalized_action: 'click #not_exists' };
+  const res4 = groundStepAgainstSnapshot(step4, snapshot);
+  assert.equal(res4.status, 'not_found');
+
+  // Real normalizer wraps id selectors in brackets: `fill [#username] with "x"`.
+  // Grounding must unwrap `[#id]` to match the snapshot's selector_hint `#username`.
+  assert.deepEqual(parseStepTarget('fill [#username] with "x"'), {
+    type: 'selector',
+    value: '[#username]'
+  });
+  const step5 = { normalized_action: 'fill [#username] with "x"' };
+  const res5 = groundStepAgainstSnapshot(step5, snapshot);
+  assert.equal(res5.status, 'resolved');
+  assert.equal(res5.resolved_selector, '#username');
+});
+
