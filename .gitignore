@@ -21,3 +21,6 @@ proguide_tests/session.log
 proguide_tests/inspect_*.json
 proguide_tests/inspect_probe.cjs
 proguide_tests/inspect.log
+proguide_tests/walk_*.json
+proguide_tests/walk_probe.cjs
+proguide_tests/walk.log

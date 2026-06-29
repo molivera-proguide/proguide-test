@@ -1,0 +1,75 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+// End-to-end validation of the grounding WALK against a controlled fixture app
+// (login -> dashboard). Needs Chromium, so it is opt-in: run locally with
+//   PROGUIDE_WALK_E2E=1 npm test
+// CI (no Chromium) skips it. The pure grounding verdict logic is covered by the
+// browserless unit tests in lib-units.test.ts.
+
+const LOGIN_HTML = `<!doctype html><html><body>
+  <h1>Iniciar sesion</h1>
+  <input id="username" name="username" placeholder="Usuario" />
+  <input id="password" name="password" type="password" />
+  <button onclick="location.href='/dashboard'">Acceder</button>
+</body></html>`;
+
+const DASHBOARD_HTML = `<!doctype html><html><body>
+  <h1>Link Analysis</h1>
+  <main>Bienvenido. Panel principal cargado.</main>
+  <button data-testid="logout-btn">Salir</button>
+</body></html>`;
+
+test(
+  'codegen/grounding: walk reaches the post-login screen and grounds its targets',
+  { skip: process.env.PROGUIDE_WALK_E2E ? false : 'set PROGUIDE_WALK_E2E=1 to run (needs Chromium)' },
+  async () => {
+    const { groundCaseSteps } = await import('../lib/codegen/grounding.js');
+    const { defaultConfig } = await import('../lib/config/defaults.js');
+
+    const server = http.createServer((request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(String(request.url || '').startsWith('/dashboard') ? DASHBOARD_HTML : LOGIN_HTML);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pg-walk-'));
+
+    try {
+      const testCase = {
+        id: 'caso_login',
+        route: '/',
+        executable_steps: [
+          { number: 1, normalized_action: '/' },
+          { number: 2, normalized_action: 'fill [#username] with "u"' },
+          { number: 3, normalized_action: 'fill [#password] with "p"' },
+          { number: 4, normalized_action: 'click button Acceder' },
+          { number: 5, normalized_action: 'wait 1 seconds' },
+          { number: 6, normalized_action: 'expect text "Link Analysis"' },
+          { number: 7, normalized_action: 'expect text "Texto Inexistente 123"' }
+        ]
+      };
+
+      await groundCaseSteps({ root, baseUrl, config: defaultConfig(), testCase });
+
+      const byNum = new Map<number, any>(testCase.executable_steps.map((s) => [s.number, s]));
+      // Login-screen targets resolve.
+      assert.equal(byNum.get(2).grounding.status, 'resolved');
+      assert.equal(byNum.get(3).grounding.status, 'resolved');
+      assert.equal(byNum.get(4).grounding.status, 'resolved');
+      // Post-login assertion resolves -> the walk reached the dashboard.
+      assert.equal(byNum.get(6).grounding.status, 'resolved');
+      // Genuinely absent text is flagged (not silently resolved).
+      assert.notEqual(byNum.get(7).grounding.status, 'resolved');
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+);

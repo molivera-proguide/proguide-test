@@ -1,5 +1,10 @@
-import { inspectRoute } from './dom-context.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { isApiPlanCase } from './api-spec.js';
+import { runProcess } from '../runner/playwright.js';
+import { runtimeEnv } from '../../playwright-runtime.js';
+import { ensureSession } from '../auth/session.js';
+import { writeJson, readJson, exists, firstUsefulLogLine, PROGUIDE_DIR } from '../run-store/io.js';
 
 function stripWrappingQuotes(val: string): string {
   return val.replace(/^["']|["']$/g, '');
@@ -208,6 +213,278 @@ export function groundStepAgainstSnapshot(
   }
 }
 
+// Step-driven walk probe: navigates the route (reusing storageState when auth is
+// configured), and for each step takes a DOM snapshot BEFORE executing it, then
+// executes the step best-effort to advance the flow (tolerant: a failed step
+// doesn't abort the walk). Each step is grounded against the screen it would act
+// on — so post-login targets (e.g. an assertion after a login click) get the
+// real authenticated screen, not the login page.
+const WALK_PROBE_SCRIPT = String.raw`
+const fs = require('node:fs');
+const { createRequire } = require('node:module');
+const { URL } = require('node:url');
+
+const req = createRequire(process.env.PROGUIDE_PLAYWRIGHT_REQUIRE || __filename);
+const playwright = req('playwright');
+
+const DOM_SNAPSHOT_JS = (maxControls) => {
+  const visible = (el) => {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+  };
+  const text = (value, limit = 120) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+  const cssEscape = (value) => {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(String(value));
+    return String(value).replace(/["\\]/g, '\\$&');
+  };
+  const inferredRole = (el) => {
+    const role = el.getAttribute('role');
+    if (role) return role;
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'button') return 'button';
+    if (tag === 'a') return 'link';
+    if (tag === 'input') return el.type === 'submit' || el.type === 'button' ? 'button' : 'textbox';
+    if (tag === 'textarea') return 'textbox';
+    if (tag === 'select') return 'combobox';
+    return '';
+  };
+  const labelsFor = (el) => {
+    const labels = [];
+    if (el.id) {
+      document.querySelectorAll('label[for="' + cssEscape(el.id) + '"]').forEach((label) => labels.push(text(label.textContent)));
+    }
+    if (el.labels) Array.from(el.labels).forEach((label) => labels.push(text(label.textContent)));
+    const wrappingLabel = el.closest('label');
+    if (wrappingLabel) labels.push(text(wrappingLabel.textContent));
+    return [...new Set(labels.filter(Boolean))].slice(0, 3);
+  };
+  const selectorHint = (el) => {
+    const testId = el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy');
+    if (testId) return '[data-testid="' + testId + '"]';
+    if (el.id) return '#' + cssEscape(el.id);
+    if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+    return el.tagName.toLowerCase();
+  };
+  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role], [data-testid], [data-test], [data-cy]'))
+    .filter(visible)
+    .slice(0, maxControls)
+    .map((el) => ({
+      tag: el.tagName.toLowerCase(),
+      role: inferredRole(el),
+      text: text(el.innerText || el.textContent),
+      label: labelsFor(el),
+      aria_label: text(el.getAttribute('aria-label')),
+      placeholder: text(el.getAttribute('placeholder')),
+      name: text(el.getAttribute('name')),
+      type: text(el.getAttribute('type')),
+      id: text(el.id),
+      data_testid: text(el.getAttribute('data-testid') || el.getAttribute('data-test') || el.getAttribute('data-cy')),
+      selector_hint: selectorHint(el)
+    }));
+  const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
+    .filter(visible)
+    .slice(0, 20)
+    .map((el) => text(el.innerText || el.textContent));
+  const visible_text = Array.from(document.querySelectorAll('main, body'))
+    .slice(0, 1)
+    .map((el) => text(el.innerText || el.textContent, 1000))[0] || '';
+  return { url: window.location.href, title: document.title, headings, controls, visible_text };
+};
+
+function targetUrl(baseUrl, route) {
+  const value = String(route || '/');
+  if (/^https?:\/\//i.test(value)) return value;
+  const base = String(baseUrl || '').replace(/\/+$/, '') + '/';
+  return new URL(value.replace(/^\/+/, ''), base).href;
+}
+
+function stripQuotes(v) {
+  return String(v || '').replace(/^["']|["']$/g, '');
+}
+
+function dslToCss(sel) {
+  const m = String(sel || '').match(/^\[(#.+|\..+)\]$/);
+  return m ? m[1] : String(sel || '');
+}
+
+async function advance(page, action, base, timeout) {
+  const a = String(action || '').trim();
+  let m;
+  if ((m = a.match(/^fill\s+(.+?)\s+with\s+(.+)$/i)) || (m = a.match(/^fill\s+(.+)$/i))) {
+    await page.fill(dslToCss(m[1].trim()), m[2] ? stripQuotes(m[2].trim()) : '', { timeout });
+    return;
+  }
+  if ((m = a.match(/^click button\s+(.+)$/i))) {
+    const t = m[1].trim();
+    if (/^[#.[]/.test(t)) await page.click(dslToCss(t), { timeout });
+    else await page.getByRole('button', { name: stripQuotes(t) }).first().click({ timeout });
+    return;
+  }
+  if ((m = a.match(/^click\s+(.+)$/i))) {
+    const t = m[1].trim();
+    if (/^[#.[]/.test(t)) await page.click(dslToCss(t), { timeout });
+    else await page.getByText(stripQuotes(t), { exact: false }).first().click({ timeout });
+    return;
+  }
+  if ((m = a.match(/^go to\s+(.+)$/i))) {
+    await page.goto(targetUrl(base, m[1].trim()), { waitUntil: 'domcontentloaded', timeout });
+    return;
+  }
+  if (/^\//.test(a)) {
+    await page.goto(targetUrl(base, a), { waitUntil: 'domcontentloaded', timeout });
+    return;
+  }
+  if ((m = a.match(/^wait\s+(\d+)\s*seconds?/i))) {
+    await page.waitForTimeout(Math.min(Number(m[1]), 3) * 1000);
+    return;
+  }
+  // refresh page / set timeout / expect* -> nothing to advance
+}
+
+async function main() {
+  const [inputPath, outputPath] = process.argv.slice(2);
+  const payload = JSON.parse(fs.readFileSync(inputPath, 'utf8'));
+  const timeout = Number(payload.timeout_ms || 8000);
+  const actionTimeout = Number(payload.action_timeout_ms || 5000);
+  const maxControls = Number(payload.max_controls || 150);
+  const browserName = payload.browser || 'chromium';
+  const browserType = playwright[browserName] || playwright.chromium;
+
+  const browser = await browserType.launch({ headless: true });
+  const contextOptions = {};
+  if (payload.storage_state_path && fs.existsSync(payload.storage_state_path)) {
+    contextOptions.storageState = payload.storage_state_path;
+  }
+  const context = await browser.newContext(contextOptions);
+  const page = await context.newPage();
+
+  const results = [];
+  let success = false;
+  let errorMsg = '';
+  try {
+    await page.goto(targetUrl(payload.base_url || '', payload.route || '/'), { waitUntil: 'domcontentloaded', timeout });
+    try { await page.waitForLoadState('networkidle', { timeout: 2000 }); } catch { /* best effort */ }
+    for (const step of payload.steps || []) {
+      let snapshot = null;
+      try { snapshot = await page.evaluate(DOM_SNAPSHOT_JS, maxControls); } catch { snapshot = null; }
+      results.push({ number: step.number, snapshot });
+      try {
+        await advance(page, step.normalized_action || step.original_text || '', payload.base_url || '', actionTimeout);
+        try { await page.waitForLoadState('domcontentloaded', { timeout: 3000 }); } catch { /* best effort */ }
+      } catch { /* tolerant: keep walking even if a step can't be executed */ }
+    }
+    success = true;
+  } catch (error) {
+    errorMsg = String(error.message || error).slice(0, 500);
+  } finally {
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+  }
+
+  fs.writeFileSync(outputPath, JSON.stringify({ success, error: errorMsg, steps: results }, null, 2), 'utf8');
+}
+
+main().catch((error) => {
+  console.error(error.stack || error.message || String(error));
+  process.exit(1);
+});
+`;
+
+async function runWalkProbe({
+  root,
+  baseUrl,
+  route,
+  config,
+  storageStatePath,
+  steps
+}: {
+  root: string;
+  baseUrl: string;
+  route: string;
+  config: ProGuide.Dict;
+  storageStatePath: string;
+  steps: ProGuide.Dict[];
+}): Promise<{ success: boolean; error?: string; steps?: ProGuide.Dict[] }> {
+  const proguideDir = path.join(root, PROGUIDE_DIR);
+  await fs.mkdir(proguideDir, { recursive: true });
+
+  const inputPath = path.join(proguideDir, 'walk_input.json');
+  const outputPath = path.join(proguideDir, 'walk_output.json');
+  const scriptPath = path.join(proguideDir, 'walk_probe.cjs');
+  const logPath = path.join(proguideDir, 'walk.log');
+
+  const payload = {
+    base_url: baseUrl,
+    route,
+    browser: config.runner?.browser || 'chromium',
+    timeout_ms: 8000,
+    action_timeout_ms: 5000,
+    max_controls: 150,
+    storage_state_path: storageStatePath,
+    steps: (steps || []).map((s) => ({
+      number: s.number,
+      normalized_action: s.normalized_action,
+      original_text: s.original_text
+    }))
+  };
+
+  await writeJson(inputPath, payload);
+  await fs.writeFile(scriptPath, WALK_PROBE_SCRIPT, 'utf8');
+  await fs.writeFile(
+    logPath,
+    `$ ${process.execPath} ${scriptPath} ${inputPath} ${outputPath}\n`,
+    'utf8'
+  );
+
+  try {
+    const completed = await runProcess([process.execPath, scriptPath, inputPath, outputPath], {
+      cwd: root,
+      env: runtimeEnv(),
+      logPath
+    });
+    if (completed.code !== 0 && !(await exists(outputPath))) {
+      const logText = await fs.readFile(logPath, 'utf8').catch(() => '');
+      return {
+        success: false,
+        error: firstUsefulLogLine(logText) || `walk probe exited with code ${completed.code}`
+      };
+    }
+    const result = await readJson(outputPath, null);
+    if (!result) return { success: false, error: 'walk probe sin salida' };
+    return result;
+  } catch (error: any) {
+    return { success: false, error: error.message || String(error) };
+  } finally {
+    await fs.rm(inputPath, { force: true }).catch(() => {});
+    await fs.rm(outputPath, { force: true }).catch(() => {});
+    await fs.rm(scriptPath, { force: true }).catch(() => {});
+  }
+}
+
+function applyGrounding(step: ProGuide.Dict, grounding: ProGuide.Dict, route: string) {
+  step.grounding = grounding;
+  if (grounding.status === 'resolved') {
+    if (
+      !step.review_reason ||
+      /no encontrado|ambiguo|no verificable|recorrer|inspeccionar/i.test(step.review_reason)
+    ) {
+      step.needs_review = false;
+      step.review_reason = '';
+    }
+    return;
+  }
+  step.needs_review = true;
+  if (grounding.status === 'ambiguous') {
+    step.review_reason = 'Target de paso ambiguo. Coinciden varios elementos en la pantalla.';
+  } else if (grounding.status === 'not_found') {
+    step.review_reason = `Target de paso no encontrado en la pantalla del paso ${step.number} (ruta ${route}).`;
+  } else {
+    step.review_reason = `Target no verificable automaticamente (selector de clase/CSS, o pantalla no alcanzada en el walk).`;
+  }
+}
+
 export async function groundCaseSteps({
   root,
   baseUrl,
@@ -225,47 +502,53 @@ export async function groundCaseSteps({
     return;
   }
 
+  const steps: ProGuide.Dict[] = testCase.executable_steps || [];
+  if (!steps.length) return;
   const route = testCase.route || '/';
-  const snapshot = await inspectRoute({
-    root,
-    baseUrl,
-    route,
-    config,
-    credentials
-  });
 
-  if (!snapshot || !snapshot.success) {
-    const errorMsg = snapshot?.error || 'No se pudo obtener snapshot de la ruta';
-    for (const step of testCase.executable_steps || []) {
-      const target = parseStepTarget(step.normalized_action);
-      if (target) {
-        step.grounding = {
-          status: 'unverified',
-          candidates: []
-        };
+  // Reuse an authenticated session for protected routes (same gate as the
+  // pre-pass): only when auth.login_route is configured.
+  let storageStatePath = '';
+  if (config.auth?.login_route) {
+    try {
+      const session = await ensureSession({ root, baseUrl, config, credentials });
+      if (session.available && session.storageStatePath) {
+        storageStatePath = session.storageStatePath;
+      }
+    } catch {
+      // fall through unauthenticated; the walk still drives the case's own login steps
+    }
+  }
+
+  const walk = await runWalkProbe({ root, baseUrl, route, config, storageStatePath, steps });
+
+  if (!walk.success) {
+    const errorMsg = walk.error || 'No se pudo recorrer la ruta';
+    for (const step of steps) {
+      if (parseStepTarget(step.normalized_action)) {
+        step.grounding = { status: 'unverified', candidates: [] };
         step.needs_review = true;
-        step.review_reason = `Error al inspeccionar ruta ${route}: ${errorMsg}`;
+        step.review_reason = `Error al recorrer la ruta ${route}: ${errorMsg}`;
       }
     }
     return;
   }
 
-  for (const step of testCase.executable_steps || []) {
-    const grounding = groundStepAgainstSnapshot(step, snapshot);
-    step.grounding = grounding;
-    if (grounding.status !== 'resolved') {
-      step.needs_review = true;
-      if (grounding.status === 'ambiguous') {
-        step.review_reason = `Target de paso ambiguo. Coinciden varios elementos en la pantalla.`;
-      } else if (grounding.status === 'not_found') {
-        step.review_reason = `Target de paso no encontrado en la pantalla de la ruta ${route}.`;
+  const snapshotByStep = new Map(
+    (walk.steps || []).map((s: ProGuide.Dict) => [s.number, s.snapshot])
+  );
+
+  for (const step of steps) {
+    const snapshot = snapshotByStep.get(step.number);
+    if (!snapshot) {
+      if (parseStepTarget(step.normalized_action)) {
+        step.grounding = { status: 'unverified', candidates: [] };
+        step.needs_review = true;
+        step.review_reason = `No se pudo inspeccionar la pantalla del paso ${step.number}.`;
       }
-    } else {
-      if (!step.review_reason || step.review_reason.includes('no encontrado') || step.review_reason.includes('ambiguo')) {
-        step.needs_review = false;
-        step.review_reason = '';
-      }
+      continue;
     }
+    applyGrounding(step, groundStepAgainstSnapshot(step, snapshot), route);
   }
 }
 
