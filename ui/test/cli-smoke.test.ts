@@ -1030,7 +1030,8 @@ test('mcp exposes the full tool surface', () => {
       'get_generated_code',
       'list_runs',
       'start_viewer',
-      'stop_viewer'
+      'stop_viewer',
+      'inspect_route'
     ]
   );
   const executeRun = payload.result.tools.find((tool) => tool.name === 'execute_run');
