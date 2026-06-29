@@ -29,7 +29,12 @@ import {
 } from '../lib/cases/normalize.js';
 import { inferCaseType } from '../lib/cases/api-normalize.js';
 import { parseMarkdownCases } from '../lib/markdown/parse-cases.js';
-import { collectPlaywrightSpecs, normalizePlaywrightSpecResult } from '../lib/runner/results.js';
+import {
+  collectPlaywrightSpecs,
+  normalizePlaywrightSpecResult,
+  isLocatorError
+} from '../lib/runner/results.js';
+import { countSummary, statusFromSummary } from '../lib/run-store/io.js';
 import { playwrightWorkerArgs } from '../lib/runner/config.js';
 import { expectTimeoutForPlan } from '../lib/runner/playwright.js';
 import { normalizeLlmUsage, estimateLlmCost } from '../lib/usage/pricing.js';
@@ -251,3 +256,119 @@ test('usage/pricing: normalizeLlmUsage sums totals; estimateLlmCost returns a co
   assert.ok(Number.isFinite(est.cost_usd) && est.cost_usd > 0);
   assert.ok(est.pricing);
 });
+
+test('runner/results: isLocatorError detects localization failures, not assertion failures', () => {
+  assert.equal(isLocatorError(''), false);
+  assert.equal(isLocatorError(null), false);
+  // strict mode violation (ambiguous) -> calibration
+  assert.equal(
+    isLocatorError('strict mode violation: locator(\'label:has-text("Nombre")\') resolved to 2 elements'),
+    true
+  );
+  // timeout waiting for a locator/getBy -> calibration
+  assert.equal(
+    isLocatorError('Timeout 30000ms exceeded.\n=========================== logs ===========================\nwaiting for locator(\'button:has-text("Acceder")\')'),
+    true
+  );
+  assert.equal(
+    isLocatorError('Timeout 5000ms exceeded waiting for getByRole("button", { name: "Acceder" })'),
+    true
+  );
+  assert.equal(
+    isLocatorError('Timeout 5000ms exceeded waiting for get_by_role("button", { name: "Acceder" })'),
+    true
+  );
+  // locator not found -> calibration
+  assert.equal(isLocatorError('locator("#missing") was not found'), true);
+  // real assertion failure (element found, state/text mismatch) -> NOT calibration
+  assert.equal(
+    isLocatorError('Error: expect(locator("#status")).toHaveText("Listo")\nExpected: "Listo"\nReceived: "Pendiente"'),
+    false
+  );
+  assert.equal(
+    isLocatorError('Error: expect(page).toHaveURL(/\\/dashboard/)'),
+    false
+  );
+  assert.equal(
+    isLocatorError('Error: API response status 500 != 200'),
+    false
+  );
+});
+
+test('runner/results: normalizePlaywrightSpecResult reclassifies locator timeouts as needs_calibration', () => {
+  const locatorTimeoutSpec = {
+    ok: false,
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            duration: 30000,
+            errors: [
+              {
+                message:
+                  'Timeout 30000ms exceeded.\nwaiting for locator(\'button:has-text("Acceder")\')'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const out = normalizePlaywrightSpecResult(locatorTimeoutSpec);
+  assert.equal(out.status, 'needs_calibration');
+  // message is preserved (the locator error is still surfaced for calibration)
+  assert.match(out.message || out.error_details || '', /waiting for locator/i);
+});
+
+test('runner/results: normalizePlaywrightSpecResult keeps real assertion failures as failed', () => {
+  const assertionSpec = {
+    ok: false,
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            duration: 1200,
+            errors: [
+              {
+                message:
+                  'Error: expect(locator("#status")).toHaveText("Listo")\nExpected: "Listo"\nReceived: "Pendiente"'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const out = normalizePlaywrightSpecResult(assertionSpec);
+  assert.equal(out.status, 'failed');
+});
+
+test('run-store/io: countSummary counts needs_calibration as its own category', () => {
+  const summary = {
+    results: [
+      { status: 'passed' },
+      { status: 'failed' },
+      { status: 'needs_calibration' },
+      { status: 'needs_calibration' },
+      { status: 'inconclusive' }
+    ]
+  };
+  const counts = countSummary(summary);
+  assert.equal(counts.passed, 1);
+  assert.equal(counts.failed, 1);
+  assert.equal(counts.needs_calibration, 2);
+  assert.equal(counts.inconclusive, 1);
+});
+
+test('run-store/io: statusFromSummary precedence setup_failed > failed > needs_calibration > inconclusive > passed', () => {
+  assert.equal(statusFromSummary({ setup_failed: 1, failed: 1, needs_calibration: 1 }, 0), 'setup_failed');
+  assert.equal(statusFromSummary({ setup_failed: 0, failed: 1, needs_calibration: 1 }, 0), 'failed');
+  assert.equal(statusFromSummary({ failed: 0, needs_calibration: 2, inconclusive: 1 }, 0), 'needs_calibration');
+  assert.equal(statusFromSummary({ needs_calibration: 0, inconclusive: 1, passed: 2 }, 0), 'inconclusive');
+  assert.equal(statusFromSummary({ passed: 3, failed: 0, inconclusive: 0 }, 0), 'passed');
+  // a run whose only failures are calibration -> needs_calibration, not failed
+  assert.equal(statusFromSummary({ passed: 2, failed: 0, needs_calibration: 1 }, 0), 'needs_calibration');
+});
+

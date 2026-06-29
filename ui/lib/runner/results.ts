@@ -64,8 +64,17 @@ export function normalizePlaywrightSpecResult(spec: ProGuide.Dict) {
   const steps = flattenPlaywrightSteps(result.steps || []);
   const attachments = results.flatMap((item) => item.attachments || []);
   const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
+  // Prong B: localize-class failures (timeout for locator/getBy, strict mode
+  // violation, locator not found) are a calibration issue, not a real product
+  // bug. Re-classify so they don't contaminate the bug rate. Real assertion
+  // failures (toHaveText/toHaveURL/status mismatch) keep `failed`.
+  const finalStatus =
+    status === 'failed' && isLocatorError(`${message}\n${errorDetails}`)
+      ? 'needs_calibration'
+      : status;
+
   return {
-    status,
+    status: finalStatus,
     duration_seconds: Math.round((duration / 1000) * 1000) / 1000,
     message,
     error_details: errorDetails,
@@ -83,6 +92,23 @@ function playwrightStatus(status: unknown) {
     return 'failed';
   if (normalized === 'skipped') return 'inconclusive';
   return normalized ? 'failed' : 'inconclusive';
+}
+
+// Detects Playwright failures whose root cause is element localization (the
+// selector/text didn't resolve), as opposed to a real assertion failure where
+// the element was found but its state/text didn't match. The former should be
+// reported as `needs_calibration`, not `failed`.
+export function isLocatorError(text: unknown): boolean {
+  const value = String(text || '');
+  if (!value) return false;
+  return (
+    /strict mode violation/i.test(value) ||
+    /waiting for (locator|getby\w+|get_by_\w+)\s*\(/i.test(value) ||
+    /timeout \d+\s*ms?\s+exceeded[\s\S]{0,120}waiting for (locator|getby\w+|get_by_\w+)/i.test(
+      value
+    ) ||
+    /\b(locator|getby\w+|get_by_\w+)\([^)]*\)[\s\S]{0,60}\b(not found|resolved to \d+)\b/i.test(value)
+  );
 }
 
 function playwrightMessage(result: ProGuide.Dict) {

@@ -1165,10 +1165,11 @@ function summaryCounts(run, summary, cases = []) {
       else if (result.status === 'failed') acc.failed += 1;
       else if (result.status === 'blocked') acc.blocked += 1;
       else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else if (result.status === 'needs_calibration') acc.needs_calibration += 1;
       else acc.inconclusive += 1;
       return acc;
     },
-    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 }
+    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0, needs_calibration: 0 }
   );
   return {
     total: Number(run?.total_cases || cases.length || results.length || 0),
@@ -1176,7 +1177,8 @@ function summaryCounts(run, summary, cases = []) {
     failed: Number(run?.failed ?? counted.failed),
     blocked: Number(run?.blocked ?? counted.blocked),
     inconclusive: Number(run?.inconclusive ?? counted.inconclusive),
-    setup_failed: Number(run?.setup_failed ?? counted.setup_failed)
+    setup_failed: Number(run?.setup_failed ?? counted.setup_failed),
+    needs_calibration: Number(run?.needs_calibration ?? counted.needs_calibration)
   };
 }
 

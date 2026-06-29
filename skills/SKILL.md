@@ -214,22 +214,34 @@ Llama a `mcp__proguide-test__run_cases` (tool principal de ejecucion) con
 
 La primera ejecución de un caso nuevo es de calibración, no de regresión. Si falla:
 
-1. **Lee el `message` del resultado.** Los errores de Playwright incluyen el árbol de
-   accesibilidad real de la página: ahí están los textos y selectores correctos.
+1. **Lee el `status` y el `message` del resultado.** ProGuide clasifica los fallos en
+   dos categorías:
+   - `needs_calibration` — la causa raíz es de **localización**: el selector/texto no
+     resolvió (timeout esperando un `locator`/`getBy*`, `strict mode violation`, elemento
+     not found). **No es un bug de la app**; es un problema del caso que tenés que
+     calibrar. No lo reportes como hallazgo.
+   - `failed` — el elemento se encontró pero la aserción de estado/texto no se cumplió
+     (`expect(...).toHaveText`, `toHaveURL`, status code distinto). **Sí es un hallazgo
+     real**; reportalo como bug, no lo "arregles" relajando la verificación.
+2. Los errores de Playwright incluyen el árbol de accesibilidad real de la página: ahí
+   están los textos y selectores correctos.
    - `strict mode violation` + lista de elementos → el texto no es único; usa el
      candidato correcto de la lista (su `data-testid` aparece en el error).
    - `Timeout waiting for get_by_placeholder/get_by_text` → el texto que usaste no
      existe en la UI; búscalo en el árbol del error, en el código o pregunta al usuario.
-2. Corrige SOLO los pasos fallidos y re-ejecuta.
-3. Los textos y selectores correctos quedan incorporados en la versión final de los
+3. Corrige SOLO los pasos `needs_calibration`/fallidos y re-ejecuta.
+4. Los textos y selectores correctos quedan incorporados en la versión final de los
    casos: esa versión es la que se conserva/entrega, para que las siguientes ejecuciones
    no repitan la calibración.
 
 ### Paso 5 — Reportar
 
-Al terminar, informa al usuario: estado de cada caso (passed/failed), el `run_url` del
-visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real de la app
-(no por el selector), repórtalo como hallazgo, no lo "arregles" relajando la verificación.
+Al terminar, informa al usuario: estado de cada caso (passed/failed/needs_calibration),
+el `run_url` del visor, y qué se corrigió en cada iteración. Distingue al reportar:
+- `needs_calibration` no es bug: son casos cuyo selector/texto no resolvió y se
+  calibraron (o quedan pendientes de calibrar). No los cuentes como falla del producto.
+- `failed` sí es bug real (el elemento se encontró pero la aserción no pasó): repórtalo
+  como hallazgo, no lo "arregles" relajando la verificación.
 
 ### Paso 6 — Congelar la suite para regresión
 

@@ -1008,7 +1008,7 @@ function stopViewerMessage(payload) {
 function summaryLine(summary, run) {
   const counts = summaryCounts(summary, run);
   if (!counts) return '';
-  return `Resumen: total=${counts.total}, passed=${counts.passed}, failed=${counts.failed}, blocked=${counts.blocked}, inconclusive=${counts.inconclusive}, setup_failed=${counts.setup_failed}.`;
+  return `Resumen: total=${counts.total}, passed=${counts.passed}, failed=${counts.failed}, blocked=${counts.blocked}, inconclusive=${counts.inconclusive}, setup_failed=${counts.setup_failed}, needs_calibration=${counts.needs_calibration}.`;
 }
 
 function summaryCounts(summary, run) {
@@ -1020,10 +1020,11 @@ function summaryCounts(summary, run) {
       else if (result.status === 'failed') acc.failed += 1;
       else if (result.status === 'blocked') acc.blocked += 1;
       else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else if (result.status === 'needs_calibration') acc.needs_calibration += 1;
       else acc.inconclusive += 1;
       return acc;
     },
-    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 }
+    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0, needs_calibration: 0 }
   );
   return {
     total,
@@ -1031,7 +1032,8 @@ function summaryCounts(summary, run) {
     failed: Number(run?.failed ?? counted.failed),
     blocked: Number(run?.blocked ?? counted.blocked),
     inconclusive: Number(run?.inconclusive ?? counted.inconclusive),
-    setup_failed: Number(run?.setup_failed ?? counted.setup_failed)
+    setup_failed: Number(run?.setup_failed ?? counted.setup_failed),
+    needs_calibration: Number(run?.needs_calibration ?? counted.needs_calibration)
   };
 }
 

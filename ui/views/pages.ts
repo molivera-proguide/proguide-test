@@ -475,7 +475,7 @@ function progressStepsMarkup(activeStage, state, steps = PROGRESS_STEPS) {
 function progressCounts(cases, summary) {
   const counts = countSummary(summary);
   const total = cases.length || counts.total || 0;
-  const done = counts.passed + counts.failed + counts.inconclusive + counts.setup_failed;
+  const done = counts.passed + counts.failed + counts.inconclusive + counts.setup_failed + counts.needs_calibration;
   return `${done}/${total} casos con resultado`;
 }
 
@@ -485,7 +485,8 @@ function progressFinishedMessage(counts, run) {
   const failed = Number(run.failed ?? counts.failed ?? 0);
   const inconclusive = Number(run.inconclusive ?? counts.inconclusive ?? 0);
   const setupFailed = Number(run.setup_failed ?? counts.setup_failed ?? 0);
-  return `Resultados: ${passed} passed, ${failed} failed, ${inconclusive} inconclusive, ${setupFailed} setup_failed de ${total}.`;
+  const needsCalibration = Number(run.needs_calibration ?? counts.needs_calibration ?? 0);
+  return `Resultados: ${passed} passed, ${failed} failed, ${inconclusive} inconclusive, ${setupFailed} setup_failed, ${needsCalibration} needs_calibration de ${total}.`;
 }
 
 function countSummary(summary) {
@@ -495,10 +496,11 @@ function countSummary(summary) {
       if (result.status === 'passed') acc.passed += 1;
       else if (result.status === 'failed') acc.failed += 1;
       else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else if (result.status === 'needs_calibration') acc.needs_calibration += 1;
       else acc.inconclusive += 1;
       return acc;
     },
-    { total: 0, passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 }
+    { total: 0, passed: 0, failed: 0, inconclusive: 0, setup_failed: 0, needs_calibration: 0 }
   );
 }
 

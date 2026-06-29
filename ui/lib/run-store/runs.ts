@@ -202,6 +202,7 @@ export async function prepareMarkdownRun({
     blocked: 0,
     inconclusive: 0,
     setup_failed: 0,
+    needs_calibration: 0,
     pdf_path: null,
     html_path: null,
     data_dir: runDir
@@ -326,6 +327,7 @@ export async function prepareCasesRun({
     blocked: 0,
     inconclusive: 0,
     setup_failed: 0,
+    needs_calibration: 0,
     pdf_path: null,
     html_path: null,
     data_dir: runDir
@@ -684,6 +686,7 @@ export async function executePreparedRun({
   run.failed = counts.failed;
   run.inconclusive = counts.inconclusive;
   run.setup_failed = counts.setup_failed;
+  run.needs_calibration = counts.needs_calibration;
   run.blocked = cases.filter((item) => item.automation_state !== 'listo' && !item.excluded).length;
   run.status = statusFromSummary(counts, run.blocked);
 
@@ -846,6 +849,7 @@ export async function executeFrozenSuite({
     failed: 0,
     inconclusive: 0,
     setup_failed: 0,
+    needs_calibration: 0,
     blocked: 0,
     html_path: null,
     pdf_path: null
