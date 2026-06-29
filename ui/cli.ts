@@ -13,7 +13,11 @@ import {
   loadRunBundle,
   loadUsageSummary,
   prepareMarkdownRun,
-  previewMarkdownRun
+  previewMarkdownRun,
+  inspectRoute,
+  promoteRunToSuite,
+  listSuites,
+  executeFrozenSuite
 } from './proguide-service.js';
 import {
   ensurePlaywrightRuntime,
@@ -105,6 +109,18 @@ const HELP_COMMON_OPTIONS = [
 
 const HELP_COMMANDS = [
   {
+    command: 'inspect',
+    description: 'Inspecciona una ruta autenticada, devolviendo el arbol de accesibilidad y candidatos de selectores.',
+    usage: 'proguide inspect <route> --base-url <url> [--json]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base de la app.' }
+    ],
+    examples: [
+      'proguide inspect /dashboard --base-url http://localhost:3000 --json',
+      'proguide inspect /login --base-url http://localhost:3000'
+    ]
+  },
+  {
     command: 'create',
     description:
       'Crea un run desde casos Markdown y deja el plan listo para revisar o ejecutar despues.',
@@ -147,15 +163,43 @@ const HELP_COMMANDS = [
   {
     command: 'execute',
     description: 'Ejecuta un run existente por run_id.',
-    usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--json]',
+    usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--frozen] [--json]',
     options: [
       {
         option: '--base-url <url>',
         description: 'URL base para la ejecucion si el run la necesita.'
       },
-      { option: '--from-plan', description: 'Usa el plan guardado como fuente de ejecucion.' }
+      { option: '--from-plan', description: 'Usa el plan guardado como fuente de ejecucion.' },
+      { option: '--frozen', description: 'Ejecuta los specs ya generados sin regenerar codigo.' }
     ],
-    examples: ['proguide execute 2026-06-23_10-30-00 --base-url http://localhost:3000 --json']
+    examples: [
+      'proguide execute 2026-06-23_10-30-00 --base-url http://localhost:3000 --json',
+      'proguide execute 2026-06-23_10-30-00 --frozen'
+    ]
+  },
+  {
+    command: 'promote',
+    description: 'Congela un run calibrado y sus specs a una suite de regresion versionable.',
+    usage: 'proguide promote <run_id> --module <name> [--json]',
+    options: [
+      { option: '--module <name>', description: 'Nombre de la suite de regresion/modulo.' }
+    ],
+    examples: ['proguide promote 2026-06-23_10-30-00 --module auth']
+  },
+  {
+    command: 'regress',
+    description: 'Ejecuta una suite de regresion congelada (modo frozen, sin LLM ni pre-pass).',
+    usage: 'proguide regress <module> --base-url <url> [--json]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base de la app.' }
+    ],
+    examples: ['proguide regress auth --base-url http://localhost:3000']
+  },
+  {
+    command: 'list-suites',
+    description: 'Lista las suites de regresion congeladas disponibles en el proyecto.',
+    usage: 'proguide list-suites [--json]',
+    examples: ['proguide list-suites']
   },
   {
     command: 'get-run',
@@ -318,6 +362,14 @@ async function main(argv: string[]) {
 
 async function dispatch(parsed) {
   switch (parsed.command) {
+    case 'inspect':
+      return commandInspect(parsed);
+    case 'promote':
+      return commandPromote(parsed);
+    case 'regress':
+      return commandRegress(parsed);
+    case 'list-suites':
+      return commandListSuites(parsed);
     case 'create':
       return commandCreate(parsed);
     case 'run':
@@ -350,6 +402,145 @@ async function dispatch(parsed) {
     default:
       throw cliError(`Comando desconocido: ${parsed.command}`, EXIT.invalidInput);
   }
+}
+
+async function commandPromote(parsed) {
+  const root = resolveRoot(parsed.options);
+  const runId = requiredHandle(parsed.positionals[0], 'run_id');
+  const module = option(parsed.options, 'module');
+  if (!module) {
+    throw cliError('--module <name> es obligatorio.', EXIT.invalidInput);
+  }
+
+  const result = await promoteRunToSuite({
+    root,
+    runId,
+    module: String(module)
+  });
+
+  const payload = {
+    status: 'ok',
+    run_id: runId,
+    module,
+    suite_dir: result.suiteDir,
+    metadata: result.metadata
+  };
+
+  emit(payload, parsed.options, `Run ${runId} promovido exitosamente a la suite de regresion: ${module}\nDirectorio: ${result.suiteDir}`);
+  return EXIT.ok;
+}
+
+async function commandRegress(parsed) {
+  const root = resolveRoot(parsed.options);
+  const module = parsed.positionals[0];
+  if (!module) {
+    throw cliError('module es obligatorio. Uso: proguide regress <module> --base-url <url>', EXIT.invalidInput);
+  }
+  const baseUrl = requireBaseUrl(parsed.options);
+  const credentials = credentialsFromOptions(parsed.options);
+
+  await ensurePlaywrightRuntime(root, { requireBrowser: true });
+
+  const summary = await executeFrozenSuite({
+    root,
+    module,
+    baseUrl,
+    credentials
+  });
+
+  const runId = summary.run_id;
+  const bundle = await loadRunBundle(root, runId);
+  const viewer = await attachViewer(root, runId, parsed.options);
+  const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
+
+  emit(payload, parsed.options, `Regresion finalizada para suite ${module}: ${payload.status}`);
+  return exitCodeForRun(bundle.run);
+}
+
+async function commandListSuites(parsed) {
+  const root = resolveRoot(parsed.options);
+  const suites = await listSuites(root);
+
+  const payload = {
+    suites
+  };
+
+  emit(
+    payload,
+    parsed.options,
+    suites.length ? suites.join('\n') : 'No se encontraron suites de regresion congeladas.'
+  );
+  return EXIT.ok;
+}
+
+async function commandInspect(parsed) {
+  const root = resolveRoot(parsed.options);
+  const baseUrl = requireBaseUrl(parsed.options);
+  const route = parsed.positionals[0];
+  if (!route) {
+    throw cliError('route es obligatorio. Uso: proguide inspect <route> --base-url <url>', EXIT.invalidInput);
+  }
+
+  const config = await readConfig(root);
+  const credentials = credentialsFromOptions(parsed.options);
+
+  await ensurePlaywrightRuntime(root, { requireBrowser: true });
+
+  const result = await inspectRoute({
+    root,
+    baseUrl,
+    route,
+    config,
+    credentials
+  });
+
+  if (!result.success) {
+    throw cliError(result.error || 'Fallo la inspeccion de la ruta.', EXIT.execution);
+  }
+
+  const payload = {
+    status: 'ok',
+    route,
+    base_url: baseUrl,
+    authenticated: Boolean(result.authenticated),
+    warning: result.warning || undefined,
+    accessibility: result.accessibility,
+    snapshot: result.snapshot
+  };
+
+  emit(payload, parsed.options, renderInspectResult(payload));
+  return EXIT.ok;
+}
+
+function renderInspectResult(payload) {
+  const lines: string[] = [];
+  if (payload.warning) {
+    lines.push(`ADVERTENCIA: ${payload.warning}`, '');
+  }
+  lines.push(
+    `Inspeccion exitosa para la ruta: ${payload.route}`,
+    `Autenticado: ${payload.authenticated ? 'si' : 'no'}`,
+    `URL de la pagina: ${payload.snapshot?.url || ''}`,
+    `Titulo de la pagina: ${payload.snapshot?.title || ''}`,
+    '',
+    'Arbol de accesibilidad (simplificado):',
+    JSON.stringify(payload.accessibility, null, 2),
+    '',
+    'Candidatos de selectores estables detectados (Controles):'
+  );
+
+  const controls = payload.snapshot?.controls || [];
+  if (!controls.length) {
+    lines.push('  No se encontraron controles.');
+  } else {
+    for (const ctrl of controls) {
+      lines.push(
+        `  - ${ctrl.selector_hint} (${ctrl.role || ctrl.tag}): text="${ctrl.text}", label="${ctrl.label.join(', ')}"`
+      );
+    }
+  }
+
+  return lines.join('\n');
 }
 
 async function commandCreate(parsed) {
@@ -464,7 +655,8 @@ async function commandExecute(parsed) {
     runId,
     baseUrl: option(parsed.options, 'base-url') || '',
     credentials: credentialsFromOptions(parsed.options),
-    fromPlan: Boolean(parsed.options['from-plan'])
+    fromPlan: Boolean(parsed.options['from-plan']),
+    frozen: Boolean(parsed.options['frozen'])
   });
   const bundle = await loadRunBundle(root, runId);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);

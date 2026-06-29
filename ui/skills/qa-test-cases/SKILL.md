@@ -24,30 +24,33 @@ pregunta por método, path, payload, autenticación y respuesta esperada. Para A
 prefiere casos estructurados con `type: "api"`; el Markdown en lenguaje natural es
 solo fallback.
 
-1. **Explorar la app en vivo (funciona siempre, con o sin código).** Confirma con el
-   usuario la URL base y que la app esté accesible. Si tienes herramientas de navegador
-   disponibles (Claude in Chrome, Playwright MCP, Chrome DevTools MCP, chrome-devtools,
-   preview), navega las pantallas bajo prueba y extrae del snapshot/árbol de
-   accesibilidad y del DOM los textos literales, tags reales y atributos de los
-   elementos que los pasos van a usar. Si el usuario trabaja con Claude Code o Cursor y
-   no tiene Claude in Chrome, usa Playwright MCP para navegar/tomar snapshots y Chrome
-   DevTools MCP para inspeccionar DOM, consola y red. Si esos MCP no están disponibles,
-   antes de redactar casos UI estables informa que faltan y sugiere instalarlos:
-   `claude mcp add playwright npx @playwright/mcp@latest`,
-   `claude mcp add chrome-devtools --scope user npx chrome-devtools-mcp@latest`, o en
-   Cursor `Settings → MCP → Add new MCP Server` con `npx @playwright/mcp@latest` y
-   `npx -y chrome-devtools-mcp@latest`. Si el usuario no puede instalarlos, continúa con
-   "Preguntar al usuario" y trata la primera ejecución como calibración.
+1. **`proguide inspect` (camino primario, autosuficiente).** ProGuide trae su propio
+   Chromium, así que no dependes de ningún MCP de navegador. Confirma URL base y que la
+   app esté accesible, y corre `proguide inspect <ruta> --base-url <url> --json` (o el tool
+   MCP `inspect_route`). Devuelve el árbol de accesibilidad y candidatos de selector
+   estable (`data-testid`/`id`/`name`/role) de la pantalla real. Para rutas **protegidas**,
+   configura el bloque `auth` en `proguide_tests/config.yaml` (ver README) y pasa las
+   credenciales por CLI/MCP; `inspect` inicia sesión y navega ya autenticado. Revisa el
+   campo `authenticated`/`warning` del resultado: si dice que esperaba sesión pero falló,
+   estás viendo el login, no la pantalla protegida — arregla el `auth` antes de redactar.
    Para cada acción crítica, materializa lo observado en DSL explícito: no escribas
    `click "TEXT"` si el DOM muestra que el elemento es `li`, `a`, card o componente MUI;
    usa `click li:has-text("TEXT")`, `click [selector]`, `fill [selector] with ...` o
    `expect [selector]...` según el tag/atributo real.
-2. **Código fuente, solo si está disponible en el workspace.** Busca `data-testid`, `id`,
+2. **Browser MCP del usuario (fallback para auth interactivo o exploración libre).** Si el
+   login es **SSO/MFA interactivo** que `inspect` no puede automatizar, o necesitas
+   *descubrir* flujos que no conoces de antemano, usa Claude in Chrome, Playwright MCP o
+   Chrome DevTools MCP (su navegador ya está logueado). Si no están instalados y los
+   necesitas: `claude mcp add playwright npx @playwright/mcp@latest`,
+   `claude mcp add chrome-devtools --scope user npx chrome-devtools-mcp@latest`, o en
+   Cursor `Settings → MCP → Add new MCP Server` con `npx @playwright/mcp@latest` y
+   `npx -y chrome-devtools-mcp@latest`.
+3. **Código fuente, solo si está disponible en el workspace.** Busca `data-testid`, `id`,
    placeholders y textos visibles de los componentes involucrados. Es un complemento,
    no un requisito.
-3. **Preguntar al usuario.** Si no puedes explorar la app ni ver código, pide los textos
+4. **Preguntar al usuario.** Si no puedes inspeccionar la app ni ver código, pide los textos
    literales de la UI (o capturas de pantalla) de las pantallas involucradas.
-4. **Calibración como último recurso.** Si nada de lo anterior es viable, redacta un
+5. **Calibración como último recurso.** Si nada de lo anterior es viable, redacta un
    borrador con lo que el usuario describió y trata la primera ejecución como
    calibración: los errores del runner devuelven el árbol real de la página (ver Paso 4).
 
@@ -227,6 +230,27 @@ La primera ejecución de un caso nuevo es de calibración, no de regresión. Si 
 Al terminar, informa al usuario: estado de cada caso (passed/failed), el `run_url` del
 visor, y qué se corrigió en cada iteración. Si un caso falla por un bug real de la app
 (no por el selector), repórtalo como hallazgo, no lo "arregles" relajando la verificación.
+
+### Paso 6 — Congelar la suite para regresión
+
+Una vez que un run quedó **calibrado** (pasa de forma estable), conviértelo en suite de
+regresión versionable. La diferencia clave: la calibración usa el LLM y abre browser para
+leer la app; la regresión ejecuta el `.spec.ts` **congelado** tal cual, sin LLM ni
+pre-pass → determinista, rápida y barata.
+
+1. **Congelar:** `proguide promote <run_id> --module <nombre>`. Copia casos, plan y specs
+   a `proguide_tests/suite/<nombre>/` (carpeta versionable; commiteala junto a la app).
+2. **Re-ejecutar regresión:** `proguide regress <nombre> --base-url <url>` (o
+   `proguide execute <run_id> --frozen` / arg `frozen: true` en `execute_run`). No llama al
+   LLM ni reabre browser para contexto: dos corridas seguidas dan el mismo resultado.
+3. **Recalibrar ante drift de UI:** si la app cambió y N casos fallan, recalibra **solo**
+   esos casos (re-genera, verifica el diff del spec) y vuelve a `promote`. Distingue
+   siempre: selector viejo → recalibrar; bug real de la app → reportar, nunca relajar el
+   assert.
+4. **Sesión compartida (opcional):** para suites con login user/pass, activar
+   `auth.reuse_session: true` hace que el runner reutilice la sesión en vez de loguear por
+   caso (mitiga la contención `fullyParallel` + mismo usuario). Si lo activas, los casos
+   **no** deben incluir pasos de login.
 
 ## Errores comunes y su solución
 

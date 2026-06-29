@@ -18,6 +18,15 @@ export function defaultConfig(): ProGuide.Dict {
       require_user_email: false,
       require_project_name: false
     },
+    auth: {
+      login_route: '',
+      validate_route: '',
+      user_selector: '',
+      pass_selector: '',
+      submit_selector: '',
+      success_check: '',
+      reuse_session: false
+    },
     llm: {
       provider: 'anthropic',
       model: 'claude-haiku-4-5-20251001',

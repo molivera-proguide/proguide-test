@@ -14,8 +14,13 @@ export {
   previewMarkdownRun,
   saveCasesForRun,
   appendCasesToRun,
-  executePreparedRun
+  executePreparedRun,
+  promoteRunToSuite,
+  loadSuite,
+  listSuites,
+  executeFrozenSuite
 } from './lib/run-store/runs.js';
 export { recordLlmUsage, loadUsageSummary } from './lib/usage/record.js';
 export { parsePlaywrightResults } from './lib/runner/playwright.js';
 export { playwrightWorkerArgs } from './lib/runner/config.js';
+export { inspectRoute } from './lib/codegen/dom-context.js';

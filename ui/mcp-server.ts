@@ -11,12 +11,14 @@ import {
   loadRunBundle,
   prepareCasesRun,
   prepareMarkdownRun,
-  previewMarkdownRun
+  previewMarkdownRun,
+  inspectRoute
 } from './proguide-service.js';
 import { ensurePlaywrightRuntime } from './playwright-runtime.js';
 import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
 import { isPathInside } from './lib/shared/paths.js';
 import { casesRequireBrowser } from './lib/shared/cases.js';
+import { loadUiConfig } from './lib/run-store/config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(
@@ -310,6 +312,11 @@ const tools = [
           description:
             'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.'
         },
+        frozen: {
+          type: 'boolean',
+          description:
+            'Si true, ejecuta los specs ya generados sin regenerar codigo.'
+        },
         root: { type: 'string' },
         ...identityInputProperties,
         email: { type: 'string' },
@@ -387,6 +394,22 @@ const tools = [
           description: 'Puerto inicial para buscar viewers. Default: 8787 o PROGUIDE_VIEWER_PORT.'
         }
       }
+    }
+  },
+  {
+    name: 'inspect_route',
+    description: 'Inspecciona una ruta autenticada o publica de la app, devolviendo el arbol de accesibilidad y candidatos de selectores estables.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        route: { type: 'string', description: 'Ruta relativa de la app, ej: /dashboard o /login.' },
+        base_url: { type: 'string', description: 'URL base de la app.' },
+        root: { type: 'string', description: 'Workspace root. Default: PROGUIDE_MCP_ROOT o cwd.' },
+        email: { type: 'string', description: 'Credencial opcional.' },
+        username: { type: 'string', description: 'Credencial opcional.' },
+        password: { type: 'string', description: 'Credencial opcional.' }
+      },
+      required: ['route', 'base_url']
     }
   }
 ];
@@ -578,7 +601,8 @@ async function callTool(name, args) {
       runId,
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
-      fromPlan: Boolean(args.from_plan)
+      fromPlan: Boolean(args.from_plan),
+      frozen: Boolean(args.frozen)
     });
     const bundle = await loadRunBundle(root, runId);
     const payload = {
@@ -641,6 +665,42 @@ async function callTool(name, args) {
       port: Number.isFinite(Number(args.port)) ? Number(args.port) : undefined
     });
     return toolResult(stopViewerMessage(stopped), stopped);
+  }
+
+  if (name === 'inspect_route') {
+    const root = resolveRoot(args.root);
+    const baseUrl = args.base_url;
+    const route = args.route;
+    if (!route || !baseUrl) {
+      throw new Error('route and base_url are required.');
+    }
+    const config = await loadUiConfig(root);
+    const credentials = credentialsFromArgs(args);
+    await ensurePlaywrightRuntime(root, { requireBrowser: true });
+    
+    const result = await inspectRoute({
+      root,
+      baseUrl,
+      route,
+      config,
+      credentials
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'inspect_route failed');
+    }
+    
+    const message = result.warning
+      ? `Inspeccion de la ruta ${route} (ADVERTENCIA: ${result.warning})`
+      : `Inspeccion exitosa de la ruta: ${route}`;
+    return toolResult(message, {
+      route,
+      base_url: baseUrl,
+      authenticated: Boolean(result.authenticated),
+      warning: result.warning,
+      accessibility: result.accessibility,
+      snapshot: result.snapshot
+    });
   }
 
   throw new Error(`Unknown tool: ${name}`);

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { playwrightCommand, runtimeEnv } from '../../playwright-runtime.js';
+import { ensureSession } from '../auth/session.js';
 import { nowIso } from '../shared/time.js';
 import { safeId } from '../shared/id.js';
 import {
@@ -70,6 +71,29 @@ export async function runPlaywrightTests({
 }) {
   await fs.mkdir(runDir, { recursive: true });
   const startedAt = nowIso();
+
+  let storageStatePath = '';
+  const authConfig = config.auth || {};
+  // Opt-in: reuse_session inyecta storageState en el runner (sesion compartida en
+  // lugar de login por caso). Desacoplado de login_route, que solo habilita la
+  // lectura de DOM (inspect/pre-pass). Default false para no romper casos que se
+  // autologuean.
+  if (authConfig.reuse_session && authConfig.login_route) {
+    try {
+      const session = await ensureSession({
+        root: projectRoot,
+        baseUrl,
+        config,
+        credentials
+      });
+      if (session.available && session.storageStatePath) {
+        storageStatePath = session.storageStatePath;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const reportPath = path.join(runDir, 'playwright-report.json');
   const playwrightLogPath = path.join(runDir, 'playwright.log');
   const outputDir = path.join(runDir, 'artifacts', 'playwright');
@@ -96,6 +120,9 @@ export async function runPlaywrightTests({
     PROGUIDE_SCREENSHOTS: normalizePlaywrightScreenshot(runnerConfig.screenshots),
     PROGUIDE_TRACES: normalizePlaywrightTrace(runnerConfig.traces)
   };
+  if (storageStatePath) {
+    env.PROGUIDE_STORAGE_STATE = storageStatePath;
+  }
   if (credentials.email) env.PROGUIDE_USER_EMAIL = credentials.email;
   if (credentials.username) env.PROGUIDE_USER_USERNAME = credentials.username;
   if (credentials.password) env.PROGUIDE_USER_PASSWORD = credentials.password;
@@ -170,7 +197,8 @@ async function writePlaywrightConfig({
     `    browserName: process.env.PROGUIDE_BROWSER || ${JSON.stringify(runnerConfig.browser || 'chromium')},`,
     `    screenshot: process.env.PROGUIDE_SCREENSHOTS || ${JSON.stringify(normalizePlaywrightScreenshot(runnerConfig.screenshots))},`,
     `    video: process.env.PROGUIDE_VIDEO || ${JSON.stringify(normalizePlaywrightVideo(runnerConfig.video))},`,
-    `    trace: process.env.PROGUIDE_TRACES || ${JSON.stringify(normalizePlaywrightTrace(runnerConfig.traces))}`,
+    `    trace: process.env.PROGUIDE_TRACES || ${JSON.stringify(normalizePlaywrightTrace(runnerConfig.traces))},`,
+    `    storageState: process.env.PROGUIDE_STORAGE_STATE || undefined`,
     '  }',
     '};',
     ''

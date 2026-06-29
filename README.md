@@ -57,6 +57,11 @@ Comandos utiles:
 proguide help
 proguide help run --json
 proguide execute <run_id> --json
+proguide execute <run_id> --frozen --json
+proguide inspect <ruta> --base-url http://localhost:3000 --json
+proguide promote <run_id> --module <nombre>
+proguide regress <nombre> --base-url http://localhost:3000 --json
+proguide list-suites --json
 proguide get-run <run_id> --json
 proguide get-code <run_id> <case_id> --json
 proguide list-runs --limit 20 --json
@@ -205,6 +210,78 @@ En MCP, el flujo recomendado usa dos tools: `create_run` para dry-run y `run_cas
 para ejecutar. `create_run_from_markdown` y `run_markdown_cases` se mantienen como
 aliases compatibles, pero no son necesarios para flujos nuevos.
 
+## Regresion E2E
+
+ProGuide distingue dos momentos: **calibrar** un caso nuevo (usa el LLM y abre browser
+para leer la app) y **ejecutar regresion** (corre el `.spec.ts` ya generado tal cual, sin
+LLM ni lectura de DOM). La regresion asi es determinista, rapida y barata; los casos API
+(`type: api`) ya eran deterministas de por si.
+
+### Sesion autenticada (bloque `auth`)
+
+Para inspeccionar o ejecutar rutas protegidas con login user/pass, configura el bloque
+`auth` en `proguide_tests/config.yaml`. Las **credenciales nunca van en el YAML**: se pasan
+por CLI/MCP (`email`/`username`/`password`) o por entorno.
+
+```yaml
+auth:
+  login_route: /login
+  validate_route: /dashboard        # opcional; valida que la sesion siga viva
+  user_selector: '[name="email"]'
+  pass_selector: '[name="password"]'
+  submit_selector: 'button[type="submit"]'
+  success_check: '[data-testid="dashboard"]'
+  reuse_session: false              # opt-in: ver "Sesion compartida"
+```
+
+ProGuide inicia sesion una vez y guarda `proguide_tests/storage-state.json` (gitignored).
+La sesion se revalida y se re-loguea de forma transparente cuando expira.
+
+### Inspeccionar la app (autoria autosuficiente)
+
+`proguide inspect <ruta>` usa el Chromium propio de ProGuide para devolver el arbol de
+accesibilidad y candidatos de selector estable de la pantalla real, **sin depender de
+ningun MCP de navegador**. Para rutas protegidas usa el bloque `auth`.
+
+```bash
+proguide inspect /dashboard --base-url http://localhost:3000 --json
+```
+
+El resultado incluye `authenticated` y, si se esperaba sesion pero el login fallo, un
+`warning` (asi no confundes la pantalla de login con la ruta protegida). En MCP es el tool
+`inspect_route`.
+
+### Congelar y ejecutar la suite
+
+```bash
+# 1. Calibra un run normal hasta que pase estable (proguide run / run_cases)
+# 2. Congelalo como suite de regresion versionable
+proguide promote <run_id> --module checkout
+
+# 3. Ejecuta la regresion congelada (sin LLM ni pre-pass)
+proguide regress checkout --base-url http://localhost:3000 --json
+
+# Alternativa: re-ejecutar un run existente sin regenerar
+proguide execute <run_id> --frozen
+
+proguide list-suites --json
+```
+
+`promote` deja la suite en `proguide_tests/suite/<module>/` (con `cases.json`, `plan.json`,
+`generated/` y `suite.json`). Esa carpeta **se versiona** junto a la app. En MCP, `run_cases`
+y `execute_run` aceptan `frozen: true` para ejecutar specs ya generados sin regenerar.
+
+Si la UI cambia y la regresion falla por selectores viejos, recalibra solo esos casos y
+vuelve a `promote`. Un fallo por bug real de la app se reporta como hallazgo, no se "arregla"
+relajando la verificacion.
+
+### Sesion compartida (opcional)
+
+Con `auth.reuse_session: true`, el runner reutiliza el `storageState` en lugar de loguear
+dentro de cada caso, mitigando la contencion de `fullyParallel` + mismo usuario. Es opt-in
+(default `false`) y esta desacoplado de `login_route` (que solo habilita la lectura de DOM).
+Si lo activas, los casos **no** deben incluir pasos de login.
+
 ## MCP En Claude Code
 
 Registra ProGuide como MCP server desde el workspace de la app que vas a testear:
@@ -305,7 +382,10 @@ Usa la rule proguide-qa-test-cases y el MCP proguide-test para generar casos con
 
 - `run_cases`: crea y ejecuta un run desde casos estructurados o Markdown.
 - `create_run`: crea un run sin ejecutarlo.
-- `execute_run`: ejecuta un run existente.
+- `execute_run`: ejecuta un run existente. Acepta `frozen: true` para correr los specs ya
+  generados sin regenerar codigo (regresion determinista).
+- `inspect_route`: inspecciona una ruta (publica o autenticada) y devuelve el arbol de
+  accesibilidad y candidatos de selector estable.
 - `get_run`: lee estado, casos, eventos y resumen.
 - `get_generated_code`: lee el codigo generado para un caso.
 - `list_runs`: lista runs locales.
