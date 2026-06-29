@@ -24,7 +24,8 @@ export function defaultConfig(): ProGuide.Dict {
       user_selector: '',
       pass_selector: '',
       submit_selector: '',
-      success_check: ''
+      success_check: '',
+      reuse_session: false
     },
     llm: {
       provider: 'anthropic',
