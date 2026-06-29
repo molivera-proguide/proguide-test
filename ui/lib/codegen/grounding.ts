@@ -52,8 +52,9 @@ export function parseStepTarget(action: string): { type: 'selector' | 'text'; va
     return { type: 'text', value: val };
   }
 
-  // 7. fill [selector] with value
-  const fillMatch = action.match(/^fill\s+(.+?)\s+with\s+(.+)$/i);
+  // 7. fill [selector] with value  (and the valueless form `fill [selector]`)
+  const fillMatch =
+    action.match(/^fill\s+(.+?)\s+with\s+(.+)$/i) || action.match(/^fill\s+(.+)$/i);
   if (fillMatch) {
     const val = fillMatch[1].trim();
     if (/^[#.[]/.test(val)) {
@@ -134,6 +135,14 @@ export function groundStepAgainstSnapshot(
       ) {
         matches.push(ctrl);
       }
+    }
+
+    // The snapshot only exposes id/data-testid/name/role/text. For class or
+    // complex CSS selectors we cannot confirm presence, so a miss is "unverified"
+    // (don't claim not_found and tempt the agent to "fix" a valid selector).
+    const verifiable = Boolean(idVal || testIdVal || nameVal);
+    if (matches.length === 0 && !verifiable) {
+      return { status: 'unverified', candidates: [] };
     }
   } else {
     // Text target

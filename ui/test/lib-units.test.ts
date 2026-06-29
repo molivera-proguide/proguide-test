@@ -280,6 +280,13 @@ test('runner/results: isLocatorError detects localization failures, not assertio
   );
   // locator not found -> calibration
   assert.equal(isLocatorError('locator("#missing") was not found'), true);
+  // real Playwright format captured from an actual run -> calibration
+  assert.equal(
+    isLocatorError(
+      "Error: expect(locator).toBeVisible() failed\n\nLocator: getByText('Link Analysis')\nExpected: visible\nTimeout: 30000ms\nError: element(s) not found"
+    ),
+    true
+  );
   // real assertion failure (element found, state/text mismatch) -> NOT calibration
   assert.equal(
     isLocatorError('Error: expect(locator("#status")).toHaveText("Listo")\nExpected: "Listo"\nReceived: "Pendiente"'),
@@ -418,5 +425,17 @@ test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works cor
   const res5 = groundStepAgainstSnapshot(step5, snapshot);
   assert.equal(res5.status, 'resolved');
   assert.equal(res5.resolved_selector, '#username');
+
+  // Valueless fill is still parsed (gap fix).
+  assert.deepEqual(parseStepTarget('fill [#username]'), {
+    type: 'selector',
+    value: '[#username]'
+  });
+
+  // Class/complex CSS selectors can't be confirmed from the snapshot -> unverified
+  // (not a false not_found that would tempt the agent to "fix" a valid selector).
+  const step6 = { normalized_action: 'click [.login-btn]' };
+  const res6 = groundStepAgainstSnapshot(step6, snapshot);
+  assert.equal(res6.status, 'unverified');
 });
 

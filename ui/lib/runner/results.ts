@@ -102,6 +102,10 @@ export function isLocatorError(text: unknown): boolean {
   const value = String(text || '');
   if (!value) return false;
   return (
+    // Real Playwright format (validated against actual runs): the locator matched
+    // nothing. `element(s) not found` is emitted only when a locator resolves to
+    // zero elements, so it is unambiguously a localization failure.
+    /element\(s\) not found/i.test(value) ||
     /strict mode violation/i.test(value) ||
     /waiting for (locator|getby\w+|get_by_\w+)\s*\(/i.test(value) ||
     /timeout \d+\s*ms?\s+exceeded[\s\S]{0,120}waiting for (locator|getby\w+|get_by_\w+)/i.test(
