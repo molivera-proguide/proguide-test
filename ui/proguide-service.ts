@@ -19,3 +19,4 @@ export {
 export { recordLlmUsage, loadUsageSummary } from './lib/usage/record.js';
 export { parsePlaywrightResults } from './lib/runner/playwright.js';
 export { playwrightWorkerArgs } from './lib/runner/config.js';
+export { inspectRoute } from './lib/codegen/dom-context.js';

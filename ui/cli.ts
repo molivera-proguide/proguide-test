@@ -13,7 +13,8 @@ import {
   loadRunBundle,
   loadUsageSummary,
   prepareMarkdownRun,
-  previewMarkdownRun
+  previewMarkdownRun,
+  inspectRoute
 } from './proguide-service.js';
 import {
   ensurePlaywrightRuntime,
@@ -104,6 +105,18 @@ const HELP_COMMON_OPTIONS = [
 ];
 
 const HELP_COMMANDS = [
+  {
+    command: 'inspect',
+    description: 'Inspecciona una ruta autenticada, devolviendo el arbol de accesibilidad y candidatos de selectores.',
+    usage: 'proguide inspect <route> --base-url <url> [--json]',
+    options: [
+      { option: '--base-url <url>', description: 'URL base de la app.' }
+    ],
+    examples: [
+      'proguide inspect /dashboard --base-url http://localhost:3000 --json',
+      'proguide inspect /login --base-url http://localhost:3000'
+    ]
+  },
   {
     command: 'create',
     description:
@@ -318,6 +331,8 @@ async function main(argv: string[]) {
 
 async function dispatch(parsed) {
   switch (parsed.command) {
+    case 'inspect':
+      return commandInspect(parsed);
     case 'create':
       return commandCreate(parsed);
     case 'run':
@@ -350,6 +365,76 @@ async function dispatch(parsed) {
     default:
       throw cliError(`Comando desconocido: ${parsed.command}`, EXIT.invalidInput);
   }
+}
+
+async function commandInspect(parsed) {
+  const root = resolveRoot(parsed.options);
+  const baseUrl = requireBaseUrl(parsed.options);
+  const route = parsed.positionals[0];
+  if (!route) {
+    throw cliError('route es obligatorio. Uso: proguide inspect <route> --base-url <url>', EXIT.invalidInput);
+  }
+
+  const config = await readConfig(root);
+  const credentials = credentialsFromOptions(parsed.options);
+
+  await ensurePlaywrightRuntime(root, { requireBrowser: true });
+
+  const result = await inspectRoute({
+    root,
+    baseUrl,
+    route,
+    config,
+    credentials
+  });
+
+  if (!result.success) {
+    throw cliError(result.error || 'Fallo la inspeccion de la ruta.', EXIT.execution);
+  }
+
+  const payload = {
+    status: 'ok',
+    route,
+    base_url: baseUrl,
+    authenticated: Boolean(result.authenticated),
+    warning: result.warning || undefined,
+    accessibility: result.accessibility,
+    snapshot: result.snapshot
+  };
+
+  emit(payload, parsed.options, renderInspectResult(payload));
+  return EXIT.ok;
+}
+
+function renderInspectResult(payload) {
+  const lines: string[] = [];
+  if (payload.warning) {
+    lines.push(`ADVERTENCIA: ${payload.warning}`, '');
+  }
+  lines.push(
+    `Inspeccion exitosa para la ruta: ${payload.route}`,
+    `Autenticado: ${payload.authenticated ? 'si' : 'no'}`,
+    `URL de la pagina: ${payload.snapshot?.url || ''}`,
+    `Titulo de la pagina: ${payload.snapshot?.title || ''}`,
+    '',
+    'Arbol de accesibilidad (simplificado):',
+    JSON.stringify(payload.accessibility, null, 2),
+    '',
+    'Candidatos de selectores estables detectados (Controles):'
+  );
+
+  const controls = payload.snapshot?.controls || [];
+  if (!controls.length) {
+    lines.push('  No se encontraron controles.');
+  } else {
+    for (const ctrl of controls) {
+      lines.push(
+        `  - ${ctrl.selector_hint} (${ctrl.role || ctrl.tag}): text="${ctrl.text}", label="${ctrl.label.join(', ')}"`
+      );
+    }
+  }
+
+  return lines.join('\n');
 }
 
 async function commandCreate(parsed) {

@@ -18,3 +18,6 @@ proguide_tests/storage-state.json
 proguide_tests/session_*.json
 proguide_tests/session_probe.cjs
 proguide_tests/session.log
+proguide_tests/inspect_*.json
+proguide_tests/inspect_probe.cjs
+proguide_tests/inspect.log
