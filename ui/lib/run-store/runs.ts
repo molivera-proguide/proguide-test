@@ -10,6 +10,7 @@ import { collectDomContext } from '../codegen/dom-context.js';
 import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
+import { isPathInside } from '../shared/paths.js';
 import {
   SOURCE_MD,
   SOURCE_CASES_JSON,
@@ -705,6 +706,17 @@ export async function executePreparedRun({
   return summary;
 }
 
+// Resolves the suite directory for a module, rejecting path traversal so a
+// crafted module name (e.g. "../../x") cannot escape proguide_tests/suite/.
+function suiteDirFor(root: string, module: string): string {
+  const suiteRoot = path.join(root, PROGUIDE_DIR, 'suite');
+  const suiteDir = path.join(suiteRoot, module);
+  if (suiteDir === suiteRoot || !isPathInside(suiteRoot, suiteDir)) {
+    throw new Error(`module invalido: "${module}"`);
+  }
+  return suiteDir;
+}
+
 export async function promoteRunToSuite({
   root,
   runId,
@@ -716,8 +728,8 @@ export async function promoteRunToSuite({
 }) {
   const runDir = runPath(root, runId);
   const run = await loadRunRecord(runDir);
-  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
-  
+  const suiteDir = suiteDirFor(root, module);
+
   await fs.mkdir(suiteDir, { recursive: true });
 
   const casesSrc = path.join(runDir, NORMALIZED_CASES_JSON);
@@ -766,7 +778,7 @@ export async function loadSuite({
   root: string;
   module: string;
 }) {
-  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
+  const suiteDir = suiteDirFor(root, module);
   const suiteJsonPath = path.join(suiteDir, 'suite.json');
   if (!(await exists(suiteJsonPath))) {
     return null;
@@ -806,7 +818,7 @@ export async function executeFrozenSuite({
   baseUrl?: string;
   credentials?: ProGuide.Dict;
 }) {
-  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
+  const suiteDir = suiteDirFor(root, module);
   const casesPath = path.join(suiteDir, 'cases.json');
   const planPath = path.join(suiteDir, 'plan.json');
   const generatedDir = path.join(suiteDir, 'generated');
@@ -847,7 +859,9 @@ export async function executeFrozenSuite({
   await fs.mkdir(runGeneratedDir, { recursive: true });
   const files = await fs.readdir(generatedDir);
   for (const file of files) {
-    await fs.copyFile(path.join(generatedDir, file), path.join(runGeneratedDir, file));
+    const src = path.join(generatedDir, file);
+    if (!(await fs.stat(src)).isFile()) continue;
+    await fs.copyFile(src, path.join(runGeneratedDir, file));
   }
 
   return executePreparedRun({
