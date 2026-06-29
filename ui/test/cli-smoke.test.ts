@@ -611,7 +611,7 @@ test('parsePlaywrightResults keeps spec results aligned by case id prefix', asyn
       results.map((item) => [item.id, item.status, item.message]),
       [
         ['tc_003', 'passed', ''],
-        ['tc_004', 'failed', 'locator.click: Timeout 30000ms exceeded.']
+        ['tc_004', 'needs_calibration', 'locator.click: Timeout 30000ms exceeded.']
       ]
     );
     assert.match(results[1].error_details, /Call log:/);

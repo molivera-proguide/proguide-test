@@ -29,7 +29,12 @@ import {
 } from '../lib/cases/normalize.js';
 import { inferCaseType } from '../lib/cases/api-normalize.js';
 import { parseMarkdownCases } from '../lib/markdown/parse-cases.js';
-import { collectPlaywrightSpecs, normalizePlaywrightSpecResult } from '../lib/runner/results.js';
+import {
+  collectPlaywrightSpecs,
+  normalizePlaywrightSpecResult,
+  isLocatorError
+} from '../lib/runner/results.js';
+import { countSummary, statusFromSummary } from '../lib/run-store/io.js';
 import { playwrightWorkerArgs } from '../lib/runner/config.js';
 import { expectTimeoutForPlan } from '../lib/runner/playwright.js';
 import { normalizeLlmUsage, estimateLlmCost } from '../lib/usage/pricing.js';
@@ -250,4 +255,258 @@ test('usage/pricing: normalizeLlmUsage sums totals; estimateLlmCost returns a co
   });
   assert.ok(Number.isFinite(est.cost_usd) && est.cost_usd > 0);
   assert.ok(est.pricing);
+});
+
+test('runner/results: isLocatorError detects localization failures, not assertion failures', () => {
+  assert.equal(isLocatorError(''), false);
+  assert.equal(isLocatorError(null), false);
+  // strict mode violation (ambiguous) -> calibration
+  assert.equal(
+    isLocatorError('strict mode violation: locator(\'label:has-text("Nombre")\') resolved to 2 elements'),
+    true
+  );
+  // timeout waiting for a locator/getBy -> calibration
+  assert.equal(
+    isLocatorError('Timeout 30000ms exceeded.\n=========================== logs ===========================\nwaiting for locator(\'button:has-text("Acceder")\')'),
+    true
+  );
+  assert.equal(
+    isLocatorError('Timeout 5000ms exceeded waiting for getByRole("button", { name: "Acceder" })'),
+    true
+  );
+  assert.equal(
+    isLocatorError('Timeout 5000ms exceeded waiting for get_by_role("button", { name: "Acceder" })'),
+    true
+  );
+  // locator not found -> calibration
+  assert.equal(isLocatorError('locator("#missing") was not found'), true);
+  // real Playwright format captured from an actual run -> calibration
+  assert.equal(
+    isLocatorError(
+      "Error: expect(locator).toBeVisible() failed\n\nLocator: getByText('Link Analysis')\nExpected: visible\nTimeout: 30000ms\nError: element(s) not found"
+    ),
+    true
+  );
+  // real assertion failure (element found, state/text mismatch) -> NOT calibration
+  assert.equal(
+    isLocatorError('Error: expect(locator("#status")).toHaveText("Listo")\nExpected: "Listo"\nReceived: "Pendiente"'),
+    false
+  );
+  assert.equal(
+    isLocatorError('Error: expect(page).toHaveURL(/\\/dashboard/)'),
+    false
+  );
+  assert.equal(
+    isLocatorError('Error: API response status 500 != 200'),
+    false
+  );
+});
+
+test('runner/results: normalizePlaywrightSpecResult reclassifies locator timeouts as needs_calibration', () => {
+  const locatorTimeoutSpec = {
+    ok: false,
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            duration: 30000,
+            errors: [
+              {
+                message:
+                  'Timeout 30000ms exceeded.\nwaiting for locator(\'button:has-text("Acceder")\')'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const out = normalizePlaywrightSpecResult(locatorTimeoutSpec);
+  assert.equal(out.status, 'needs_calibration');
+  // message is preserved (the locator error is still surfaced for calibration)
+  assert.match(out.message || out.error_details || '', /waiting for locator/i);
+});
+
+test('runner/results: normalizePlaywrightSpecResult keeps real assertion failures as failed', () => {
+  const assertionSpec = {
+    ok: false,
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            duration: 1200,
+            errors: [
+              {
+                message:
+                  'Error: expect(locator("#status")).toHaveText("Listo")\nExpected: "Listo"\nReceived: "Pendiente"'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+  const out = normalizePlaywrightSpecResult(assertionSpec);
+  assert.equal(out.status, 'failed');
+});
+
+test('run-store/io: countSummary counts needs_calibration as its own category', () => {
+  const summary = {
+    results: [
+      { status: 'passed' },
+      { status: 'failed' },
+      { status: 'needs_calibration' },
+      { status: 'needs_calibration' },
+      { status: 'inconclusive' }
+    ]
+  };
+  const counts = countSummary(summary);
+  assert.equal(counts.passed, 1);
+  assert.equal(counts.failed, 1);
+  assert.equal(counts.needs_calibration, 2);
+  assert.equal(counts.inconclusive, 1);
+});
+
+test('run-store/io: statusFromSummary precedence setup_failed > failed > needs_calibration > inconclusive > passed', () => {
+  assert.equal(statusFromSummary({ setup_failed: 1, failed: 1, needs_calibration: 1 }, 0), 'setup_failed');
+  assert.equal(statusFromSummary({ setup_failed: 0, failed: 1, needs_calibration: 1 }, 0), 'failed');
+  assert.equal(statusFromSummary({ failed: 0, needs_calibration: 2, inconclusive: 1 }, 0), 'needs_calibration');
+  assert.equal(statusFromSummary({ needs_calibration: 0, inconclusive: 1, passed: 2 }, 0), 'inconclusive');
+  assert.equal(statusFromSummary({ passed: 3, failed: 0, inconclusive: 0 }, 0), 'passed');
+  // a run whose only failures are calibration -> needs_calibration, not failed
+  assert.equal(statusFromSummary({ passed: 2, failed: 0, needs_calibration: 1 }, 0), 'needs_calibration');
+});
+
+test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works correctly', async () => {
+  const { parseStepTarget, groundStepAgainstSnapshot } = await import('../lib/codegen/grounding.js');
+
+  assert.deepEqual(parseStepTarget('click button Acceder'), { type: 'text', value: 'Acceder' });
+  assert.deepEqual(parseStepTarget('click #username'), { type: 'selector', value: '#username' });
+  assert.deepEqual(parseStepTarget('fill [name="email"] with user'), { type: 'selector', value: '[name="email"]' });
+  assert.deepEqual(parseStepTarget('expect text "Dashboard"'), { type: 'text', value: 'Dashboard' });
+
+  const snapshot = {
+    controls: [
+      { selector_hint: '#username', id: 'username', text: '' },
+      { selector_hint: 'button:has-text("Acceder")', text: 'Acceder', role: 'button' }
+    ],
+    visible_text: 'Bienvenido a la app. Dashboard cargado.',
+    headings: ['Dashboard']
+  };
+
+  const step1 = { normalized_action: 'click #username' };
+  const res1 = groundStepAgainstSnapshot(step1, snapshot);
+  assert.equal(res1.status, 'resolved');
+  assert.equal(res1.resolved_selector, '#username');
+
+  const step2 = { normalized_action: 'click button Acceder' };
+  const res2 = groundStepAgainstSnapshot(step2, snapshot);
+  assert.equal(res2.status, 'resolved');
+  assert.equal(res2.resolved_selector, 'button:has-text("Acceder")');
+
+  const step3 = { normalized_action: 'expect text "Dashboard"' };
+  const res3 = groundStepAgainstSnapshot(step3, snapshot);
+  assert.equal(res3.status, 'resolved');
+  assert.equal(res3.resolved_selector, 'text="Dashboard"');
+
+  const step4 = { normalized_action: 'click #not_exists' };
+  const res4 = groundStepAgainstSnapshot(step4, snapshot);
+  assert.equal(res4.status, 'not_found');
+
+  // Real normalizer wraps id selectors in brackets: `fill [#username] with "x"`.
+  // Grounding must unwrap `[#id]` to match the snapshot's selector_hint `#username`.
+  assert.deepEqual(parseStepTarget('fill [#username] with "x"'), {
+    type: 'selector',
+    value: '[#username]'
+  });
+  const step5 = { normalized_action: 'fill [#username] with "x"' };
+  const res5 = groundStepAgainstSnapshot(step5, snapshot);
+  assert.equal(res5.status, 'resolved');
+  assert.equal(res5.resolved_selector, '#username');
+
+  // Valueless fill is still parsed (gap fix).
+  assert.deepEqual(parseStepTarget('fill [#username]'), {
+    type: 'selector',
+    value: '[#username]'
+  });
+
+  // Class/complex CSS selectors can't be confirmed from the snapshot -> unverified
+  // (not a false not_found that would tempt the agent to "fix" a valid selector).
+  const step6 = { normalized_action: 'click [.login-btn]' };
+  const res6 = groundStepAgainstSnapshot(step6, snapshot);
+  assert.equal(res6.status, 'unverified');
+});
+
+
+test('codegen/grounding: accent-insensitive match and ranked candidates', async () => {
+  const { groundStepAgainstSnapshot, caseGroundingConfirmed } = await import(
+    '../lib/codegen/grounding.js'
+  );
+  const snapshot = {
+    controls: [
+      { selector_hint: '[data-testid="submit"]', text: 'Accéder', role: 'button' },
+      { selector_hint: '#cancel', text: 'Cancelar', role: 'button' },
+      { selector_hint: '#help', text: 'Ayuda', role: 'link' }
+    ],
+    headings: [],
+    visible_text: ''
+  };
+
+  // "Acceder" (no accent) resolves against "Accéder".
+  const res = groundStepAgainstSnapshot({ normalized_action: 'click button Acceder' }, snapshot);
+  assert.equal(res.status, 'resolved');
+  assert.equal(res.resolved_selector, '[data-testid="submit"]');
+
+  // Missing text -> not_found with the closest candidate ranked first.
+  const miss = groundStepAgainstSnapshot(
+    { normalized_action: 'click button Cancelacion' },
+    snapshot
+  );
+  assert.equal(miss.status, 'not_found');
+  assert.equal(miss.candidates[0].text, 'Cancelar');
+
+  // caseGroundingConfirmed: true only when every targeted step resolved.
+  assert.equal(
+    caseGroundingConfirmed({
+      executable_steps: [
+        { normalized_action: 'fill [#username] with "x"', grounding: { status: 'resolved' } },
+        { normalized_action: 'wait 2 seconds' }
+      ]
+    }),
+    true
+  );
+  assert.equal(
+    caseGroundingConfirmed({
+      executable_steps: [
+        { normalized_action: 'fill [#username] with "x"', grounding: { status: 'not_found' } }
+      ]
+    }),
+    false
+  );
+  assert.equal(caseGroundingConfirmed({ executable_steps: [] }), false);
+});
+
+test('runner/results: grounded-confirmed locator failure stays failed (Prong A<->B)', async () => {
+  const { normalizePlaywrightSpecResult } = await import('../lib/runner/results.js');
+  const spec = {
+    tests: [
+      {
+        results: [
+          {
+            status: 'failed',
+            errors: [{ message: "Locator: getByText('Link Analysis')\nError: element(s) not found" }]
+          }
+        ]
+      }
+    ]
+  };
+  // Without grounding confirmation -> calibration.
+  assert.equal(normalizePlaywrightSpecResult(spec).status, 'needs_calibration');
+  // Grounding had confirmed the target existed -> a runtime miss is a real bug.
+  assert.equal(
+    normalizePlaywrightSpecResult(spec, { groundingConfirmed: true }).status,
+    'failed'
+  );
 });

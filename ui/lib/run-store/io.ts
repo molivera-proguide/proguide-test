@@ -108,6 +108,7 @@ export async function legacyRunRecord(
     blocked: 0,
     inconclusive: 0,
     setup_failed: 0,
+    needs_calibration: 0,
     pdf_path: null,
     html_path: null,
     data_dir: runDir,
@@ -241,11 +242,12 @@ export async function walk(
 }
 
 export function countSummary(summary: ProGuide.Dict): ProGuide.Dict<number> {
-  const counts = { passed: 0, failed: 0, inconclusive: 0, setup_failed: 0 };
+  const counts = { passed: 0, failed: 0, inconclusive: 0, setup_failed: 0, needs_calibration: 0 };
   for (const result of summary.results || []) {
     if (result.status === 'passed') counts.passed += 1;
     else if (result.status === 'failed') counts.failed += 1;
     else if (result.status === 'setup_failed') counts.setup_failed += 1;
+    else if (result.status === 'needs_calibration') counts.needs_calibration += 1;
     else counts.inconclusive += 1;
   }
   return counts;
@@ -254,6 +256,7 @@ export function countSummary(summary: ProGuide.Dict): ProGuide.Dict<number> {
 export function statusFromSummary(counts: ProGuide.Dict, blocked: number): string {
   if (counts.setup_failed) return 'setup_failed';
   if (counts.failed) return 'failed';
+  if (counts.needs_calibration) return 'needs_calibration';
   if (counts.inconclusive) return 'inconclusive';
   if (blocked && !counts.passed) return 'blocked';
   if (blocked && counts.passed) return 'finished';

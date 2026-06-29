@@ -552,8 +552,11 @@ async function commandCreate(parsed) {
       preview = await previewMarkdownRun({
         root,
         sourceMd: source.path,
+        baseUrl: option(parsed.options, 'base-url') || '',
         metadata: metadataFromOptions(parsed.options),
-        useAgent: false
+        useAgent: false,
+        credentials: credentialsFromOptions(parsed.options),
+        ground: parsed.options.ground !== false && !parsed.options['no-ground']
       });
     } finally {
       await cleanupTemporarySource(source);
@@ -587,7 +590,9 @@ async function commandCreate(parsed) {
       sourceMd: source.path,
       baseUrl: option(parsed.options, 'base-url') || '',
       metadata: metadataFromOptions(parsed.options),
-      useAgent: false
+      useAgent: false,
+      credentials: credentialsFromOptions(parsed.options),
+      ground: parsed.options.ground !== false && !parsed.options['no-ground']
     });
   } finally {
     await cleanupTemporarySource(source);
@@ -1165,10 +1170,11 @@ function summaryCounts(run, summary, cases = []) {
       else if (result.status === 'failed') acc.failed += 1;
       else if (result.status === 'blocked') acc.blocked += 1;
       else if (result.status === 'setup_failed') acc.setup_failed += 1;
+      else if (result.status === 'needs_calibration') acc.needs_calibration += 1;
       else acc.inconclusive += 1;
       return acc;
     },
-    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0 }
+    { passed: 0, failed: 0, blocked: 0, inconclusive: 0, setup_failed: 0, needs_calibration: 0 }
   );
   return {
     total: Number(run?.total_cases || cases.length || results.length || 0),
@@ -1176,7 +1182,8 @@ function summaryCounts(run, summary, cases = []) {
     failed: Number(run?.failed ?? counted.failed),
     blocked: Number(run?.blocked ?? counted.blocked),
     inconclusive: Number(run?.inconclusive ?? counted.inconclusive),
-    setup_failed: Number(run?.setup_failed ?? counted.setup_failed)
+    setup_failed: Number(run?.setup_failed ?? counted.setup_failed),
+    needs_calibration: Number(run?.needs_calibration ?? counted.needs_calibration)
   };
 }
 
@@ -1711,11 +1718,23 @@ function renderDryRunPreview(payload) {
       );
       const marker = stepWarnings.length ? ' !' : '  ';
       const confidence = Number(step.confidence ?? 0).toFixed(2);
+      const groundingStr = step.grounding
+        ? ` [Grounding: ${step.grounding.status}${step.grounding.resolved_selector ? ` -> ${step.grounding.resolved_selector}` : ''}]`
+        : '';
       lines.push(
-        `${marker} ${step.number}. ${step.original_text} -> ${step.normalized_action} (${confidence})`
+        `${marker} ${step.number}. ${step.original_text} -> ${step.normalized_action} (${confidence})${groundingStr}`
       );
       for (const warning of stepWarnings) {
         lines.push(`     warning: ${warning.type}`);
+      }
+      if (step.review_reason) {
+        lines.push(`     review reason: ${step.review_reason}`);
+      }
+      if (step.grounding?.candidates?.length) {
+        lines.push(`     candidates:`);
+        for (const candidate of step.grounding.candidates) {
+          lines.push(`       - ${candidate.selector} (${candidate.text || 'sin texto'} role=${candidate.role})`);
+        }
       }
     }
     for (const warning of (warningsByCase.get(testCase.id) || []).filter((item) => !item.step)) {
