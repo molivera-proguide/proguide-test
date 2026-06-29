@@ -16,6 +16,7 @@ import {
   NORMALIZED_CASES_JSON,
   TEST_PLAN_JSON,
   RESULTS_JSON,
+  PROGUIDE_DIR,
   ensureLayout,
   runsRoot,
   runPath,
@@ -86,6 +87,7 @@ type ExecutePreparedRunInput = {
   baseUrl?: string;
   credentials?: ProGuide.Dict;
   fromPlan?: boolean;
+  frozen?: boolean;
 };
 
 export async function listRunRecords(root: string): Promise<ProGuide.Dict[]> {
@@ -494,7 +496,8 @@ export async function executePreparedRun({
   runId,
   baseUrl,
   credentials = {},
-  fromPlan = false
+  fromPlan = false,
+  frozen = false
 }: ExecutePreparedRunInput): Promise<ProGuide.Dict> {
   await loadDotEnv(root);
   const runDir = runPath(root, runId);
@@ -551,84 +554,115 @@ export async function executePreparedRun({
 
   let summary: ProGuide.Dict;
   try {
-    let domContext = {
-      available: false,
-      error: 'api_cases_do_not_require_dom_context',
-      by_case_id: {}
-    };
-    if (plan.cases.some((testCase) => !isApiPlanCase(testCase))) {
+    if (frozen) {
+      if (!(await exists(generatedDir))) {
+        throw new Error(`no hay spec congelado para ${runId}; corré una calibración o promove primero`);
+      }
+      const files = await fs.readdir(generatedDir).catch(() => []);
+      const hasSpec = files.some(file => file.endsWith('.spec.ts'));
+      if (!hasSpec) {
+        throw new Error(`no hay spec congelado para ${runId}; corré una calibración o promove primero`);
+      }
+
+      run.status = 'running';
+      await saveRun(runDir, run);
       await appendEvent(runDir, {
         run_id: run.id,
-        type: 'dom_context_started',
+        type: 'run_started',
         status: run.status,
-        message: 'Abriendo browser para leer contexto visible de la app.'
+        message: 'Ejecucion iniciada en Playwright Test (modo frozen).',
+        payload: { parallel_workers: config.runner.parallel_workers || 'auto' }
       });
-      domContext = await collectDomContext({
-        root,
+
+      summary = await runPlaywrightTests({
+        testsDir: generatedDir,
         runDir,
         plan,
         baseUrl: actualBaseUrl,
         config,
+        projectRoot: root,
         credentials
       });
-      await appendEvent(runDir, {
-        run_id: run.id,
-        type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',
-        status: run.status,
-        message: domContext.available
-          ? `Contexto DOM recolectado para ${Object.keys(domContext.by_case_id || {}).length} caso(s).`
-          : `Contexto DOM no disponible: ${domContext.error || 'sin datos'}.`
-      });
     } else {
+      let domContext = {
+        available: false,
+        error: 'api_cases_do_not_require_dom_context',
+        by_case_id: {}
+      };
+      if (plan.cases.some((testCase) => !isApiPlanCase(testCase))) {
+        await appendEvent(runDir, {
+          run_id: run.id,
+          type: 'dom_context_started',
+          status: run.status,
+          message: 'Abriendo browser para leer contexto visible de la app.'
+        });
+        domContext = await collectDomContext({
+          root,
+          runDir,
+          plan,
+          baseUrl: actualBaseUrl,
+          config,
+          credentials
+        });
+        await appendEvent(runDir, {
+          run_id: run.id,
+          type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',
+          status: run.status,
+          message: domContext.available
+            ? `Contexto DOM recolectado para ${Object.keys(domContext.by_case_id || {}).length} caso(s).`
+            : `Contexto DOM no disponible: ${domContext.error || 'sin datos'}.`
+        });
+      } else {
+        await appendEvent(runDir, {
+          run_id: run.id,
+          type: 'dom_context_skipped',
+          status: run.status,
+          message: 'Contexto DOM omitido: el run contiene solo casos REST API.'
+        });
+      }
       await appendEvent(runDir, {
         run_id: run.id,
-        type: 'dom_context_skipped',
+        type: 'code_generation_started',
         status: run.status,
-        message: 'Contexto DOM omitido: el run contiene solo casos REST API.'
+        message: 'Agente generando codigo TypeScript Playwright.'
+      });
+      await generateTestsWithAgent({
+        root,
+        plan,
+        cases,
+        outputDir: generatedDir,
+        config,
+        domContext,
+        usageContext: { runId: run.id, runDir }
+      });
+      await appendEvent(runDir, {
+        run_id: run.id,
+        type: 'tests_generated',
+        status: 'running',
+        message: 'Codigo TypeScript Playwright generado.'
+      });
+
+      run.status = 'running';
+      await saveRun(runDir, run);
+      await appendEvent(runDir, {
+        run_id: run.id,
+        type: 'run_started',
+        status: run.status,
+        message: 'Ejecucion iniciada en Playwright Test.',
+        payload: { parallel_workers: config.runner.parallel_workers || 'auto' }
+      });
+
+      summary = await runPlaywrightTests({
+        testsDir: generatedDir,
+        runDir,
+        plan,
+        baseUrl: actualBaseUrl,
+        config,
+        projectRoot: root,
+        credentials
       });
     }
-    await appendEvent(runDir, {
-      run_id: run.id,
-      type: 'code_generation_started',
-      status: run.status,
-      message: 'Agente generando codigo TypeScript Playwright.'
-    });
-    await generateTestsWithAgent({
-      root,
-      plan,
-      cases,
-      outputDir: generatedDir,
-      config,
-      domContext,
-      usageContext: { runId: run.id, runDir }
-    });
-    await appendEvent(runDir, {
-      run_id: run.id,
-      type: 'tests_generated',
-      status: 'running',
-      message: 'Codigo TypeScript Playwright generado.'
-    });
-
-    run.status = 'running';
-    await saveRun(runDir, run);
-    await appendEvent(runDir, {
-      run_id: run.id,
-      type: 'run_started',
-      status: run.status,
-      message: 'Ejecucion iniciada en Playwright Test.',
-      payload: { parallel_workers: config.runner.parallel_workers || 'auto' }
-    });
-
-    summary = await runPlaywrightTests({
-      testsDir: generatedDir,
-      runDir,
-      plan,
-      baseUrl: actualBaseUrl,
-      config,
-      projectRoot: root,
-      credentials
-    });
-  } catch (error) {
+  } catch (error: any) {
     run.status = 'error';
     run.finished_at = nowIso();
     await saveRun(runDir, run);
@@ -669,4 +703,159 @@ export async function executePreparedRun({
     message: 'Run finalizado.'
   });
   return summary;
+}
+
+export async function promoteRunToSuite({
+  root,
+  runId,
+  module
+}: {
+  root: string;
+  runId: string;
+  module: string;
+}) {
+  const runDir = runPath(root, runId);
+  const run = await loadRunRecord(runDir);
+  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
+  
+  await fs.mkdir(suiteDir, { recursive: true });
+
+  const casesSrc = path.join(runDir, NORMALIZED_CASES_JSON);
+  const planSrc = path.join(runDir, TEST_PLAN_JSON);
+  const generatedSrc = path.join(runDir, 'generated');
+
+  if (!(await exists(casesSrc)) || !(await exists(planSrc)) || !(await exists(generatedSrc))) {
+    throw new Error(`El run ${runId} no esta calibrado. Ejecutalo primero.`);
+  }
+
+  // Copy cases and plan
+  await fs.copyFile(casesSrc, path.join(suiteDir, 'cases.json'));
+  await fs.copyFile(planSrc, path.join(suiteDir, 'plan.json'));
+
+  // Copy generated folder (spec files + runtime shim)
+  const generatedDest = path.join(suiteDir, 'generated');
+  await fs.rm(generatedDest, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(generatedDest, { recursive: true });
+  
+  const files = await fs.readdir(generatedSrc);
+  for (const file of files) {
+    const src = path.join(generatedSrc, file);
+    const dest = path.join(generatedDest, file);
+    const stat = await fs.stat(src);
+    if (stat.isFile()) {
+      await fs.copyFile(src, dest);
+    }
+  }
+
+  // Write suite.json
+  const metadata = {
+    module,
+    calibration_base_url: run.base_url || '',
+    origin_run_id: runId,
+    created_at: nowIso()
+  };
+  await writeJson(path.join(suiteDir, 'suite.json'), metadata);
+
+  return { suiteDir, metadata };
+}
+
+export async function loadSuite({
+  root,
+  module
+}: {
+  root: string;
+  module: string;
+}) {
+  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
+  const suiteJsonPath = path.join(suiteDir, 'suite.json');
+  if (!(await exists(suiteJsonPath))) {
+    return null;
+  }
+  const metadata = await readJson(suiteJsonPath, {});
+  const cases = await readJson(path.join(suiteDir, 'cases.json'), []);
+  return {
+    module,
+    metadata,
+    cases
+  };
+}
+
+export async function listSuites(root: string): Promise<string[]> {
+  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite');
+  if (!(await exists(suiteDir))) {
+    return [];
+  }
+  const entries = await fs.readdir(suiteDir, { withFileTypes: true });
+  const suites: string[] = [];
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      suites.push(entry.name);
+    }
+  }
+  return suites.sort();
+}
+
+export async function executeFrozenSuite({
+  root,
+  module,
+  baseUrl,
+  credentials = {}
+}: {
+  root: string;
+  module: string;
+  baseUrl?: string;
+  credentials?: ProGuide.Dict;
+}) {
+  const suiteDir = path.join(root, PROGUIDE_DIR, 'suite', module);
+  const casesPath = path.join(suiteDir, 'cases.json');
+  const planPath = path.join(suiteDir, 'plan.json');
+  const generatedDir = path.join(suiteDir, 'generated');
+  const suiteJsonPath = path.join(suiteDir, 'suite.json');
+
+  if (!(await exists(casesPath)) || !(await exists(planPath)) || !(await exists(generatedDir))) {
+    throw new Error(`La suite ${module} no existe o no tiene codigo congelado. Proba promoviendo un run primero.`);
+  }
+
+  const suiteMeta = await readJson(suiteJsonPath, {});
+  const cases = await readJson(casesPath, []);
+  const plan = await readJson(planPath, {});
+
+  const runDir = await newRunDir(root);
+  const runId = path.basename(runDir);
+  
+  const run = {
+    id: runId,
+    status: 'ready',
+    app_name: plan.app_name || 'ProGuide Markdown Cases',
+    base_url: baseUrl || suiteMeta.calibration_base_url || '',
+    created_at: nowIso(),
+    total_cases: cases.length,
+    passed: 0,
+    failed: 0,
+    inconclusive: 0,
+    setup_failed: 0,
+    blocked: 0,
+    html_path: null,
+    pdf_path: null
+  };
+  await saveRun(runDir, run);
+  
+  await fs.copyFile(casesPath, path.join(runDir, NORMALIZED_CASES_JSON));
+  await fs.copyFile(planPath, path.join(runDir, TEST_PLAN_JSON));
+  
+  const runGeneratedDir = path.join(runDir, 'generated');
+  await fs.mkdir(runGeneratedDir, { recursive: true });
+  const files = await fs.readdir(generatedDir);
+  for (const file of files) {
+    await fs.copyFile(path.join(generatedDir, file), path.join(runGeneratedDir, file));
+  }
+
+  return executePreparedRun({
+    root,
+    runId,
+    baseUrl: run.base_url,
+    credentials,
+    fromPlan: true,
+    frozen: true
+  });
 }

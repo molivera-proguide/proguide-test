@@ -312,6 +312,11 @@ const tools = [
           description:
             'Si true, respeta test_plan.json existente del run en vez de regenerarlo desde normalized_cases.json.'
         },
+        frozen: {
+          type: 'boolean',
+          description:
+            'Si true, ejecuta los specs ya generados sin regenerar codigo.'
+        },
         root: { type: 'string' },
         ...identityInputProperties,
         email: { type: 'string' },
@@ -596,7 +601,8 @@ async function callTool(name, args) {
       runId,
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
-      fromPlan: Boolean(args.from_plan)
+      fromPlan: Boolean(args.from_plan),
+      frozen: Boolean(args.frozen)
     });
     const bundle = await loadRunBundle(root, runId);
     const payload = {
