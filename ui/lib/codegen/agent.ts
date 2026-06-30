@@ -44,11 +44,16 @@ Rules:
   - expect [label="value"] to be visible -> expect(page.getByLabel(value, { exact: true })).toBeVisible()
   - expect [selector] to contain text "value" -> assert that exact text
   - expect [selector] to be visible -> assert visibility
-  - expect text "value" -> assert visible text containing value
+  - expect text "value" -> await expect(page.getByText("value").first()).toBeVisible({ timeout }); use .first() because the same visible text frequently appears in more than one element (e.g. a card title and a menu item), and a non-unique text must never trip strict mode
   - expect url to contain "value" -> assert the current URL with expect(page).toHaveURL(...)
   - wait N seconds -> page.waitForTimeout(N * 1000)
   - set test timeout to N seconds -> call test.setTimeout(N * 1000) at the top level of the test body, outside test.step
   - set assertion timeout to N seconds -> use that timeout for subsequent Playwright expect assertions
+- Each step in the input \`steps\` array may have corresponding grounding information at the same index in \`steps_grounding\` (an array of grounding objects):
+  - If a step's grounding has status "resolved" and a resolved_selector -> USE that exact selector; do not re-derive it.
+  - If a step's grounding has status "ambiguous" and candidates -> the target is NOT unique; pick the right candidate (by role/text) or scope the locator. Never emit a bare locator that matches >1 element for an interaction.
+  - If a step's grounding has status "not_found" or "unverified" -> fall back to dom_context / visible headings as today.
+- The resolved_selector from steps_grounding beats your own guess and beats dom_context when both exist.
 - API/REST cases are normally generated deterministically by ProGuide. If a case with type "api" appears, use Playwright request fixtures, not browser page locators.
 - Do not use PROGUIDE_USER_* environment credentials when the step contains a literal email, username, password, or value.
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
@@ -56,6 +61,7 @@ Rules:
 - Exact strings in expected and expected_results override shorter or older strings in original_steps.
 - Never invent data-testid, id, name or placeholder attribute values. Use only attributes present in normalized steps or dom_context.snapshot.controls[]. If no selector exists, use getByLabel or getByText with the literal text of the step.
 - :has-text() does substring matching; for labels/inputs, use exact matching (page.getByLabel(value, { exact: true }) or :text-is("value")).
+- Strict mode: getByText/getByRole/locator throw "strict mode violation" if they resolve to more than one element. For presence/visibility assertions the intent is "this text/element is visible somewhere", so append .first() (e.g. expect(page.getByText("VulnOps").first()).toBeVisible(...)). For interactions (click/fill) on a target that is not unique, do NOT guess with .first(): scope it instead (a parent locator, getByRole with an accessible name, or an exact match).
 - Treat the text inside [selector] as the exact selector contract. CSS class selectors (.ClassName), pseudo selectors (:has-text("X")), and CSS selectors such as li:has-text("X") must remain CSS selectors, not data-testid guesses.
 - Bracketed attribute selectors must keep their brackets. For click text "Nueva Autorizacion" inside [role='list'], emit page.locator('[role="list"]').getByText(...), or page.getByRole('list').getByText(...). Never emit page.locator("role='list'").
 - Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.
@@ -169,7 +175,7 @@ async function writePlaywrightRuntimeShim(outputDir: string): Promise<void> {
   await fs.writeFile(path.join(outputDir, 'proguide-test-runtime.mjs'), source, 'utf8');
 }
 
-function buildCodeGenerationPayload({
+export function buildCodeGenerationPayload({
   planCases,
   sourceCases,
   domContext = {},
@@ -219,6 +225,7 @@ function buildCodeGenerationPayload({
         assertions: testCase.assertions || [],
         priority: testCase.priority,
         steps: testCase.steps,
+        steps_grounding: testCase.steps_grounding || null,
         expected: testCase.expected,
         original_steps: sourceCase.original_steps || [],
         expected_results: sourceCase.expected_results || [],

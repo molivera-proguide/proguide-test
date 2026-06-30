@@ -278,8 +278,9 @@ proguide promote <run_id> --module checkout
 # 3. Ejecuta la regresion congelada (sin LLM ni pre-pass)
 proguide regress checkout --base-url http://localhost:3000 --json
 
-# Alternativa: re-ejecutar un run existente sin regenerar
+# Alternativa: re-ejecutar un run existente sin regenerar (o forzar pre-pass con --reground)
 proguide execute <run_id> --frozen
+proguide execute <run_id> --reground
 
 proguide list-suites --json
 ```

@@ -317,6 +317,11 @@ const tools = [
           description:
             'Si true, ejecuta los specs ya generados sin regenerar codigo.'
         },
+        reground: {
+          type: 'boolean',
+          description:
+            'Si true, fuerza el pre-pass de grounding de nuevo antes de ejecutar.'
+        },
         root: { type: 'string' },
         ...identityInputProperties,
         email: { type: 'string' },
@@ -607,7 +612,8 @@ async function callTool(name, args) {
       baseUrl: args.base_url || '',
       credentials: credentialsFromArgs(args),
       fromPlan: Boolean(args.from_plan),
-      frozen: Boolean(args.frozen)
+      frozen: Boolean(args.frozen),
+      reground: Boolean(args.reground)
     });
     const bundle = await loadRunBundle(root, runId);
     const payload = {

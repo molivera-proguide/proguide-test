@@ -163,14 +163,15 @@ const HELP_COMMANDS = [
   {
     command: 'execute',
     description: 'Ejecuta un run existente por run_id.',
-    usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--frozen] [--json]',
+    usage: 'proguide execute <run_id> [--base-url <url>] [--from-plan] [--frozen] [--reground] [--json]',
     options: [
       {
         option: '--base-url <url>',
         description: 'URL base para la ejecucion si el run la necesita.'
       },
       { option: '--from-plan', description: 'Usa el plan guardado como fuente de ejecucion.' },
-      { option: '--frozen', description: 'Ejecuta los specs ya generados sin regenerar codigo.' }
+      { option: '--frozen', description: 'Ejecuta los specs ya generados sin regenerar codigo.' },
+      { option: '--reground', description: 'Fuerza el pre-pass de grounding de nuevo antes de ejecutar.' }
     ],
     examples: [
       'proguide execute 2026-06-23_10-30-00 --base-url http://localhost:3000 --json',
@@ -661,7 +662,8 @@ async function commandExecute(parsed) {
     baseUrl: option(parsed.options, 'base-url') || '',
     credentials: credentialsFromOptions(parsed.options),
     fromPlan: Boolean(parsed.options['from-plan']),
-    frozen: Boolean(parsed.options['frozen'])
+    frozen: Boolean(parsed.options['frozen']),
+    reground: Boolean(parsed.options['reground'])
   });
   const bundle = await loadRunBundle(root, runId);
   const payload = runPayload(bundle.run, bundle.summary, bundle.cases, viewer);
@@ -1448,7 +1450,7 @@ function parseLongOption(
     };
   }
   if (
-    ['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run', 'from-plan'].includes(raw)
+    ['json', 'stdin', 'no-viewer', 'help', 'version', 'fix', 'dry-run', 'from-plan', 'frozen', 'reground'].includes(raw)
   ) {
     return { key: raw, value: true, index };
   }

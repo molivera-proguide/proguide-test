@@ -563,3 +563,44 @@ test('runner/results: grounded-confirmed locator failure stays failed (Prong A<-
     'failed'
   );
 });
+
+test('codegen/test-plan & agent: casesToTestPlan and buildCodeGenerationPayload propagate grounding', async () => {
+  const { casesToTestPlan } = await import('../lib/codegen/test-plan.js');
+  const { buildCodeGenerationPayload } = await import('../lib/codegen/agent.js');
+
+  const cases = [
+    {
+      id: 'tc_1',
+      title: 'UI Test case',
+      automation_state: 'listo',
+      type: 'ui',
+      executable_steps: [
+        { normalized_action: 'click button Acceder', grounding: { status: 'resolved', resolved_selector: 'button:has-text("Acceder")' } },
+        { normalized_action: 'wait 2 seconds' }
+      ]
+    }
+  ];
+
+  const plan = casesToTestPlan(cases, { sourceMd: 'test.md', appName: 'Test' });
+  assert.equal(plan.cases.length, 1);
+  assert.deepEqual(plan.cases[0].steps, ['click button Acceder', 'wait 2 seconds']);
+  assert.deepEqual(plan.cases[0].steps_grounding, [
+    { status: 'resolved', resolved_selector: 'button:has-text("Acceder")' },
+    null
+  ]);
+
+  const payload = buildCodeGenerationPayload({
+    planCases: plan.cases,
+    sourceCases: cases,
+    domContext: { by_case_id: { tc_1: { available: true } } },
+    batchIndex: 0,
+    batchCount: 1
+  });
+
+  assert.equal(payload.test_cases.length, 1);
+  assert.deepEqual(payload.test_cases[0].steps_grounding, [
+    { status: 'resolved', resolved_selector: 'button:has-text("Acceder")' },
+    null
+  ]);
+});
+

@@ -31,9 +31,15 @@ export function casesToTestPlan(
           })
         : null;
     const apiRequests = type === 'api' ? normalizeApiRequests(testCase.requests || []) : [];
-    const steps = (testCase.executable_steps || [])
-      .map((step) => step.normalized_action || step.original_text)
-      .filter(Boolean);
+    const steps: string[] = [];
+    const stepsGrounding: any[] = [];
+    for (const step of testCase.executable_steps || []) {
+      const action = step.normalized_action || step.original_text;
+      if (action) {
+        steps.push(action);
+        stepsGrounding.push(step.grounding || null);
+      }
+    }
     const caseData = mergeCaseData(testCase.data || {}, dataFromLines(testCase.data_used || []));
     const route =
       type === 'api'
@@ -64,6 +70,9 @@ export function casesToTestPlan(
         : type === 'api'
           ? [`api ${request.method} ${request.path}`]
           : ['go to /'],
+      steps_grounding: steps.length
+        ? stepsGrounding
+        : [null],
       expected: (testCase.expected_results || []).length
         ? testCase.expected_results
         : type === 'api'

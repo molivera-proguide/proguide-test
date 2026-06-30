@@ -633,7 +633,7 @@ export async function groundCaseSteps({
         step.review_reason = `Error al recorrer la ruta ${route}: ${errorMsg}.${hint}`;
       }
     }
-    return;
+    return walk;
   }
 
   const snapshotByStep = new Map(
@@ -652,6 +652,55 @@ export async function groundCaseSteps({
     }
     applyGrounding(step, groundStepAgainstSnapshot(step, snapshot), route);
   }
+
+  return walk;
+}
+
+function mergeWalkSnapshots(walkSteps: any[], maxControls: number = 80) {
+  const controls: any[] = [];
+  const headingsSet = new Set<string>();
+  const visibleTextSet = new Set<string>();
+  const seenSelectors = new Set<string>();
+  let finalUrl = '';
+  let finalTitle = '';
+
+  const validSteps = (walkSteps || []).filter((s) => s?.snapshot);
+
+  for (let i = validSteps.length - 1; i >= 0; i--) {
+    const snap = validSteps[i].snapshot;
+    if (!snap) continue;
+
+    if (!finalUrl && snap.url) finalUrl = snap.url;
+    if (!finalTitle && snap.title) finalTitle = snap.title;
+
+    if (Array.isArray(snap.headings)) {
+      for (const h of snap.headings) {
+        if (h) headingsSet.add(h);
+      }
+    }
+
+    if (snap.visible_text) {
+      visibleTextSet.add(snap.visible_text);
+    }
+
+    if (Array.isArray(snap.controls)) {
+      for (const ctrl of snap.controls) {
+        const key = ctrl.selector_hint || `${ctrl.tag}:${ctrl.text}`;
+        if (key && !seenSelectors.has(key)) {
+          seenSelectors.add(key);
+          controls.push(ctrl);
+        }
+      }
+    }
+  }
+
+  return {
+    url: finalUrl || '',
+    title: finalTitle || '',
+    headings: Array.from(headingsSet),
+    controls: controls.slice(0, maxControls),
+    visible_text: Array.from(visibleTextSet).join('\n\n')
+  };
 }
 
 export async function groundCases({
@@ -659,22 +708,50 @@ export async function groundCases({
   baseUrl,
   config,
   credentials = {},
-  cases
+  cases,
+  runDir
 }: {
   root: string;
   baseUrl: string;
   config: ProGuide.Dict;
   credentials?: ProGuide.Dict;
   cases: ProGuide.Dict[];
+  runDir?: string;
 }) {
   if (!baseUrl) return;
+  const byCaseId: ProGuide.Dict = {};
+
   for (const testCase of cases) {
-    await groundCaseSteps({
+    const walk = await groundCaseSteps({
       root,
       baseUrl,
       config,
       credentials,
       testCase
     });
+
+    if (walk && Array.isArray(walk.steps) && walk.success) {
+      const mergedSnap = mergeWalkSnapshots(walk.steps, Number(config.llm?.dom_context_max_controls || 80));
+      byCaseId[testCase.id] = {
+        available: true,
+        route: testCase.route || '/',
+        snapshot: mergedSnap
+      };
+    } else {
+      byCaseId[testCase.id] = {
+        available: false,
+        route: testCase.route || '/',
+        error: walk?.error || 'Pre-pass de grounding no produjo walk exitoso'
+      };
+    }
+  }
+
+  if (runDir) {
+    const outputPath = path.join(runDir, 'dom_context.json');
+    const output = {
+      available: Object.values(byCaseId).some((item: any) => item.available),
+      by_case_id: byCaseId
+    };
+    await fs.writeFile(outputPath, JSON.stringify(output, null, 2), 'utf8');
   }
 }

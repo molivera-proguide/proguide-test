@@ -28,7 +28,7 @@ test(
   'codegen/grounding: walk reaches the post-login screen and grounds its targets',
   { skip: process.env.PROGUIDE_WALK_E2E ? false : 'set PROGUIDE_WALK_E2E=1 to run (needs Chromium)' },
   async () => {
-    const { groundCaseSteps } = await import('../lib/codegen/grounding.js');
+    const { groundCases } = await import('../lib/codegen/grounding.js');
     const { defaultConfig } = await import('../lib/config/defaults.js');
 
     const server = http.createServer((request, response) => {
@@ -56,7 +56,7 @@ test(
         ]
       };
 
-      await groundCaseSteps({ root, baseUrl, config: defaultConfig(), testCase });
+      await groundCases({ root, baseUrl, config: defaultConfig(), cases: [testCase], runDir: root });
 
       const byNum = new Map<number, any>(testCase.executable_steps.map((s) => [s.number, s]));
       // Login-screen targets resolve.
@@ -67,6 +67,23 @@ test(
       assert.equal(byNum.get(6).grounding.status, 'resolved');
       // Genuinely absent text is flagged (not silently resolved).
       assert.notEqual(byNum.get(7).grounding.status, 'resolved');
+
+      // Assert dom_context.json was created and contains merged snapshots from both login and dashboard.
+      const domContextPath = path.join(root, 'dom_context.json');
+      const domContextText = await fs.readFile(domContextPath, 'utf8');
+      const domContext = JSON.parse(domContextText);
+
+      assert.equal(domContext.available, true);
+      const caseContext = domContext.by_case_id.caso_login;
+      assert.equal(caseContext.available, true);
+      
+      // Control from login screen (#username) and control from dashboard (logout-btn) must BOTH be present in the merged context
+      const controls = caseContext.snapshot.controls;
+      const usernames = controls.filter((c: any) => c.id === 'username');
+      const logouts = controls.filter((c: any) => c.data_testid === 'logout-btn');
+
+      assert.equal(usernames.length, 1, 'Username input from login screen must be present');
+      assert.equal(logouts.length, 1, 'Logout button from dashboard must be present');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await fs.rm(root, { recursive: true, force: true }).catch(() => {});

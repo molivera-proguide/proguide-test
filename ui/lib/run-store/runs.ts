@@ -6,7 +6,6 @@ import { maskSecretText, maskSecretsDeep } from '../shared/secrets.js';
 import { parseMarkdownCases } from '../markdown/parse-cases.js';
 import { isApiPlanCase } from '../codegen/api-spec.js';
 import { casesToTestPlan } from '../codegen/test-plan.js';
-import { collectDomContext } from '../codegen/dom-context.js';
 import { groundCases, caseGroundingConfirmed } from '../codegen/grounding.js';
 import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
@@ -94,6 +93,7 @@ type ExecutePreparedRunInput = {
   credentials?: ProGuide.Dict;
   fromPlan?: boolean;
   frozen?: boolean;
+  reground?: boolean;
 };
 
 export async function listRunRecords(root: string): Promise<ProGuide.Dict[]> {
@@ -272,7 +272,8 @@ export async function prepareMarkdownRun({
       baseUrl: cleanBaseUrl,
       config,
       credentials,
-      cases
+      cases,
+      runDir
     });
   }
 
@@ -393,7 +394,8 @@ export async function prepareCasesRun({
       baseUrl: cleanBaseUrl,
       config,
       credentials,
-      cases: normalizedCases
+      cases: normalizedCases,
+      runDir
     });
   }
 
@@ -572,7 +574,8 @@ export async function executePreparedRun({
   baseUrl,
   credentials = {},
   fromPlan = false,
-  frozen = false
+  frozen = false,
+  reground = false
 }: ExecutePreparedRunInput): Promise<ProGuide.Dict> {
   await loadDotEnv(root);
   const runDir = runPath(root, runId);
@@ -604,7 +607,7 @@ export async function executePreparedRun({
     message: 'Generando plan ejecutable.'
   });
 
-  const plan = fromPlan
+  let plan = fromPlan
     ? await loadExistingTestPlan(runDir, cases, run)
     : casesToTestPlan(cases, {
         sourceMd: SOURCE_MD,
@@ -681,21 +684,49 @@ export async function executePreparedRun({
         error: 'api_cases_do_not_require_dom_context',
         by_case_id: {}
       };
-      if (plan.cases.some((testCase) => !isApiPlanCase(testCase))) {
-        await appendEvent(runDir, {
-          run_id: run.id,
-          type: 'dom_context_started',
-          status: run.status,
-          message: 'Abriendo browser para leer contexto visible de la app.'
-        });
-        domContext = await collectDomContext({
-          root,
-          runDir,
-          plan,
-          baseUrl: actualBaseUrl,
-          config,
-          credentials
-        });
+
+      const hasUiCases = plan.cases.some((testCase) => !isApiPlanCase(testCase));
+      if (hasUiCases) {
+        const domContextPath = path.join(runDir, 'dom_context.json');
+        const hasDomContext = await exists(domContextPath);
+        const urlChanged = run.base_url && actualBaseUrl && run.base_url !== actualBaseUrl;
+        const shouldReground = reground || !hasDomContext || urlChanged;
+
+        if (shouldReground) {
+          await appendEvent(runDir, {
+            run_id: run.id,
+            type: 'dom_context_started',
+            status: run.status,
+            message: 'Abriendo browser para leer contexto visible de la app mediante grounding.'
+          });
+          await groundCases({
+            root,
+            baseUrl: actualBaseUrl,
+            config,
+            credentials,
+            cases,
+            runDir
+          });
+          await saveCasesFile(runDir, cases);
+          // Reload plan from newly grounded cases
+          plan = fromPlan
+            ? await loadExistingTestPlan(runDir, cases, run)
+            : casesToTestPlan(cases, {
+                sourceMd: SOURCE_MD,
+                appName: run.app_name || 'ProGuide Markdown Cases'
+              });
+          await writeJson(path.join(runDir, TEST_PLAN_JSON), plan);
+          // Update run record's base_url if it changed
+          if (urlChanged) {
+            run.base_url = actualBaseUrl;
+            await saveRun(runDir, run);
+          }
+        }
+
+        if (await exists(domContextPath)) {
+          domContext = await readJson(domContextPath, domContext);
+        }
+
         await appendEvent(runDir, {
           run_id: run.id,
           type: domContext.available ? 'dom_context_collected' : 'dom_context_unavailable',

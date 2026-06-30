@@ -182,7 +182,7 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 ### Paso 2 — Dry-run de validación (antes de ejecutar)
 
 1. Llama a `mcp__proguide-test__create_run` (tool principal de dry-run; crea SIN
-   ejecutar) con los casos.
+   ejecutar) con los casos. **Nota:** Esta llamada ejecuta el pre-pass de *grounding walk* que recorre las pantallas de la aplicación, tomando snapshots de DOM de cada paso (incluyendo páginas post-login). Esta exploración unificada y enriquecida se guarda en `dom_context.json` y sirve como la fuente de verdad de la estructura del DOM para el agente de generación de código.
 2. Revisa en la respuesta los `executable_steps`: cada uno trae `normalized_action` y
    `confidence`.
    En API estructurada, revisa tambien `request`/`requests`, `assertions` y `captures`;
@@ -256,7 +256,7 @@ pre-pass → determinista, rápida y barata.
    `proguide execute <run_id> --frozen` / arg `frozen: true` en `execute_run`). No llama al
    LLM ni reabre browser para contexto: dos corridas seguidas dan el mismo resultado.
 3. **Recalibrar ante drift de UI:** si la app cambió y N casos fallan, recalibra **solo**
-   esos casos (re-genera, verifica el diff del spec) y vuelve a `promote`. Distingue
+   esos casos (re-genera, verifica el diff del spec) y vuelve a `promote`. Si la URL base cambia o deseas forzar una nueva pasada de exploración del DOM y recalibrar los selectores, puedes pasar la opción `--reground` en la línea de comandos (ej. `proguide execute <run_id> --reground`) o el parámetro `reground: true` en la herramienta `execute_run`. Distingue
    siempre: selector viejo → recalibrar; bug real de la app → reportar, nunca relajar el
    assert.
 4. **Sesión compartida (opcional):** para suites con login user/pass, activar
@@ -284,3 +284,4 @@ pre-pass → determinista, rápida y barata.
 | El test hace timeout global usando `set test timeout`                         | `set test timeout` limita la duración total del test, incluyendo `wait`       | Preferir espera dinámica (`expect to be visible`) y reservar timeouts altos solo cuando sea necesario. |
 | El toast de éxito no se encuentra tras un redireccionamiento                  | El toast desaparece rápido tras el redirect antes de que el assertion corra   | Verificar un texto o elemento estable de la página destino en vez del toast.                  |
 | Clic por texto genérico falla por tag incorrecto (ej. li/nav)                 | Clicks genéricos sin rol explícito ahora son role-agnósticos (`getByText`)    | Para forzar botón escribe `click button "X"`, o usa selectores explícitos como `li:has-text("X")`.     |
+| `strict mode violation: getByText('X') resolved to N elements` en un `expect` | El texto a verificar aparece en más de un lugar (ej. título de card + menú)   | El runner usa `.first()` para `expect text "X"`. Si querés verificar un lugar puntual, scopealo: `expect h1:has-text("X")` o un selector más específico. |
