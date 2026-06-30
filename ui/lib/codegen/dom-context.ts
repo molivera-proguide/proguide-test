@@ -371,7 +371,18 @@ async function main() {
     } catch {
       // ignore
     }
-    const accessibility = await page.accessibility.snapshot();
+    // page.accessibility fue removido en Playwright moderno (>=1.5x): usar el
+    // ariaSnapshot del locator cuando exista; fallback defensivo si ninguno esta.
+    let accessibility = null;
+    try {
+      if (page.accessibility && typeof page.accessibility.snapshot === 'function') {
+        accessibility = await page.accessibility.snapshot();
+      } else if (typeof page.locator === 'function') {
+        accessibility = await page.locator('body').ariaSnapshot();
+      }
+    } catch {
+      accessibility = null;
+    }
     const snapshot = await page.evaluate(DOM_SNAPSHOT_JS, maxControls);
     result = {
       success: true,
