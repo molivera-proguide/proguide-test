@@ -249,6 +249,38 @@ function renderTypeScriptAction(
     return { lines, navigates: false };
   }
 
+  // click text "value" (role-agnostic; matches any element, not just button)
+  const clickTextMatch = text.match(/^\s*click\s+text\s+["'](.+?)["']\s*$/i);
+  if (clickTextMatch) {
+    lines.push(
+      `  await page.getByText(new RegExp(escapeRegExp(${jsString(clickTextMatch[1].trim())}), 'i')).first().click({ timeout: ${assertionTimeoutMs} });`
+    );
+    lines.push("  await page.waitForLoadState('domcontentloaded');", '');
+    return { lines, navigates: false };
+  }
+
+  // fill text "label" inside [selector] with value (scoped label inside a container)
+  const contextualFillMatch = text.match(
+    /^\s*fill\s+text\s+["'](.+?)["']\s+inside\s+(.+?)\s+with\s+(.+?)\s*$/i
+  );
+  if (contextualFillMatch) {
+    lines.push(
+      `  await page.locator(${jsString(selectorFromDslTarget(contextualFillMatch[2]))}).getByLabel(${jsString(contextualFillMatch[1].trim())}).first().fill(${jsString(stripQuotes(contextualFillMatch[3].trim()))}, { timeout: 5000 });`,
+      ''
+    );
+    return { lines, navigates: false };
+  }
+
+  // fill [label="value"] with value -> exact label match (avoid invalid [label] CSS / substring)
+  const labelFillMatch = text.match(/^\s*fill\s+\[label=["'](.+?)["']\]\s+with\s+(.+?)\s*$/i);
+  if (labelFillMatch) {
+    lines.push(
+      `  await page.getByLabel(${jsString(labelFillMatch[1].trim())}, { exact: true }).first().fill(${jsString(stripQuotes(labelFillMatch[2].trim()))}, { timeout: 5000 });`,
+      ''
+    );
+    return { lines, navigates: false };
+  }
+
   const fillMatch = text.match(/^\s*fill\s+(.+?)\s+with\s+(.+?)\s*$/i);
   if (fillMatch) {
     lines.push(

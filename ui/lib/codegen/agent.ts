@@ -36,7 +36,12 @@ Rules:
 - Treat normalized steps as authoritative DSL:
   - fill [selector] with value -> page.locator(selector).fill(value)
   - click [selector] -> page.locator(selector).click()
+  - click text "value" -> page.getByText(value).click() (role-agnostic; DO NOT assume button)
+  - click button "value" -> page.getByRole('button', { name: value }).click()
   - click text "value" inside [selector] -> page.locator(selector).getByText(value).click()
+  - fill text "value" inside [selector] with v -> page.locator(selector).getByLabel(value).fill(v)
+  - fill [label="value"] with v -> page.getByLabel(value, { exact: true }).fill(v)
+  - expect [label="value"] to be visible -> expect(page.getByLabel(value, { exact: true })).toBeVisible()
   - expect [selector] to contain text "value" -> assert that exact text
   - expect [selector] to be visible -> assert visibility
   - expect text "value" -> assert visible text containing value
@@ -49,7 +54,8 @@ Rules:
 - Use credentials from environment variables PROGUIDE_USER_EMAIL, PROGUIDE_USER_USERNAME, PROGUIDE_USER_PASSWORD when needed.
 - If a test case includes data.user.email or data.user.password, prefer those per-case values for inputs over global defaults.
 - Exact strings in expected and expected_results override shorter or older strings in original_steps.
-- Never invent data-testid/id selectors. Use only selectors present in normalized steps or dom_context.snapshot.controls[].selector_hint. If no selector exists, assert real headings or visible text from dom_context instead.
+- Never invent data-testid, id, name or placeholder attribute values. Use only attributes present in normalized steps or dom_context.snapshot.controls[]. If no selector exists, use getByLabel or getByText with the literal text of the step.
+- :has-text() does substring matching; for labels/inputs, use exact matching (page.getByLabel(value, { exact: true }) or :text-is("value")).
 - Treat the text inside [selector] as the exact selector contract. CSS class selectors (.ClassName), pseudo selectors (:has-text("X")), and CSS selectors such as li:has-text("X") must remain CSS selectors, not data-testid guesses.
 - Bracketed attribute selectors must keep their brackets. For click text "Nueva Autorizacion" inside [role='list'], emit page.locator('[role="list"]').getByText(...), or page.getByRole('list').getByText(...). Never emit page.locator("role='list'").
 - Prefer data-testid/id selector_hint over placeholder locators when the placeholder is empty, generic, or rendered as bullets/symbols.

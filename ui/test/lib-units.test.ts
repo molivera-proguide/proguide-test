@@ -128,6 +128,23 @@ test('cases/normalize: feedback DSL regressions stay explicit', () => {
   assert.equal(normalizeStep('wait 30 seconds'), 'wait 30 seconds');
   assert.equal(normalizeStep('set test timeout to 900 seconds'), 'set test timeout to 900 seconds');
   assert.equal(inferCaseRoute('/', ["expect URL to contain '/elegibility'"], []), '/');
+
+  // A1, A2, C1 regressions
+  assert.equal(normalizeStep('Click the "Acceder" button'), 'click button Acceder');
+  assert.equal(normalizeStep('Press "Entrar"'), 'click text "Entrar"');
+  assert.equal(normalizeStep('clic en "Volver"'), 'click text "Volver"');
+  assert.equal(normalizeStep('click "BPM"'), 'click text "BPM"');
+  assert.equal(normalizeStep('Click the "Solicitar nuevo Caso"'), 'click text "Solicitar nuevo Caso"');
+  assert.equal(normalizeStep('click button "Acceder"'), 'click button Acceder');
+  assert.equal(normalizeStep('haz clic en el botón "Acceder"'), 'click button Acceder');
+  assert.equal(
+    normalizeStep('fill the "Nombre" input inside the "Persona de contacto técnico" section with "Mariano"'),
+    'fill [label="Nombre"] with "Mariano"'
+  );
+  assert.equal(
+    normalizeStep('fill the "Nombre" input inside "#section-id" with "Mariano"'),
+    'fill text "Nombre" inside [#section-id] with "Mariano"'
+  );
 });
 
 test('cases/api-normalize: inferCaseType detects api vs ui', () => {
@@ -225,6 +242,33 @@ test('views/code: TypeScript preview renders feedback DSL without navigation/ass
     /toHaveURL\(new RegExp\(".\*\/elegibility.\*", 'i'\), \{ timeout: 900000 \}\)/
   );
   assert.match(code, /toBeVisible\(\{ timeout: 900000 \}\)/);
+});
+
+test('views/code: TypeScript preview renders new role-agnostic and label DSL forms', () => {
+  const code = buildTypeScriptCode(
+    {
+      id: 'TC-UI-010',
+      title: 'Formas DSL nuevas',
+      route: '/',
+      executable_steps: [
+        { normalized_action: 'click text "BPM"' },
+        { normalized_action: 'fill [label="Nombre"] with "Mariano"' },
+        { normalized_action: 'fill text "Nombre" inside [#section-id] with "Mariano"' }
+      ],
+      expected_results: [],
+      data: {}
+    },
+    { base_url: 'https://example.test' }
+  );
+
+  // click text "BPM" -> role-agnostic getByText, NOT a button locator nor a TODO
+  assert.match(code, /getByText\(new RegExp\(escapeRegExp\("BPM"\), 'i'\)\)\.first\(\)\.click/);
+  assert.doesNotMatch(code, /TODO: ajustar/);
+  // fill [label="Nombre"] -> exact label, no invalid [label=...] CSS selector
+  assert.match(code, /getByLabel\("Nombre", \{ exact: true \}\)\.first\(\)\.fill\("Mariano"/);
+  assert.doesNotMatch(code, /locator\("\[label=/);
+  // fill text "Nombre" inside [#section-id] -> scoped getByLabel within the container
+  assert.match(code, /locator\("#section-id"\)\.getByLabel\("Nombre"\)\.first\(\)\.fill\("Mariano"/);
 });
 
 test('codegen/agent: rejects role attribute selectors without brackets', () => {
@@ -386,11 +430,14 @@ test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works cor
   assert.deepEqual(parseStepTarget('click #username'), { type: 'selector', value: '#username' });
   assert.deepEqual(parseStepTarget('fill [name="email"] with user'), { type: 'selector', value: '[name="email"]' });
   assert.deepEqual(parseStepTarget('expect text "Dashboard"'), { type: 'text', value: 'Dashboard' });
+  assert.deepEqual(parseStepTarget('click text "BPM"'), { type: 'text', value: 'BPM' });
+  assert.deepEqual(parseStepTarget('fill text "Nombre" inside [#section-id] with Mariano'), { type: 'text', value: 'Nombre' });
 
   const snapshot = {
     controls: [
       { selector_hint: '#username', id: 'username', text: '' },
-      { selector_hint: 'button:has-text("Acceder")', text: 'Acceder', role: 'button' }
+      { selector_hint: 'button:has-text("Acceder")', text: 'Acceder', role: 'button' },
+      { selector_hint: 'li:has-text("BPM")', text: 'BPM', role: 'listitem' }
     ],
     visible_text: 'Bienvenido a la app. Dashboard cargado.',
     headings: ['Dashboard']
@@ -432,11 +479,17 @@ test('codegen/grounding: parseStepTarget and groundStepAgainstSnapshot works cor
     value: '[#username]'
   });
 
+  // Role-agnostic click text resolved against li
+  const step6 = { normalized_action: 'click text "BPM"' };
+  const res6 = groundStepAgainstSnapshot(step6, snapshot);
+  assert.equal(res6.status, 'resolved');
+  assert.equal(res6.resolved_selector, 'li:has-text("BPM")');
+
   // Class/complex CSS selectors can't be confirmed from the snapshot -> unverified
   // (not a false not_found that would tempt the agent to "fix" a valid selector).
-  const step6 = { normalized_action: 'click [.login-btn]' };
-  const res6 = groundStepAgainstSnapshot(step6, snapshot);
-  assert.equal(res6.status, 'unverified');
+  const step7 = { normalized_action: 'click [.login-btn]' };
+  const res7 = groundStepAgainstSnapshot(step7, snapshot);
+  assert.equal(res7.status, 'unverified');
 });
 
 

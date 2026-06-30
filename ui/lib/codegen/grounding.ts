@@ -94,6 +94,14 @@ export function parseStepTarget(action: string): { type: 'selector' | 'text'; va
     return { type: 'text', value: clickTextMatch[1] };
   }
 
+  const clickTextBare = action.match(/^click text\s+["'](.+?)["']\s*$/i);
+  if (clickTextBare) return { type: 'text', value: clickTextBare[1] };
+
+  const fillTextInsideMatch = action.match(/^fill text\s+["'](.+?)["']\s+inside\s+(.+?)\s+with\s+(.+)$/i);
+  if (fillTextInsideMatch) {
+    return { type: 'text', value: fillTextInsideMatch[1] };
+  }
+
   // 3. click [li:has-text("something")] -> text "something"
   const liMatch = action.match(/^click \[li:has-text\((.+?)\)\]$/i);
   if (liMatch) {
@@ -329,9 +337,16 @@ const DOM_SNAPSHOT_JS = (maxControls) => {
     if (testId) return '[data-testid="' + testId + '"]';
     if (el.id) return '#' + cssEscape(el.id);
     if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
-    return el.tagName.toLowerCase();
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'li') {
+      const innerText = text(el.innerText || el.textContent, 30).replace(/"/g, '\\"');
+      if (innerText) {
+        return 'li:has-text("' + innerText + '")';
+      }
+    }
+    return tag;
   };
-  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role], [data-testid], [data-test], [data-cy]'))
+  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, li, label, [role], [onclick], [data-testid], [data-test], [data-cy]'))
     .filter(visible)
     .slice(0, maxControls)
     .map((el) => ({
@@ -376,8 +391,26 @@ function dslToCss(sel) {
 async function advance(page, action, base, timeout) {
   const a = String(action || '').trim();
   let m;
+  if ((m = a.match(/^fill text\s+["'](.+?)["']\s+inside\s+(.+?)\s+with\s+(.+)$/i))) {
+    const label = m[1].trim();
+    const container = dslToCss(m[2].trim());
+    const val = stripQuotes(m[3].trim());
+    await page.locator(container).getByLabel(label).first().fill(val, { timeout });
+    return;
+  }
   if ((m = a.match(/^fill\s+(.+?)\s+with\s+(.+)$/i)) || (m = a.match(/^fill\s+(.+)$/i))) {
     await page.fill(dslToCss(m[1].trim()), m[2] ? stripQuotes(m[2].trim()) : '', { timeout });
+    return;
+  }
+  if ((m = a.match(/^click text\s+["'](.+?)["']\s+inside\s+(.+)$/i))) {
+    const textVal = m[1].trim();
+    const container = dslToCss(m[2].trim());
+    await page.locator(container).getByText(textVal).first().click({ timeout });
+    return;
+  }
+  if ((m = a.match(/^click text\s+["'](.+?)["']\s*$/i))) {
+    const textVal = m[1].trim();
+    await page.getByText(textVal).first().click({ timeout });
     return;
   }
   if ((m = a.match(/^click button\s+(.+)$/i))) {

@@ -66,9 +66,16 @@ const DOM_SNAPSHOT_JS = (maxControls) => {
     if (testId) return '[data-testid="' + testId + '"]';
     if (el.id) return '#' + cssEscape(el.id);
     if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
-    return el.tagName.toLowerCase();
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'li') {
+      const innerText = text(el.innerText || el.textContent, 30).replace(/"/g, '\\"');
+      if (innerText) {
+        return 'li:has-text("' + innerText + '")';
+      }
+    }
+    return tag;
   };
-  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role], [data-testid], [data-test], [data-cy]'))
+  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, li, label, [role], [onclick], [data-testid], [data-test], [data-cy]'))
     .filter(visible)
     .slice(0, maxControls)
     .map((el) => ({
@@ -291,9 +298,16 @@ const DOM_SNAPSHOT_JS = (maxControls) => {
     if (testId) return '[data-testid="' + testId + '"]';
     if (el.id) return '#' + cssEscape(el.id);
     if (el.getAttribute('name')) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
-    return el.tagName.toLowerCase();
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'li') {
+      const innerText = text(el.innerText || el.textContent, 30).replace(/"/g, '\\"');
+      if (innerText) {
+        return 'li:has-text("' + innerText + '")';
+      }
+    }
+    return tag;
   };
-  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, [role], [data-testid], [data-test], [data-cy]'))
+  const controls = Array.from(document.querySelectorAll('input, textarea, select, button, a, li, label, [role], [onclick], [data-testid], [data-test], [data-cy]'))
     .filter(visible)
     .slice(0, maxControls)
     .map((el) => ({

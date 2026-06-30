@@ -579,6 +579,11 @@ async function callTool(name, args) {
       run: prepared.run,
       cases: prepared.cases,
       appended_cases: prepared.appended_cases,
+      automation_summary: {
+        listo: prepared.cases.filter((c) => c.automation_state === 'listo').length,
+        necesita_revision: prepared.cases.filter((c) => c.automation_state === 'necesita_revision').length,
+        no_automatizable_aun: prepared.cases.filter((c) => c.automation_state === 'no_automatizable_aun').length
+      },
       ...viewer
     };
     return toolResult(runMessage('creado desde Markdown', payload), payload);

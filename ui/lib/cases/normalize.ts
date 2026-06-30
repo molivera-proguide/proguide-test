@@ -55,8 +55,14 @@ export function normalizeStep(step: unknown): string {
   const urlAssertion = normalizeUrlAssertion(step);
   if (urlAssertion) return urlAssertion;
   const route = extractRoute(step);
-  const clickTarget = extractClickTarget(step);
-  if (clickTarget) return `click button ${clickTarget}`;
+  const clickInfo = extractClickTarget(step);
+  if (clickInfo) {
+    if (clickInfo.isButton) {
+      return `click button ${clickInfo.target}`;
+    } else {
+      return `click text ${JSON.stringify(clickInfo.target)}`;
+    }
+  }
   if (route) return `go to ${route}`;
   if (
     /\b(email|e-mail|correo|usuario|user)\b/.test(normalized) &&
@@ -77,7 +83,11 @@ export function normalizeStep(step: unknown): string {
   if (isAssertion && /\bdashboard\b/.test(normalized)) return 'expect text "Dashboard"';
   if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized))
     return 'submit form';
-  if (NAVIGATION_RE.test(normalized)) return 'go to /';
+  const isInteraction =
+    /^\s*(?:click|clic|hacer\s+clic|press|presionar|seleccionar|tocar|tap|fill|completar|escribir|ingresar)\b/i.test(
+      String(step || '').trim()
+    );
+  if (!isInteraction && NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
   return String(step || '');
 }
@@ -157,6 +167,8 @@ export function explicitStep(step: unknown): string | null {
   if (textExpectation) return textExpectation;
   const contextualClick = normalizeContextualClick(text);
   if (contextualClick) return contextualClick;
+  const contextualFill = normalizeContextualFill(text);
+  if (contextualFill) return contextualFill;
   const listItemClick = normalizeListItemClick(text);
   if (listItemClick) return listItemClick;
   const cssSelectorAction = normalizeCssSelectorAction(text);
@@ -244,6 +256,22 @@ function normalizeContextualClick(text: unknown): string | null {
   const selector = cleanCssSelectorTarget(match[2]);
   if (!label || !selector || !isCssSelectorTarget(selector)) return null;
   return `click text ${JSON.stringify(label)} inside ${formatSelectorDsl(selector)}`;
+}
+
+function normalizeContextualFill(text: unknown): string | null {
+  const match = String(text || '').match(
+    /^\s*(?:fill|completar|ingresar|escribir|cargar|setear|introducir)\s+(?:the\s+|el\s+|la\s+)?["']?([^"']+)["']?\s+(?:input|campo)?\s*(?:inside|dentro\s+de|dentro)\s+(.+?)\s+(?:with|con)\s+(.+?)\s*$/i
+  );
+  if (!match) return null;
+  const label = stripWrappingQuotes(match[1].trim().replace(/[.,;:]+$/, ''));
+  const selector = cleanCssSelectorTarget(match[2]);
+  const value = match[3].trim();
+  if (!label || !selector || !value) return null;
+  if (isCssSelectorTarget(selector)) {
+    return `fill text ${JSON.stringify(label)} inside ${formatSelectorDsl(selector)} with ${value}`;
+  } else {
+    return `fill [label=${JSON.stringify(label)}] with ${value}`;
+  }
 }
 
 function normalizeListItemClick(text: unknown): string | null {
@@ -477,16 +505,36 @@ function extractRoute(step: unknown): string | null {
   return value.startsWith('/') ? value : `/${value}`;
 }
 
-function extractClickTarget(step: unknown): string | null {
+function extractClickTarget(step: unknown): { target: string; isButton: boolean } | null {
+  const text = String(step);
+  // 0. Preferir SIEMPRE un target entre comillas (soporta "Click the \"X\" button",
+  //    'clic en "Guardar"', etc.). Un valor entrecomillado es un label real aunque sea
+  //    "button" → no aplicar la lista de exclusión a capturas entrecomilladas.
+  const quoted = text.match(
+    /(?:click|clic|hacer\s+clic|press|presionar|seleccionar|tocar|tap)\b[^"']*["']([^"']+)["']/i
+  );
+  if (quoted) {
+    const target = quoted[1].trim().replace(/[.,;]+$/, '');
+    if (target) {
+      const textWithoutQuotes = text.replace(/["'][^"']+["']/g, '');
+      const isButton = /\b(bot[oó]n|button)s?\b/i.test(textWithoutQuotes);
+      return { target, isButton };
+    }
+  }
+
+  // 1-2. patrones existentes (sin comillas) — mantener la exclusión button/boton/formulario
   const patterns = [
     /(?:hacer\s+)?clic\s+(?:en\s+)?(?:el\s+boton\s+|boton\s+)?["']?([^"']+?)["']?$/i,
     /(?:click|press|presionar|seleccionar)\s+(?:button\s+|boton\s+)?["']?([^"']+?)["']?$/i
   ];
   for (const pattern of patterns) {
-    const match = String(step).match(pattern);
+    const match = text.match(pattern);
     if (!match) continue;
     const target = match[1].trim().replace(/[.,;]+$/, '');
-    if (target && !['formulario', 'boton', 'button'].includes(norm(target))) return target;
+    if (target && !['formulario', 'boton', 'button'].includes(norm(target))) {
+      const isButton = /\b(bot[oó]n|button)s?\b/i.test(text);
+      return { target, isButton };
+    }
   }
   return null;
 }

@@ -285,7 +285,19 @@ export async function prepareMarkdownRun({
     })
   );
 
-  run.status = 'ready';
+  const isAnyListo = cases.some((item) => item.automation_state === 'listo');
+  if (!isAnyListo) {
+    run.status = 'blocked';
+    await saveRun(runDir, run);
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'warning',
+      status: run.status,
+      message: `${cases.length} caso(s) interpretado(s), 0 automatizables.`
+    });
+  } else {
+    run.status = 'ready';
+  }
   run.total_cases = cases.length;
   await saveRun(runDir, run);
   await appendEvent(runDir, {
@@ -394,7 +406,19 @@ export async function prepareCasesRun({
     })
   );
 
-  run.status = 'ready';
+  const isAnyListo = normalizedCases.some((item) => item.automation_state === 'listo');
+  if (!isAnyListo) {
+    run.status = 'blocked';
+    await saveRun(runDir, run);
+    await appendEvent(runDir, {
+      run_id: run.id,
+      type: 'warning',
+      status: run.status,
+      message: `${normalizedCases.length} caso(s) estructurado(s), 0 automatizables.`
+    });
+  } else {
+    run.status = 'ready';
+  }
   run.total_cases = normalizedCases.length;
   await saveRun(runDir, run);
   await appendEvent(runDir, {
@@ -587,6 +611,13 @@ export async function executePreparedRun({
         appName: run.app_name || 'ProGuide Markdown Cases'
       });
   if (!plan.cases.length) {
+    const dropped = cases
+      .filter((c) => !c.excluded)
+      .map((c) => `- ${c.id} (${c.title}): ${c.automation_state} — ${c.state_reason}`);
+    const detail = dropped.length
+      ? `Todos los casos quedaron fuera del plan:\n${dropped.join('\n')}\n` +
+        `Sólo se generan casos en estado 'listo'. Revisá pasos/resultado esperado o pasá los casos como JSON estructurado.`
+      : 'No hay casos para generar codigo. Revisa normalized_cases.json.';
     run.status = 'blocked';
     run.finished_at = nowIso();
     run.blocked = cases.length;
@@ -595,9 +626,9 @@ export async function executePreparedRun({
       run_id: run.id,
       type: 'error_global',
       status: run.status,
-      message: 'No hay casos para generar codigo. Revisa normalized_cases.json.'
+      message: detail
     });
-    throw new Error('No hay casos para generar codigo.');
+    throw new Error(detail);
   }
 
   // Carry the dry-run grounding verdict onto each plan case so result
