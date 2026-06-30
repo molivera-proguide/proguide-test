@@ -48,10 +48,6 @@ export function normalizeStep(step: unknown): string {
   if (explicit) return explicit;
   const apiStep = normalizeApiStep(step);
   if (apiStep) return apiStep;
-  const isAssertion =
-    /\b(expect|validar|verificar|comprobar|debe|mostrar|muestra|contiene|visible|aparece)\b/.test(
-      normalized
-    );
   const urlAssertion = normalizeUrlAssertion(step);
   if (urlAssertion) return urlAssertion;
   const route = extractRoute(step);
@@ -63,31 +59,12 @@ export function normalizeStep(step: unknown): string {
       return `click text ${JSON.stringify(clickInfo.target)}`;
     }
   }
+  // Navigation/credentials/submit intent without an explicit selector, value or
+  // route is NOT rewritten here: doing so would fabricate app content (a literal
+  // "Dashboard", a "/" destination, or a guess about which field is "the email").
+  // The raw text falls through to grounding + the codegen LLM, which resolve it
+  // against the real DOM (dom_context/steps_grounding) instead of guessing.
   if (route) return `go to ${route}`;
-  if (
-    /\b(email|e-mail|correo|usuario|user)\b/.test(normalized) &&
-    /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)
-  ) {
-    return /\b(invalido|invalid|malformado|incorrecto)\b/.test(normalized)
-      ? 'enter invalid email'
-      : 'enter valid email';
-  }
-  if (
-    /\b(password|pass|clave|contrasena)\b/.test(normalized) &&
-    /\b(completar|ingresar|escribir|cargar|enter)\b/.test(normalized)
-  ) {
-    return /\b(invalido|invalid|corta|corto|incorrecto)\b/.test(normalized)
-      ? 'enter invalid password'
-      : 'enter valid password';
-  }
-  if (isAssertion && /\bdashboard\b/.test(normalized)) return 'expect text "Dashboard"';
-  if (!isAssertion && /\b(enviar|submit|login|iniciar sesion|continuar)\b/.test(normalized))
-    return 'submit form';
-  const isInteraction =
-    /^\s*(?:click|clic|hacer\s+clic|press|presionar|seleccionar|tocar|tap|fill|completar|escribir|ingresar)\b/i.test(
-      String(step || '').trim()
-    );
-  if (!isInteraction && NAVIGATION_RE.test(normalized)) return 'go to /';
   if (/\b(recargar|refresh)\b/.test(normalized)) return 'refresh page';
   return String(step || '');
 }

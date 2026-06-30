@@ -147,6 +147,36 @@ test('cases/normalize: feedback DSL regressions stay explicit', () => {
   );
 });
 
+test('cases/normalize: does not fabricate app content (PLAN-dehardcode-normalizer Ola 1+2)', () => {
+  // Tier 1: a vague post-login assertion is no longer rewritten into the
+  // hardcoded English literal "expect text Dashboard" — it falls through as
+  // raw text for grounding + the codegen LLM to resolve against the real DOM.
+  assert.equal(
+    normalizeStep('verificar que se muestra el dashboard'),
+    'verificar que se muestra el dashboard'
+  );
+  assert.equal(
+    normalizeStep('Se muestra el dashboard de administracion'),
+    'Se muestra el dashboard de administracion'
+  );
+  // Tier 2: navigation intent without a real, explicit route is not rewritten
+  // into a fabricated "go to /" destination.
+  assert.equal(normalizeStep('Ir al dashboard'), 'Ir al dashboard');
+  assert.equal(normalizeStep('Acceder a la aplicacion'), 'Acceder a la aplicacion');
+  // An explicit route is still extracted and rewritten (Tier 1/2 "mantener").
+  assert.equal(normalizeStep('Ir a /dashboard'), 'go to /dashboard');
+  // Ola 2 / Tier 3: login/credential steps without an explicit selector or
+  // value no longer guess "this field is the email/password" — they stay raw
+  // for grounding (real input) + the explicit/data.user value to resolve.
+  assert.equal(normalizeStep('Ingresar usuario valido'), 'Ingresar usuario valido');
+  assert.equal(normalizeStep('completar usuario con eolivera'), 'completar usuario con eolivera');
+  assert.equal(
+    normalizeStep('Completar la contrasena con un valor invalido'),
+    'Completar la contrasena con un valor invalido'
+  );
+  assert.equal(normalizeStep('Enviar el formulario'), 'Enviar el formulario');
+});
+
 test('cases/api-normalize: inferCaseType detects api vs ui', () => {
   assert.equal(inferCaseType({ type: 'api' }), 'api');
   assert.equal(inferCaseType({ request: { method: 'GET', path: '/x' } }), 'api');
@@ -269,6 +299,25 @@ test('views/code: TypeScript preview renders new role-agnostic and label DSL for
   assert.doesNotMatch(code, /locator\("\[label=/);
   // fill text "Nombre" inside [#section-id] -> scoped getByLabel within the container
   assert.match(code, /locator\("#section-id"\)\.getByLabel\("Nombre"\)\.first\(\)\.fill\("Mariano"/);
+});
+
+test('views/code: preview never fabricates a "redirect to dashboard/home" URL guess', () => {
+  const code = buildTypeScriptCode(
+    {
+      id: 'TC-UI-011',
+      title: 'Login redirige',
+      route: '/login',
+      executable_steps: [],
+      expected_results: ['El sistema redirige al dashboard principal'],
+      data: {}
+    },
+    { base_url: 'https://example.test' }
+  );
+  // No invented URL keyword pattern (home|dashboard|app|inicio): a vague
+  // expected result with no real, literal text degrades to a safe check
+  // instead of guessing app vocabulary (PLAN-dehardcode-normalizer.md §6.3).
+  assert.doesNotMatch(code, /toHaveURL\(\/\.\*\(home\|dashboard\|app\|inicio\)/);
+  assert.match(code, /expect\(page\.locator\("body"\)\)\.toBeVisible/);
 });
 
 test('codegen/agent: rejects role attribute selectors without brackets', () => {
@@ -541,6 +590,36 @@ test('codegen/grounding: accent-insensitive match and ranked candidates', async 
   assert.equal(caseGroundingConfirmed({ executable_steps: [] }), false);
 });
 
+test('codegen/grounding: caseHasNotFoundTarget flags a not_found target as a signal', async () => {
+  const { caseHasNotFoundTarget } = await import('../lib/codegen/grounding.js');
+  assert.equal(
+    caseHasNotFoundTarget({
+      executable_steps: [
+        { normalized_action: 'expect text "Finanzas familiares"', grounding: { status: 'resolved' } }
+      ]
+    }),
+    false
+  );
+  assert.equal(
+    caseHasNotFoundTarget({
+      executable_steps: [
+        { normalized_action: 'expect text "Dashboard"', grounding: { status: 'not_found' } }
+      ]
+    }),
+    true
+  );
+  // ambiguous/unverified are not a not_found signal by themselves.
+  assert.equal(
+    caseHasNotFoundTarget({
+      executable_steps: [
+        { normalized_action: 'click [.btn]', grounding: { status: 'unverified' } }
+      ]
+    }),
+    false
+  );
+  assert.equal(caseHasNotFoundTarget({ executable_steps: [] }), false);
+});
+
 test('runner/results: grounded-confirmed locator failure stays failed (Prong A<->B)', async () => {
   const { normalizePlaywrightSpecResult } = await import('../lib/runner/results.js');
   const spec = {
@@ -561,6 +640,22 @@ test('runner/results: grounded-confirmed locator failure stays failed (Prong A<-
   assert.equal(
     normalizePlaywrightSpecResult(spec, { groundingConfirmed: true }).status,
     'failed'
+  );
+});
+
+test('runner/results: a not_found target that "passes" by chance is flagged needs_calibration, not a false green', async () => {
+  const { normalizePlaywrightSpecResult } = await import('../lib/runner/results.js');
+  const passedSpec = {
+    ok: true,
+    tests: [{ results: [{ status: 'passed', duration: 500 }] }]
+  };
+  // Plain pass, no unresolved target -> stays passed.
+  assert.equal(normalizePlaywrightSpecResult(passedSpec).status, 'passed');
+  // Passed, but grounding never confirmed the target (not_found) -> signal,
+  // not a gate: it still executed, but is surfaced as needs_calibration.
+  assert.equal(
+    normalizePlaywrightSpecResult(passedSpec, { hasNotFoundTarget: true }).status,
+    'needs_calibration'
   );
 });
 

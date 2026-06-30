@@ -79,6 +79,21 @@ export function caseGroundingConfirmed(testCase: ProGuide.Dict): boolean {
   return targeted > 0;
 }
 
+// True when at least one element-targeting step of the case was grounded as
+// `not_found` (the dry-run walk found the screen but no matching element/text).
+// Used as a SIGNAL, not a gate: a case can still execute and even "pass" (e.g.
+// the LLM fell back to a real heading instead of the unresolved literal), but
+// the result is flagged `needs_calibration` instead of a plain `passed` so a
+// lucky-by-chance green doesn't hide an unverified target.
+export function caseHasNotFoundTarget(testCase: ProGuide.Dict): boolean {
+  const steps = testCase?.executable_steps || [];
+  return steps.some(
+    (step: ProGuide.Dict) =>
+      parseStepTarget(step.normalized_action || step.original_text || '') &&
+      step.grounding?.status === 'not_found'
+  );
+}
+
 export function parseStepTarget(action: string): { type: 'selector' | 'text'; value: string } | null {
   if (!action) return null;
   

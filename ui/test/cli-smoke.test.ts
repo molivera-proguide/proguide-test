@@ -239,7 +239,13 @@ test('markdown parser ignores sections and keeps TC cases', () => {
     );
     assert.deepEqual(payload.cases[0].expected_results, ['La pagina muestra Dashboard']);
     assert.deepEqual(payload.cases[1].expected_results, ['La URL contiene /login']);
-    assert.equal(payload.cases[0].executable_steps[1].normalized_action, 'enter valid email');
+    // No credentials heuristic fabricates "enter valid email": a vague login step
+    // without an explicit selector/value is left as raw text for grounding + the
+    // codegen LLM to resolve against the real DOM (PLAN-dehardcode-normalizer.md §4).
+    assert.equal(
+      payload.cases[0].executable_steps[1].normalized_action,
+      'Ingresar usuario valido'
+    );
     assert.equal(
       payload.cases
         .flatMap((item) => item.original_steps)
@@ -459,7 +465,10 @@ test('prepareCasesRun normalizes natural data-testid references from structured 
       'expect [data-testid="cart-badge-count"] to contain text "1"',
       'click [data-testid="cart-btn"]',
       'Verificar que el atributo data-theme cambio al tema opuesto',
-      'expect text "Dashboard"'
+      // No fabricated "expect text Dashboard": a vague post-login assertion with
+      // no real selector/text is left as raw text for grounding + the codegen LLM
+      // to resolve against the real DOM (PLAN-dehardcode-normalizer.md §3).
+      'Verificar que el dashboard de administracion es visible'
     ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

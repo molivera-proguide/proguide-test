@@ -55,7 +55,9 @@ solo fallback.
    calibración: los errores del runner devuelven el árbol real de la página (ver Paso 4).
 
 Nunca inventes textos de botones o campos: si no los conoces, consíguelos por alguna de
-estas vías antes de dar los casos por definitivos.
+estas vías antes de dar los casos por definitivos. Esto incluye la pantalla **post-login**
+(el "dashboard"): no asumas que existe un heading literal "Dashboard", "Home" o nombres
+genéricos similares — usa el texto/heading real que viste al inspeccionar esa pantalla.
 
 ### Paso 1 — Redactar los casos con la plantilla
 
@@ -148,6 +150,12 @@ Usa `TEMPLATE.md` de esta carpeta. Reglas de redacción **no negociables**:
 - **Si conoces el `data-testid` o `id`, inclúyelo en el paso**:
   preferir `click [data-testid="quick-login-admin"]` o `click [id="quick-login-admin"]`
   sobre lenguaje natural. Es la forma más robusta para la normalización.
+- **El login es un paso más, no un atajo mágico.** No hay heurística que adivine "este
+  campo es el email": redactalo igual que cualquier otro `fill`/`click` — con selector si
+  lo conocés (`fill [name="username"] with "eolivera"`) o, si no, en lenguaje natural con el
+  valor explícito (`Completar el campo de usuario con eolivera`); el campo real se resuelve
+  contra el DOM inspeccionado (Paso 0), nunca se asume por el nombre de la palabra
+  "email"/"usuario" en el texto del paso.
 - **Evita selectores de clase con punto (`.btn-primary`, `.success-btn`) salvo que sean
   realmente estables.** ProGuide los respeta como CSS, pero suelen cambiar más que un
   `data-testid`, `id`, `name` o texto literal. Para botones usa **texto literal**

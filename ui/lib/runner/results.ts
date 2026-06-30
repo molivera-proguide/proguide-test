@@ -54,7 +54,7 @@ function caseIdFromAnnotations(spec: ProGuide.Dict) {
 
 export function normalizePlaywrightSpecResult(
   spec: ProGuide.Dict,
-  options: { groundingConfirmed?: boolean } = {}
+  options: { groundingConfirmed?: boolean; hasNotFoundTarget?: boolean } = {}
 ) {
   const test = spec?.tests?.[0] || {};
   const results = Array.isArray(test.results) ? test.results : [];
@@ -76,12 +76,18 @@ export function normalizePlaywrightSpecResult(
   // this case existed on the real screen, a runtime locator failure is a real
   // regression (the element was there, now it isn't), so keep `failed` instead
   // of downgrading to `needs_calibration`.
+  // Signal §5.2: a target that grounding could not confirm (`not_found`) and
+  // that nonetheless "passed" (e.g. the codegen LLM fell back to a real
+  // heading instead of the unresolved literal) must not surface as a plain
+  // green — it stays `needs_calibration` so the miss remains visible.
   const finalStatus =
     status === 'failed' && isLocatorError(`${message}\n${errorDetails}`)
       ? options.groundingConfirmed
         ? 'failed'
         : 'needs_calibration'
-      : status;
+      : status === 'passed' && options.hasNotFoundTarget
+        ? 'needs_calibration'
+        : status;
 
   return {
     status: finalStatus,

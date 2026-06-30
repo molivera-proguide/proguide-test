@@ -436,14 +436,10 @@ function renderTypeScriptExpectation(expected, assertionTimeoutMs = DEFAULT_ASSE
     return lines;
   }
 
-  if (/redirect|home|dashboard|inicio/.test(normalized)) {
-    lines.push(
-      `  await expect(page).toHaveURL(/.*(home|dashboard|app|inicio).*/i, { timeout: ${assertionTimeoutMs} });`,
-      ''
-    );
-    return lines;
-  }
-
+  // No fabricated "redirect to dashboard/home" URL guess here: a literal
+  // keyword like "dashboard" is app vocabulary the QA's expected text may or
+  // may not use. Fall through to a safe degrade (body visible) below instead
+  // of inventing a URL pattern.
   if (/error|validation|invalid|invalido|incorrecto/.test(normalized)) {
     lines.push(
       `  await expect(page.getByText(/error|required|invalid|incorrect|obligatorio|invalido|incorrecto|ingresa|email|contrasena/i).first()).toBeVisible({ timeout: ${assertionTimeoutMs} });`,

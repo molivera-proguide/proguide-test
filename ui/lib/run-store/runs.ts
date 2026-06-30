@@ -6,7 +6,7 @@ import { maskSecretText, maskSecretsDeep } from '../shared/secrets.js';
 import { parseMarkdownCases } from '../markdown/parse-cases.js';
 import { isApiPlanCase } from '../codegen/api-spec.js';
 import { casesToTestPlan } from '../codegen/test-plan.js';
-import { groundCases, caseGroundingConfirmed } from '../codegen/grounding.js';
+import { groundCases, caseGroundingConfirmed, caseHasNotFoundTarget } from '../codegen/grounding.js';
 import { generateTestsWithAgent, loadExistingTestPlan, extractCaseCode } from '../codegen/agent.js';
 import { runPlaywrightTests } from '../runner/playwright.js';
 import { writeEvidenceReport } from '../runner/evidence.js';
@@ -568,6 +568,24 @@ export async function appendCasesToRun({
   return { run, cases, appended_cases: additions };
 }
 
+// Carries the dry-run grounding verdict onto each plan case so result
+// classification can tell a real regression (grounding had confirmed the
+// target) from a calibration miss, and so a case with a not_found target
+// that happens to pass stays visible as `needs_calibration` instead of a
+// false green (signal, not a gate — see PLAN-dehardcode-normalizer.md §5).
+function applyGroundingSignals(plan: ProGuide.Dict, cases: ProGuide.Dict[]): void {
+  const groundedCaseIds = new Set(
+    cases.filter((testCase) => caseGroundingConfirmed(testCase)).map((testCase) => String(testCase.id))
+  );
+  const notFoundCaseIds = new Set(
+    cases.filter((testCase) => caseHasNotFoundTarget(testCase)).map((testCase) => String(testCase.id))
+  );
+  for (const planCase of plan.cases) {
+    planCase.grounding_confirmed = groundedCaseIds.has(String(planCase.id));
+    planCase.has_not_found_target = notFoundCaseIds.has(String(planCase.id));
+  }
+}
+
 export async function executePreparedRun({
   root,
   runId,
@@ -634,16 +652,7 @@ export async function executePreparedRun({
     throw new Error(detail);
   }
 
-  // Carry the dry-run grounding verdict onto each plan case so result
-  // classification can tell a real regression (grounding had confirmed the
-  // target) from a calibration miss.
-  const groundedCaseIds = new Set(
-    cases.filter((testCase) => caseGroundingConfirmed(testCase)).map((testCase) => String(testCase.id))
-  );
-  for (const planCase of plan.cases) {
-    planCase.grounding_confirmed = groundedCaseIds.has(String(planCase.id));
-  }
-
+  applyGroundingSignals(plan, cases);
   await writeJson(path.join(runDir, TEST_PLAN_JSON), plan);
   const generatedDir = path.join(runDir, 'generated');
 
@@ -715,6 +724,10 @@ export async function executePreparedRun({
                 sourceMd: SOURCE_MD,
                 appName: run.app_name || 'ProGuide Markdown Cases'
               });
+          // Re-attach the grounding signal: `plan` was just rebuilt from the
+          // freshly-grounded `cases`, so the previous attachment (before this
+          // reground) is gone from the new plan.cases objects.
+          applyGroundingSignals(plan, cases);
           await writeJson(path.join(runDir, TEST_PLAN_JSON), plan);
           // Update run record's base_url if it changed
           if (urlChanged) {
