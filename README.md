@@ -20,13 +20,13 @@ npm install -g @proguide/test
 Si se instala desde un release `.tgz`:
 
 ```bash
-npm install -g ./proguide-test-0.2.0-ts.18.tgz
+npm install -g ./proguide-test-0.2.0-ts.19.tgz
 ```
 
 Tambien podes instalar directo desde GitHub Releases:
 
 ```bash
-npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.18/proguide-test-0.2.0-ts.18.tgz
+npm install -g https://github.com/molivera-proguide/proguide-test/releases/download/v0.2.0-ts.19/proguide-test-0.2.0-ts.19.tgz
 ```
 
 Verifica la instalacion desde el workspace de la app que vas a testear:
