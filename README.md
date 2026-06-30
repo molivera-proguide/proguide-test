@@ -251,6 +251,23 @@ El resultado incluye `authenticated` y, si se esperaba sesion pero el login fall
 `warning` (asi no confundes la pantalla de login con la ruta protegida). En MCP es el tool
 `inspect_route`.
 
+### Grounding del dry-run (pre-pass DOM)
+
+En el dry-run, ProGuide recorre la ruta del caso para verificar que los selectores/textos
+existan en la pantalla real. Es un pre-pass **no bloqueante**: si la navegacion falla
+(sitio lento, SSO, red interna), los pasos quedan marcados `needs_review` con el detalle,
+pero la ejecucion real puede continuar igual. El timeout de navegacion es configurable en
+`proguide_tests/config.yaml`:
+
+```yaml
+grounding:
+  nav_timeout_ms: 30000      # timeout de la navegacion inicial del walk (default 30s)
+  action_timeout_ms: 5000    # timeout por accion al avanzar el flujo
+```
+
+Para sitios con SSO lento subi `nav_timeout_ms`; para un dry-run rapido en local podes
+bajarlo.
+
 ### Congelar y ejecutar la suite
 
 ```bash

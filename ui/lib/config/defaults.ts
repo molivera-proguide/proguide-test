@@ -10,6 +10,13 @@ export function defaultConfig(): ProGuide.Dict {
       screenshots: 'on',
       traces: 'retain_on_failure'
     },
+    grounding: {
+      // Pre-pass walk (dry-run): timeout de navegacion inicial. Subir para sitios
+      // lentos o con SSO/red interna; el grounding es no bloqueante, asi que un
+      // miss solo marca needs_review, no impide ejecutar.
+      nav_timeout_ms: 30000,
+      action_timeout_ms: 5000
+    },
     identity: {
       run_user_email: '',
       run_user_name: '',

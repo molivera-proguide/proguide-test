@@ -517,8 +517,8 @@ async function runWalkProbe({
     base_url: baseUrl,
     route,
     browser: config.runner?.browser || 'chromium',
-    timeout_ms: 8000,
-    action_timeout_ms: 5000,
+    timeout_ms: Number(config.grounding?.nav_timeout_ms) || 30000,
+    action_timeout_ms: Number(config.grounding?.action_timeout_ms) || 5000,
     max_controls: 150,
     storage_state_path: storageStatePath,
     steps: (steps || []).map((s) => ({
@@ -622,11 +622,15 @@ export async function groundCaseSteps({
 
   if (!walk.success) {
     const errorMsg = walk.error || 'No se pudo recorrer la ruta';
+    const isTimeout = /timeout/i.test(errorMsg);
+    const hint = isTimeout
+      ? ' El pre-pass de grounding es no bloqueante: la ejecucion real puede continuar. Si el sitio es lento o usa SSO/red interna, subi grounding.nav_timeout_ms en proguide_tests/config.yaml.'
+      : ' El pre-pass de grounding es no bloqueante: la ejecucion real puede continuar.';
     for (const step of steps) {
       if (parseStepTarget(step.normalized_action)) {
         step.grounding = { status: 'unverified', candidates: [] };
         step.needs_review = true;
-        step.review_reason = `Error al recorrer la ruta ${route}: ${errorMsg}`;
+        step.review_reason = `Error al recorrer la ruta ${route}: ${errorMsg}.${hint}`;
       }
     }
     return;
