@@ -731,6 +731,14 @@ export async function groundCaseSteps({
   const snapshotByStep = new Map(
     (walk.steps || []).map((s: ProGuide.Dict) => [s.number, s.snapshot])
   );
+  // Union of every screen the walk actually saw (login + post-login + ...). Used
+  // as a fallback so a target that appears on a LATER screen (e.g. a post-login
+  // assertion like `expect text "Informes"`) isn't flagged not_found just because
+  // it wasn't on the per-step screen. This is the same view the codegen receives.
+  const mergedSnapshot = mergeWalkSnapshots(
+    walk.steps || [],
+    Number(config.llm?.dom_context_max_controls || 80)
+  );
 
   for (const step of steps) {
     const snapshot = snapshotByStep.get(step.number);
@@ -742,13 +750,18 @@ export async function groundCaseSteps({
       }
       continue;
     }
-    applyGrounding(step, groundStepAgainstSnapshot(step, snapshot), route);
+    let grounding = groundStepAgainstSnapshot(step, snapshot);
+    if (grounding.status === 'not_found') {
+      const merged = groundStepAgainstSnapshot(step, mergedSnapshot);
+      if (merged.status === 'resolved') grounding = merged;
+    }
+    applyGrounding(step, grounding, route);
   }
 
   return walk;
 }
 
-function mergeWalkSnapshots(walkSteps: any[], maxControls: number = 80) {
+export function mergeWalkSnapshots(walkSteps: any[], maxControls: number = 80) {
   const controls: any[] = [];
   const headingsSet = new Set<string>();
   const visibleTextSet = new Set<string>();

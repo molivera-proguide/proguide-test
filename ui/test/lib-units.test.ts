@@ -642,6 +642,43 @@ test('codegen/grounding: accent-insensitive match and ranked candidates', async 
   assert.equal(caseGroundingConfirmed({ executable_steps: [] }), false);
 });
 
+test('codegen/grounding: mergeWalkSnapshots unions screens so a later-screen assertion resolves', async () => {
+  const { mergeWalkSnapshots, groundStepAgainstSnapshot } = await import('../lib/codegen/grounding.js');
+  // Login screen then post-login dashboard, as the walk would capture across steps.
+  const walkSteps = [
+    {
+      number: 1,
+      snapshot: {
+        url: '/',
+        controls: [{ selector_hint: '#username', id: 'username', text: '' }],
+        headings: ['Ingreso'],
+        visible_text: 'Ingreso'
+      }
+    },
+    {
+      number: 2,
+      snapshot: {
+        url: '/home',
+        controls: [],
+        headings: [],
+        visible_text: 'Home Informes Reportes Módulo Salud version 3.0.4'
+      }
+    }
+  ];
+  const merged = mergeWalkSnapshots(walkSteps);
+  // A post-login assertion absent from the login screen still resolves against
+  // the union of screens the walk saw (fixes the false not_found / review_note).
+  assert.equal(
+    groundStepAgainstSnapshot({ normalized_action: 'expect text "Informes"' }, merged).status,
+    'resolved'
+  );
+  // A genuinely absent text is still not_found (no false green).
+  assert.equal(
+    groundStepAgainstSnapshot({ normalized_action: 'expect text "No Existe 999"' }, merged).status,
+    'not_found'
+  );
+});
+
 test('codegen/grounding: caseHasNotFoundTarget flags a not_found target as a signal', async () => {
   const { caseHasNotFoundTarget } = await import('../lib/codegen/grounding.js');
   assert.equal(
