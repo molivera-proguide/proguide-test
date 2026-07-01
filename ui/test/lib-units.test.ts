@@ -177,6 +177,56 @@ test('cases/normalize: does not fabricate app content (PLAN-dehardcode-normalize
   assert.equal(normalizeStep('Enviar el formulario'), 'Enviar el formulario');
 });
 
+test('cases/normalize: recovers explicit value+field from "Ingresar `X` en `Y`" (walk-starving fix)', () => {
+  // The value comes BEFORE the field and both are backtick-quoted. The generic
+  // "fill FIELD with VALUE" extractor missed the value and emitted a valueless
+  // `fill [selector]`, which made the grounding walk type empty credentials, fail
+  // the login and never reach the post-login screens (dom_context login-only).
+  assert.equal(
+    normalizeStep('Ingresar `qa@testsprite.dev` en `login-email`.'),
+    'fill [data-testid="login-email"] with qa@testsprite.dev'
+  );
+  assert.equal(
+    normalizeStep('Ingresar `testsprite123` en `login-password`.'),
+    'fill [data-testid="login-password"] with testsprite123'
+  );
+  // English + "in", and Spanish "en el campo" between value and field.
+  assert.equal(
+    normalizeStep('Enter `abcdef` in `login-password`'),
+    'fill [data-testid="login-password"] with abcdef'
+  );
+  assert.equal(
+    normalizeStep('Escribir `foo` en el campo `bar`'),
+    'fill [data-testid="bar"] with foo'
+  );
+  // A field given as an explicit selector keeps its selector form.
+  assert.equal(normalizeStep('Ingresar `a@b.com` en `#email`'), 'fill [#email] with a@b.com');
+  // Backtick value with a bare (unquoted) field still recovers the value via the
+  // value-after-selector fallback (previously only ' and " were recognized).
+  assert.equal(
+    normalizeStep('Ingresar `qa@testsprite.dev` en el campo login-email'),
+    'fill [data-testid="login-email"] with qa@testsprite.dev'
+  );
+  // A vague login step (no explicit value+field) still stays raw (Ola 2, unchanged).
+  assert.equal(normalizeStep('Completar un login valido'), 'Completar un login valido');
+});
+
+test('cases/normalize: does not fabricate a selector from a case/requirement reference', () => {
+  // "(TC-02)" is a cross-reference to another case, not an app selector. The
+  // hyphen-fallback used to turn it into `fill [data-testid="TC-02"]`; now the
+  // step stays raw so grounding + the codegen LLM resolve it against the real DOM.
+  assert.equal(
+    normalizeStep('Completar un login valido (TC-02).'),
+    'Completar un login valido (TC-02).'
+  );
+  assert.equal(normalizeStep('Repetir el paso del caso RF-01'), 'Repetir el paso del caso RF-01');
+  // A real hyphenated data-testid token is still extracted (regression guard).
+  assert.equal(
+    normalizeStep('Hacer clic en `login-submit`.'),
+    'click [data-testid="login-submit"]'
+  );
+});
+
 test('cases/api-normalize: inferCaseType detects api vs ui', () => {
   assert.equal(inferCaseType({ type: 'api' }), 'api');
   assert.equal(inferCaseType({ request: { method: 'GET', path: '/x' } }), 'api');

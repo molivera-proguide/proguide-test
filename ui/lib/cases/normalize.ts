@@ -146,6 +146,8 @@ export function explicitStep(step: unknown): string | null {
   if (contextualClick) return contextualClick;
   const contextualFill = normalizeContextualFill(text);
   if (contextualFill) return contextualFill;
+  const enterValueInField = normalizeEnterValueInField(text);
+  if (enterValueInField) return enterValueInField;
   const listItemClick = normalizeListItemClick(text);
   if (listItemClick) return listItemClick;
   const cssSelectorAction = normalizeCssSelectorAction(text);
@@ -251,6 +253,34 @@ function normalizeContextualFill(text: unknown): string | null {
   }
 }
 
+// "Ingresar `qa@testsprite.dev` en `login-email`" / "Escribir `x` en el campo
+// `y`" / "Enter `x` in `y`": the QA gives BOTH the value and the field
+// explicitly, but the value comes BEFORE the field and both are quoted (commonly
+// with markdown backticks). The generic `fill FIELD with VALUE` extractor assumes
+// the value comes AFTER the selector introduced by con/with, so it drops the
+// value and emits a valueless `fill [selector]`. That in turn makes the grounding
+// walk type empty credentials, fail the login and never reach the post-login
+// screens. Recover both value and field so the walk can drive a real login.
+function normalizeEnterValueInField(text: unknown): string | null {
+  const raw = String(text || '');
+  // Defer to the explicit-selector path when the field is written as a real
+  // bracket selector (e.g. [name="email"], [data-testid="x"]): the attribute
+  // value inside it is quoted, and our value/field heuristic would misread that
+  // inner quoted value as the field token and fabricate a data-testid.
+  if (/\[[^\]]+\]/.test(raw)) return null;
+  const match = raw.match(
+    /^\s*(?:fill|completar|ingresar|escribir|cargar|setear|introducir|type|enter|input)\b[^`"']*?[`"']([^`"']+)[`"'][^`"']*?\b(?:en|in|into)\b[^`"']*?[`"']([^`"']+)[`"'][^`"']*$/i
+  );
+  if (!match) return null;
+  const value = match[1].trim();
+  const fieldToken = match[2].trim().replace(/[.,;:]+$/, '');
+  if (!value || !fieldToken) return null;
+  const selector = /^[[#.]/.test(fieldToken)
+    ? formatSelectorDsl(fieldToken)
+    : `[data-testid="${escapeSelectorValue(fieldToken)}"]`;
+  return `fill ${selector} with ${value}`;
+}
+
 function normalizeListItemClick(text: unknown): string | null {
   const match = String(text || '').match(
     /^\s*(?:click|clic|hacer\s+clic|presionar|seleccionar|tocar)\s+listitem\s+["'](.+?)["']\s*$/i
@@ -328,8 +358,8 @@ function extractExplicitSelector(text: unknown): string | null {
 function extractSelectorToken(text: unknown): string {
   const normalizedText = stripAccents(String(text || ''));
   const patterns = [
-    /\b(?:campo|input|elemento|selector|boton|enlace|link|badge|contador|toggle|id|data-testid)\s+["']?([A-Za-z][A-Za-z0-9_-]{1,80})["']?/i,
-    /["']([A-Za-z][A-Za-z0-9_-]{1,80})["']/i
+    /\b(?:campo|input|elemento|selector|boton|enlace|link|badge|contador|toggle|id|data-testid)\s+[`"']?([A-Za-z][A-Za-z0-9_-]{1,80})[`"']?/i,
+    /[`"']([A-Za-z][A-Za-z0-9_-]{1,80})[`"']/i
   ];
   for (const pattern of patterns) {
     const match = normalizedText.match(pattern);
@@ -338,9 +368,14 @@ function extractSelectorToken(text: unknown): string {
     if (isSelectorLikeToken(token)) return token;
   }
   const fallback = normalizedText.match(/\b([A-Za-z][A-Za-z0-9_-]*(?:[-_][A-Za-z0-9]+)+)\b/);
-  if (fallback && /\b(attribute|atributo)\b/i.test(normalizedText) && /^data-/i.test(fallback[1]))
-    return '';
-  return fallback && isSelectorLikeToken(fallback[1]) ? fallback[1] : '';
+  if (!fallback) return '';
+  const token = fallback[1];
+  if (/\b(attribute|atributo)\b/i.test(normalizedText) && /^data-/i.test(token)) return '';
+  // Never fabricate a selector from a case/requirement cross-reference such as
+  // "TC-02", "RF-01" or "HU-3". These are prose pointers to other cases, not app
+  // selectors; the hyphen-fallback used to turn them into fake data-testids.
+  if (/^[A-Za-z]{1,6}-?\d{1,4}$/.test(token)) return '';
+  return isSelectorLikeToken(token) ? token : '';
 }
 
 function isSelectorLikeToken(token: unknown): boolean {
@@ -360,7 +395,10 @@ function valueAfterSelector(text: unknown, selector: string, pattern: RegExp): s
   const afterSelector = selectorIndex >= 0 ? source.slice(selectorIndex + selector.length) : source;
   const match = afterSelector.match(pattern);
   if (!match) {
-    const quoted = [...String(text || '').matchAll(/["']([^"']+)["']/g)]
+    // Accept markdown backticks as value quotes too: QA cases routinely write
+    // the value as `qa@example.com`, and missing backticks here is what dropped
+    // the value and starved the grounding walk of a real login.
+    const quoted = [...String(text || '').matchAll(/[`"']([^`"']+)[`"']/g)]
       .map((item) => item[1].trim())
       .find((item) => item && item !== selector && !isSelectorLikeToken(item));
     return quoted || '';
