@@ -154,3 +154,90 @@ test(
     }
   }
 );
+
+// SPA whose auth token lives in sessionStorage (NOT localStorage/cookies), so
+// Playwright's storageState alone cannot carry the session across navigations.
+const SESSION_STORAGE_AUTH_HTML = `<!doctype html><html><body>
+<div id="app"></div>
+<script>
+  function render() {
+    if (window.sessionStorage.getItem('token')) {
+      document.getElementById('app').innerHTML =
+        '<h1>Panel Interno</h1><button data-testid="logout-btn">Salir</button>';
+    } else {
+      document.getElementById('app').innerHTML =
+        '<h1>Ingreso</h1><input id="username" /><input id="password" type="password" />' +
+        '<button type="submit" id="do-login">Acceder</button>';
+      document.getElementById('do-login').addEventListener('click', function () {
+        window.sessionStorage.setItem('token', 'abc123');
+        render();
+      });
+    }
+  }
+  render();
+</script>
+</body></html>`;
+
+test(
+  'auth/grounding: a sessionStorage token is captured at login and re-injected so the walk stays authenticated',
+  { skip: process.env.PROGUIDE_WALK_E2E ? false : 'set PROGUIDE_WALK_E2E=1 to run (needs Chromium)' },
+  async () => {
+    const { groundCases } = await import('../lib/codegen/grounding.js');
+    const { defaultConfig } = await import('../lib/config/defaults.js');
+
+    const server = http.createServer((_request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(SESSION_STORAGE_AUTH_HTML);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pg-sess-'));
+
+    try {
+      const config = {
+        ...defaultConfig(),
+        auth: {
+          login_route: '/',
+          validate_route: '',
+          user_selector: '#username',
+          pass_selector: '#password',
+          submit_selector: '#do-login',
+          success_check: 'text=Panel Interno',
+          reuse_session: false
+        }
+      };
+      // A case that only lands on '/'. With auth configured, the walk logs in via
+      // the probe, which captures the sessionStorage token; the walk re-injects it
+      // and therefore sees the authenticated panel instead of the login screen.
+      const testCase = {
+        id: 'caso_sess',
+        route: '/',
+        executable_steps: [{ number: 1, normalized_action: '/' }]
+      };
+
+      await groundCases({
+        root,
+        baseUrl,
+        config,
+        credentials: { username: 'u', password: 'p' },
+        cases: [testCase],
+        runDir: root
+      });
+
+      const domContext = JSON.parse(await fs.readFile(path.join(root, 'dom_context.json'), 'utf8'));
+      const controls = domContext.by_case_id.caso_sess.snapshot.controls;
+      const logouts = controls.filter((c: any) => c.data_testid === 'logout-btn');
+
+      assert.equal(
+        logouts.length,
+        1,
+        'walk must reach the sessionStorage-gated panel via captured + re-injected token'
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+);

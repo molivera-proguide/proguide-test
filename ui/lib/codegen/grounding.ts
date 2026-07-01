@@ -511,6 +511,20 @@ async function main() {
     contextOptions.storageState = payload.storage_state_path;
   }
   const context = await browser.newContext(contextOptions);
+  // Playwright storageState carries cookies + localStorage but NOT sessionStorage.
+  // Many SPAs keep the auth token in sessionStorage, so re-inject it before any
+  // page script runs; without this an authenticated walk lands back on the login.
+  if (payload.session_storage_path && fs.existsSync(payload.session_storage_path)) {
+    try {
+      const sessionData = fs.readFileSync(payload.session_storage_path, 'utf8');
+      await context.addInitScript((data) => {
+        try {
+          const store = JSON.parse(data);
+          for (const key of Object.keys(store)) window.sessionStorage.setItem(key, store[key]);
+        } catch (e) { /* ignore malformed */ }
+      }, sessionData);
+    } catch (e) { /* best effort */ }
+  }
   const page = await context.newPage();
 
   const results = [];
@@ -561,6 +575,7 @@ async function runWalkProbe({
   route,
   config,
   storageStatePath,
+  sessionStoragePath,
   steps
 }: {
   root: string;
@@ -568,6 +583,7 @@ async function runWalkProbe({
   route: string;
   config: ProGuide.Dict;
   storageStatePath: string;
+  sessionStoragePath?: string;
   steps: ProGuide.Dict[];
 }): Promise<{ success: boolean; error?: string; steps?: ProGuide.Dict[] }> {
   const proguideDir = path.join(root, PROGUIDE_DIR);
@@ -586,6 +602,7 @@ async function runWalkProbe({
     action_timeout_ms: Number(config.grounding?.action_timeout_ms) || 5000,
     max_controls: 150,
     storage_state_path: storageStatePath,
+    session_storage_path: sessionStoragePath || '',
     steps: (steps || []).map((s) => ({
       number: s.number,
       normalized_action: s.normalized_action,
@@ -672,18 +689,28 @@ export async function groundCaseSteps({
   // Reuse an authenticated session for protected routes (same gate as the
   // pre-pass): only when auth.login_route is configured.
   let storageStatePath = '';
+  let sessionStoragePath = '';
   if (config.auth?.login_route) {
     try {
       const session = await ensureSession({ root, baseUrl, config, credentials });
       if (session.available && session.storageStatePath) {
         storageStatePath = session.storageStatePath;
+        sessionStoragePath = session.sessionStoragePath || '';
       }
     } catch {
       // fall through unauthenticated; the walk still drives the case's own login steps
     }
   }
 
-  const walk = await runWalkProbe({ root, baseUrl, route, config, storageStatePath, steps });
+  const walk = await runWalkProbe({
+    root,
+    baseUrl,
+    route,
+    config,
+    storageStatePath,
+    sessionStoragePath,
+    steps
+  });
 
   if (!walk.success) {
     const errorMsg = walk.error || 'No se pudo recorrer la ruta';

@@ -41,6 +41,17 @@ async function main() {
   try {
     if (mode === 'validate') {
       context = await browser.newContext({ storageState: payload.storage_state_path });
+      // storageState does not carry sessionStorage; re-inject it so a session
+      // whose token lives there is recognized on validation too.
+      if (payload.session_storage_path && fs.existsSync(payload.session_storage_path)) {
+        const sessionData = fs.readFileSync(payload.session_storage_path, 'utf8');
+        await context.addInitScript((data) => {
+          try {
+            const store = JSON.parse(data);
+            for (const key of Object.keys(store)) window.sessionStorage.setItem(key, store[key]);
+          } catch (e) { /* ignore malformed */ }
+        }, sessionData);
+      }
       page = await context.newPage();
       const url = targetUrl(payload.base_url, payload.validate_route || payload.login_route || '/');
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -84,6 +95,14 @@ async function main() {
       }
 
       await context.storageState({ path: payload.storage_state_path });
+      // Persist sessionStorage separately (storageState omits it). Many SPAs keep
+      // the auth token here; the walk/validate re-inject it to stay logged in.
+      if (payload.session_storage_path) {
+        try {
+          const sessionData = await page.evaluate(() => JSON.stringify(window.sessionStorage));
+          fs.writeFileSync(payload.session_storage_path, sessionData || '{}', 'utf8');
+        } catch (e) { /* best effort */ }
+      }
       success = true;
     }
   } catch (err) {
@@ -110,7 +129,12 @@ type SessionArgs = {
   credentials: ProGuide.Dict;
 };
 
-type SessionResult = { available: boolean; storageStatePath?: string; error?: string };
+type SessionResult = {
+  available: boolean;
+  storageStatePath?: string;
+  sessionStoragePath?: string;
+  error?: string;
+};
 
 // Runs the probe in 'login' or 'validate' mode. Credentials go through env, not
 // the input file, so no secret is ever persisted to disk.
@@ -131,6 +155,7 @@ async function runProbe(
   const scriptPath = path.join(proguideDir, 'session_probe.cjs');
   const logPath = path.join(proguideDir, 'session.log');
   const storageStatePath = path.join(proguideDir, 'storage-state.json');
+  const sessionStoragePath = path.join(proguideDir, 'session-storage.json');
 
   const payload = {
     mode,
@@ -142,7 +167,8 @@ async function runProbe(
     pass_selector: authConfig.pass_selector,
     submit_selector: authConfig.submit_selector,
     success_check: authConfig.success_check,
-    storage_state_path: storageStatePath
+    storage_state_path: storageStatePath,
+    session_storage_path: sessionStoragePath
   };
 
   await writeJson(inputPath, payload);
@@ -179,7 +205,7 @@ async function runProbe(
       return { available: false, error: result.error || 'Login falló sin error detallado' };
     }
 
-    return { available: true, storageStatePath };
+    return { available: true, storageStatePath, sessionStoragePath };
   } catch (error: any) {
     return { available: false, error: error.message || String(error) };
   } finally {
@@ -198,11 +224,12 @@ export async function bootstrapSession(args: SessionArgs): Promise<SessionResult
 export async function ensureSession(args: SessionArgs): Promise<SessionResult> {
   const { root, config } = args;
   const storageStatePath = path.join(root, PROGUIDE_DIR, 'storage-state.json');
+  const sessionStoragePath = path.join(root, PROGUIDE_DIR, 'session-storage.json');
 
   if (await exists(storageStatePath)) {
     const validation = await runProbe(args, 'validate');
     if (validation.available) {
-      return { available: true, storageStatePath };
+      return { available: true, storageStatePath, sessionStoragePath };
     }
     await fs.rm(storageStatePath, { force: true }).catch(() => {});
   }
