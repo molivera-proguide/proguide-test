@@ -19,6 +19,7 @@ import { ensureViewer, stopViewer, viewerLinks } from './viewer.js';
 import { isPathInside } from './lib/shared/paths.js';
 import { casesRequireBrowser } from './lib/shared/cases.js';
 import { loadUiConfig } from './lib/run-store/config.js';
+import { checkStaleVersion } from './lib/version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(
@@ -1051,9 +1052,20 @@ function summaryCounts(summary, run) {
 }
 
 function toolResult(message, structuredContent) {
+  // Surface a stale-server warning on every response: if a newer version was
+  // installed on disk after this process started, the running code is old and the
+  // user must restart the MCP server. Reinstalling alone does not reload it.
+  const version = checkStaleVersion();
+  const text = version.stale
+    ? `⚠️ proguide se actualizo en disco (v${version.onDisk}) pero este MCP server corre v${version.running}. Reinicia el MCP server para tomar los cambios.\n\n${message}`
+    : message;
+  const payload =
+    version.stale && structuredContent && typeof structuredContent === 'object'
+      ? { ...structuredContent, server_update_available: { running: version.running, on_disk: version.onDisk } }
+      : structuredContent;
   return {
-    content: [{ type: 'text', text: message }],
-    structuredContent
+    content: [{ type: 'text', text }],
+    structuredContent: payload
   };
 }
 

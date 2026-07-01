@@ -754,3 +754,15 @@ test('codegen/test-plan & agent: casesToTestPlan and buildCodeGenerationPayload 
   ]);
 });
 
+test('version: checkStaleVersion reports not-stale when the on-disk version matches the running one', async () => {
+  const { checkStaleVersion, RUNNING_VERSION } = await import('../lib/version.js');
+  // In a fresh process the loaded version equals what is on disk, so nothing is
+  // stale. The stale=true path only fires after a live reinstall bumps the disk
+  // version above the one captured at startup (validated manually / in the field).
+  assert.ok(RUNNING_VERSION, 'running version should be resolved from package.json');
+  const result = checkStaleVersion();
+  assert.equal(result.running, RUNNING_VERSION);
+  assert.equal(result.onDisk, RUNNING_VERSION);
+  assert.equal(result.stale, false);
+});
+
