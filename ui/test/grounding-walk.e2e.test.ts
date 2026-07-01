@@ -90,3 +90,67 @@ test(
     }
   }
 );
+
+// Strict login: the button only navigates when BOTH fields are filled, and the
+// fields do NOT expose name="email"/name="password" (only ids). This forces the
+// field-type fallback to do the login for the walk.
+const LOGIN_STRICT_HTML = `<!doctype html><html><body>
+  <h1>Iniciar sesion</h1>
+  <input id="user_field" placeholder="Usuario" />
+  <input id="pass_field" type="password" />
+  <button onclick="if(document.getElementById('user_field').value && document.getElementById('pass_field').value){location.href='/dashboard'}">Acceder</button>
+</body></html>`;
+
+test(
+  'codegen/grounding: walk logs in via field-type fallback and a final snapshot captures the post-login DOM',
+  { skip: process.env.PROGUIDE_WALK_E2E ? false : 'set PROGUIDE_WALK_E2E=1 to run (needs Chromium)' },
+  async () => {
+    const { groundCases } = await import('../lib/codegen/grounding.js');
+    const { defaultConfig } = await import('../lib/config/defaults.js');
+
+    const server = http.createServer((request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(String(request.url || '').startsWith('/dashboard') ? DASHBOARD_HTML : LOGIN_STRICT_HTML);
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pg-walk2-'));
+
+    try {
+      // Selectors that DO NOT exist on the real DOM ([name="email"] /
+      // [name="password"] vs the app's #user_field / #pass_field), AND no
+      // post-login step -- exactly the shape that used to leave dom_context blind
+      // to the authenticated screen (the web-suite login case).
+      const testCase = {
+        id: 'caso_login_fallback',
+        route: '/',
+        executable_steps: [
+          { number: 1, normalized_action: '/' },
+          { number: 2, normalized_action: 'fill [name="email"] with "u"' },
+          { number: 3, normalized_action: 'fill [name="password"] with "p"' },
+          { number: 4, normalized_action: 'click button Acceder' }
+        ]
+      };
+
+      await groundCases({ root, baseUrl, config: defaultConfig(), cases: [testCase], runDir: root });
+
+      const domContext = JSON.parse(await fs.readFile(path.join(root, 'dom_context.json'), 'utf8'));
+      const controls = domContext.by_case_id.caso_login_fallback.snapshot.controls;
+      const logouts = controls.filter((c: any) => c.data_testid === 'logout-btn');
+
+      // Proof: the type-based fallback filled the real fields so login succeeded,
+      // and the final post-step snapshot captured the dashboard -> logout-btn is
+      // present in the merged context even though the case never named it.
+      assert.equal(
+        logouts.length,
+        1,
+        'post-login control must be captured via fallback login + final snapshot'
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+);

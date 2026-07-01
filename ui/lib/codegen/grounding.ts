@@ -403,6 +403,47 @@ function dslToCss(sel) {
   return m ? m[1] : String(sel || '');
 }
 
+// Fill that self-corrects so the WALK can drive a login flow even when the
+// authored selector does not exist on the real DOM (e.g. the case says
+// [name="email"] but the app uses #username). This ONLY steers exploration so
+// the walk can reach the post-login screen; it never becomes generated test code
+// (the test still uses selectors the LLM grounded against the real DOM).
+async function fillWithFallback(page, selector, value, action, timeout) {
+  try {
+    const loc = page.locator(selector).first();
+    if (await loc.count()) { await loc.fill(value, { timeout }); return true; }
+  } catch (e) { /* fall through to the heuristic */ }
+  const wantsPassword = /pass|pwd|clave|contra/i.test(String(selector) + ' ' + String(action));
+  const candidateSel = wantsPassword
+    ? 'input[type="password"]'
+    : 'input[type="email"], input[type="text"], input[type="tel"], input:not([type])';
+  try {
+    const cands = page.locator(candidateSel);
+    const n = await cands.count();
+    for (let i = 0; i < n; i++) {
+      const c = cands.nth(i);
+      if (!(await c.isEditable().catch(() => false))) continue;
+      const current = await c.inputValue().catch(() => '');
+      if (!current) { await c.fill(value, { timeout }); return true; }
+    }
+    if (n) { await cands.first().fill(value, { timeout }); return true; }
+  } catch (e) { /* tolerant */ }
+  return false;
+}
+
+// Click a named button, falling back to the form's submit control so a login
+// step still advances when the button label does not match exactly.
+async function clickButtonWithFallback(page, name, timeout) {
+  try {
+    const byName = page.getByRole('button', { name }).first();
+    if (await byName.count()) { await byName.click({ timeout }); return; }
+  } catch (e) { /* fall through */ }
+  try {
+    const submit = page.locator('button[type="submit"], input[type="submit"]').first();
+    if (await submit.count()) { await submit.click({ timeout }); }
+  } catch (e) { /* tolerant */ }
+}
+
 async function advance(page, action, base, timeout) {
   const a = String(action || '').trim();
   let m;
@@ -414,7 +455,7 @@ async function advance(page, action, base, timeout) {
     return;
   }
   if ((m = a.match(/^fill\s+(.+?)\s+with\s+(.+)$/i)) || (m = a.match(/^fill\s+(.+)$/i))) {
-    await page.fill(dslToCss(m[1].trim()), m[2] ? stripQuotes(m[2].trim()) : '', { timeout });
+    await fillWithFallback(page, dslToCss(m[1].trim()), m[2] ? stripQuotes(m[2].trim()) : '', a, timeout);
     return;
   }
   if ((m = a.match(/^click text\s+["'](.+?)["']\s+inside\s+(.+)$/i))) {
@@ -431,7 +472,7 @@ async function advance(page, action, base, timeout) {
   if ((m = a.match(/^click button\s+(.+)$/i))) {
     const t = m[1].trim();
     if (/^[#.[]/.test(t)) await page.click(dslToCss(t), { timeout });
-    else await page.getByRole('button', { name: stripQuotes(t) }).first().click({ timeout });
+    else await clickButtonWithFallback(page, stripQuotes(t), timeout);
     return;
   }
   if ((m = a.match(/^click\s+(.+)$/i))) {
@@ -487,6 +528,15 @@ async function main() {
         try { await page.waitForLoadState('domcontentloaded', { timeout: 3000 }); } catch { /* best effort */ }
       } catch { /* tolerant: keep walking even if a step can't be executed */ }
     }
+    // Final snapshot AFTER the last step. A login flow's last action is usually
+    // the submit, so the authenticated screen only exists once every step ran;
+    // without this, a case whose last step is the login click never captures the
+    // post-login DOM and grounding/codegen stay blind to it.
+    try {
+      try { await page.waitForLoadState('networkidle', { timeout: 2000 }); } catch { /* best effort */ }
+      const finalSnapshot = await page.evaluate(DOM_SNAPSHOT_JS, maxControls);
+      results.push({ number: 'final', snapshot: finalSnapshot });
+    } catch { /* best effort */ }
     success = true;
   } catch (error) {
     errorMsg = String(error.message || error).slice(0, 500);
