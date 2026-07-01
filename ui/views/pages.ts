@@ -539,6 +539,7 @@ export function renderCaseDetail(run, testCase, summary, stepLog, generatedCode)
           ${testCase.description ? `<p class="detail-lede">${escapeHtml(testCase.description)}</p>` : ''}
         </header>
         ${result?.message ? `<div class="result-note ${escapeHtml(statusClass(status))}"><strong>Resultado</strong><p>${escapeHtml(result.message)}</p></div>` : ''}
+        ${result?.review_note ? `<div class="result-note review"><strong>${status === 'needs_calibration' ? 'Qué hacer' : 'Nota'}</strong><p>${escapeHtml(result.review_note)}</p></div>` : ''}
         ${renderApiEvidence(result, run.id)}
         ${renderActualResponse(result)}
         ${renderErrorConsole(result)}

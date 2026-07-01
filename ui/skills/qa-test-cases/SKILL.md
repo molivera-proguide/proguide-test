@@ -222,23 +222,32 @@ Llama a `mcp__proguide-test__run_cases` (tool principal de ejecucion) con
 
 La primera ejecución de un caso nuevo es de calibración, no de regresión. Si falla:
 
-1. **Lee el `status` y el `message` del resultado.** ProGuide clasifica los fallos en
-   dos categorías:
-   - `needs_calibration` — la causa raíz es de **localización**: el selector/texto no
-     resolvió (timeout esperando un `locator`/`getBy*`, `strict mode violation`, elemento
-     not found). **No es un bug de la app**; es un problema del caso que tenés que
-     calibrar. No lo reportes como hallazgo.
+1. **Lee el `status`, el `message` y el campo `review_note` de cada caso.** ProGuide
+   clasifica así:
+   - `passed` — verde. A veces trae una **`review_note`** ("Nota"): avisa que el dry-run
+     no pudo verificar por su cuenta un target porque el caso depende de una precondición
+     (login, un error previo) que el pre-pass no montó. **No requiere acción** — el test
+     pasó y el runner ya compensó la precondición; solo confirmá que la aserción sea la
+     correcta. Para silenciar la nota, agregá esos pasos de precondición al caso. No lo
+     cuentes como falla ni como calibración.
+   - `needs_calibration` — **el único estado que realmente hay que calibrar.** Un
+     selector/texto no resolvió en runtime (timeout esperando un `locator`/`getBy*`,
+     `strict mode violation`, elemento not found) y el dry-run no lo había confirmado: el
+     selector quedó viejo o mal. **No es un bug de la app.** Acción: recalibrá (paso 2).
    - `failed` — el elemento se encontró pero la aserción de estado/texto no se cumplió
      (`expect(...).toHaveText`, `toHaveURL`, status code distinto). **Sí es un hallazgo
      real**; reportalo como bug, no lo "arregles" relajando la verificación.
-2. Los errores de Playwright incluyen el árbol de accesibilidad real de la página: ahí
-   están los textos y selectores correctos.
+
+   El campo `review_note` de cada caso te da la acción concreta recomendada.
+2. **Recalibrar (`needs_calibration`):** los errores de Playwright incluyen el árbol de
+   accesibilidad real de la página — ahí están los textos y selectores correctos.
    - `strict mode violation` + lista de elementos → el texto no es único; usa el
      candidato correcto de la lista (su `data-testid` aparece en el error).
    - `Timeout waiting for get_by_placeholder/get_by_text` → el texto que usaste no
      existe en la UI; búscalo en el árbol del error, en el código o pregunta al usuario.
-3. Corrige SOLO los pasos `needs_calibration`/fallidos y re-ejecuta.
-4. Los textos y selectores correctos quedan incorporados en la versión final de los
+   Corrige SOLO los pasos de ese caso y re-ejecuta **con LLM** (no `--frozen`) hasta que
+   quede verde.
+3. Los textos y selectores correctos quedan incorporados en la versión final de los
    casos: esa versión es la que se conserva/entrega, para que las siguientes ejecuciones
    no repitan la calibración.
 
@@ -246,8 +255,10 @@ La primera ejecución de un caso nuevo es de calibración, no de regresión. Si 
 
 Al terminar, informa al usuario: estado de cada caso (passed/failed/needs_calibration),
 el `run_url` del visor, y qué se corrigió en cada iteración. Distingue al reportar:
-- `needs_calibration` no es bug: son casos cuyo selector/texto no resolvió y se
-  calibraron (o quedan pendientes de calibrar). No los cuentes como falla del producto.
+- `passed` con `review_note` → pasó; la nota es informativa (el dry-run no pudo
+  pre-verificar un target por una precondición). No es falla ni pendiente de calibrar.
+- `needs_calibration` no es bug: el selector/texto no resolvió en runtime y se recalibró
+  (o queda pendiente de recalibrar). No lo cuentes como falla del producto.
 - `failed` sí es bug real (el elemento se encontró pero la aserción no pasó): repórtalo
   como hallazgo, no lo "arregles" relajando la verificación.
 

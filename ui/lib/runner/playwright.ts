@@ -263,6 +263,7 @@ export async function parsePlaywrightResults({
         duration_seconds: normalized.duration_seconds,
         message: normalized.message,
         error_details: normalized.error_details,
+        review_note: normalized.review_note,
         actual_response: normalized.actual_response,
         steps: normalized.steps.length ? normalized.steps : testCase.steps,
         expected: testCase.expected,

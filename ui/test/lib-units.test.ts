@@ -469,6 +469,8 @@ test('runner/results: normalizePlaywrightSpecResult reclassifies locator timeout
   assert.equal(out.status, 'needs_calibration');
   // message is preserved (the locator error is still surfaced for calibration)
   assert.match(out.message || out.error_details || '', /waiting for locator/i);
+  // and it carries the concrete recommended action for the QA
+  assert.match(out.review_note, /Recalibrar/i);
 });
 
 test('runner/results: normalizePlaywrightSpecResult keeps real assertion failures as failed', () => {
@@ -693,20 +695,23 @@ test('runner/results: grounded-confirmed locator failure stays failed (Prong A<-
   );
 });
 
-test('runner/results: a not_found target that "passes" by chance is flagged needs_calibration, not a false green', async () => {
+test('runner/results: a passed test whose dry-run could not verify a target stays passed with an advisory note (not needs_calibration)', async () => {
   const { normalizePlaywrightSpecResult } = await import('../lib/runner/results.js');
   const passedSpec = {
     ok: true,
     tests: [{ results: [{ status: 'passed', duration: 500 }] }]
   };
-  // Plain pass, no unresolved target -> stays passed.
-  assert.equal(normalizePlaywrightSpecResult(passedSpec).status, 'passed');
-  // Passed, but grounding never confirmed the target (not_found) -> signal,
-  // not a gate: it still executed, but is surfaced as needs_calibration.
-  assert.equal(
-    normalizePlaywrightSpecResult(passedSpec, { hasNotFoundTarget: true }).status,
-    'needs_calibration'
-  );
+  // Plain pass, no unresolved target -> passed, no note.
+  const plain = normalizePlaywrightSpecResult(passedSpec);
+  assert.equal(plain.status, 'passed');
+  assert.equal(plain.review_note, '');
+  // Passed but the dry-run had a not_found target: NOT a calibration issue
+  // (nothing broke, the runner compensated the missing precondition). It stays
+  // `passed` with an advisory note instead of dragging the run into
+  // needs_calibration, so the flag only fires when there is real work to do.
+  const unverified = normalizePlaywrightSpecResult(passedSpec, { hasNotFoundTarget: true });
+  assert.equal(unverified.status, 'passed');
+  assert.match(unverified.review_note, /Sin accion requerida/i);
 });
 
 test('codegen/test-plan & agent: casesToTestPlan and buildCodeGenerationPayload propagate grounding', async () => {

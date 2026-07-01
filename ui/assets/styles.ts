@@ -460,6 +460,7 @@ export function styles() {
     .result-note strong { display: block; margin-bottom: 6px; color: var(--text); }
     .result-note p { margin: 0; color: var(--muted); }
     .result-note.failed { border-color: rgba(255, 99, 122, 0.35); background: rgba(255, 99, 122, 0.08); }
+    .result-note.review { border-color: rgba(245, 158, 11, 0.35); background: rgba(245, 158, 11, 0.08); }
     .error-console-section { gap: 10px; }
     .error-console {
       margin: 0;

@@ -67,27 +67,33 @@ export function normalizePlaywrightSpecResult(
   const steps = flattenPlaywrightSteps(result.steps || []);
   const attachments = results.flatMap((item) => item.attachments || []);
   const duration = results.reduce((total, item) => total + Number(item.duration || 0), 0);
-  // Prong B: localize-class failures (timeout for locator/getBy, strict mode
-  // violation, locator not found) are a calibration issue, not a real product
-  // bug. Re-classify so they don't contaminate the bug rate. Real assertion
-  // failures (toHaveText/toHaveURL/status mismatch) keep `failed`.
-  //
-  // Prong A<->B coherence: if the dry-run grounding CONFIRMED every target of
-  // this case existed on the real screen, a runtime locator failure is a real
-  // regression (the element was there, now it isn't), so keep `failed` instead
-  // of downgrading to `needs_calibration`.
-  // Signal §5.2: a target that grounding could not confirm (`not_found`) and
-  // that nonetheless "passed" (e.g. the codegen LLM fell back to a real
-  // heading instead of the unresolved literal) must not surface as a plain
-  // green — it stays `needs_calibration` so the miss remains visible.
-  const finalStatus =
-    status === 'failed' && isLocatorError(`${message}\n${errorDetails}`)
-      ? options.groundingConfirmed
-        ? 'failed'
-        : 'needs_calibration'
-      : status === 'passed' && options.hasNotFoundTarget
-        ? 'needs_calibration'
-        : status;
+  // `needs_calibration` must mean exactly ONE thing to the QA: a locator failed
+  // at runtime and the dry-run had NOT confirmed the target existed, so the
+  // selector likely drifted (or is wrong) and the case must be recalibrated.
+  // That is the only actionable case. Real assertion failures
+  // (toHaveText/toHaveURL/status mismatch) keep `failed`; and if the dry-run
+  // grounding HAD confirmed every target, a runtime locator failure is a real
+  // regression (the element was there, now it isn't) -> keep `failed`.
+  const isLocatorFailure = status === 'failed' && isLocatorError(`${message}\n${errorDetails}`);
+  const finalStatus = isLocatorFailure
+    ? options.groundingConfirmed
+      ? 'failed'
+      : 'needs_calibration'
+    : status;
+
+  // A test that PASSED but whose dry-run could not verify a target on its own
+  // (typically because the case depends on a precondition -- login, a prior
+  // error -- that the walk never set up) is NOT a calibration issue: nothing is
+  // broken and the runner already compensated. Keep it `passed` and attach an
+  // advisory note instead of dragging the run into needs_calibration, so the
+  // status stays honest and the flag only fires when there is work to do.
+  const unverifiedPass = status === 'passed' && Boolean(options.hasNotFoundTarget);
+  const reviewNote =
+    finalStatus === 'needs_calibration'
+      ? 'Recalibrar: un selector no resolvio en runtime (probable cambio de UI). Re-ejecuta el caso con LLM para regenerar el selector contra la app actual, verifica que quede verde y vuelve a promover. Si el elemento debia existir y no aparece, es un bug de la app: reportalo, no relajes la verificacion.'
+      : unverifiedPass
+        ? 'Sin accion requerida: el test paso, pero el dry-run no pudo verificar un target por su cuenta (normalmente el caso depende de una precondicion -login, un error previo- que el dry-run no monto). Confirma que la asercion sea la correcta; para silenciarlo, agrega esos pasos de precondicion al caso.'
+        : '';
 
   return {
     status: finalStatus,
@@ -96,7 +102,8 @@ export function normalizePlaywrightSpecResult(
     error_details: errorDetails,
     actual_response: actualResponse,
     steps,
-    attachments
+    attachments,
+    review_note: reviewNote
   };
 }
 
